@@ -1,0 +1,352 @@
+// !$*UTF8*$!
+{
+	"archiveVersion" = "1";
+	"classes" = {
+	};
+	"objectVersion" = "60";
+	"objects" = {
+		"CF21FADD42EAB8F8303A3895" = {
+			"isa" = "XCLocalSwiftPackageReference";
+			"relativePath" = ".";
+		};
+		"20E338624CEE29D0EFFEAD85" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "folder.assetcatalog";
+			"path" = "App/Assets.xcassets";
+			"sourceTree" = "<group>";
+		};
+		"3054F05EEC88C1D09FADBDBF" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/Mac/MizonApp.swift";
+			"sourceTree" = "<group>";
+		};
+		"9472A532862090457CD0FFAA" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "3054F05EEC88C1D09FADBDBF";
+		};
+		"F92EF89B12E1513F62AA63AB" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("9472A532862090457CD0FFAA");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"03C4F739C8BFCDF47AE5F902" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"productName" = "MizonAppleCore";
+		};
+		"9460DBB9832CD899EDD85934" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "03C4F739C8BFCDF47AE5F902";
+		};
+		"93799BA0BF6809B6AE2757ED" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"productName" = "MizonAppleUI";
+		};
+		"0F030B45AA1C3E35586CA6A8" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "93799BA0BF6809B6AE2757ED";
+		};
+		"F038C8CB5262975D84443B9B" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("9460DBB9832CD899EDD85934", "0F030B45AA1C3E35586CA6A8");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"70F3A5EBA2BB4B66BA827B2C" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "20E338624CEE29D0EFFEAD85";
+		};
+		"72070141A789D777B48D1B68" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("70F3A5EBA2BB4B66BA827B2C");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"A7A535A56CCC774B2129850E" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.application";
+			"includeInIndex" = "0";
+			"path" = "Mizon.app";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"79D9DA437CEDEC7E02277E6D" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"SWIFT_VERSION" = "6.0";
+				"SWIFT_STRICT_CONCURRENCY" = "complete";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"CURRENT_PROJECT_VERSION" = "1";
+				"MARKETING_VERSION" = "0.1.0";
+				"INFOPLIST_KEY_CFBundleDisplayName" = "Mizon";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"MACOSX_DEPLOYMENT_TARGET" = "26.0";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "26.0";
+				"WATCHOS_DEPLOYMENT_TARGET" = "26.0";
+				"SDKROOT" = "auto";
+				"SUPPORTED_PLATFORMS" = "macosx iphoneos iphonesimulator";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "com.shahesmaeili.Mizon.Apple";
+				"SUPPORTS_MACCATALYST" = "NO";
+				"SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD" = "NO";
+				"INFOPLIST_KEY_LSApplicationCategoryType" = "public.app-category.music";
+				"INFOPLIST_KEY_UILaunchScreen_Generation" = "YES";
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation" = "YES";
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents" = "YES";
+				"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad" = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone" = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				"ENABLE_APP_SANDBOX" = "YES";
+				"ENABLE_OUTGOING_NETWORK_CONNECTIONS" = "YES";
+				"ENABLE_HARDENED_RUNTIME" = "YES";
+				"ONLY_ACTIVE_ARCH" = "YES";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
+			};
+		};
+		"746A8CBDDE0C5EB881696E88" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"SWIFT_VERSION" = "6.0";
+				"SWIFT_STRICT_CONCURRENCY" = "complete";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"CURRENT_PROJECT_VERSION" = "1";
+				"MARKETING_VERSION" = "0.1.0";
+				"INFOPLIST_KEY_CFBundleDisplayName" = "Mizon";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"MACOSX_DEPLOYMENT_TARGET" = "26.0";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "26.0";
+				"WATCHOS_DEPLOYMENT_TARGET" = "26.0";
+				"SDKROOT" = "auto";
+				"SUPPORTED_PLATFORMS" = "macosx iphoneos iphonesimulator";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "com.shahesmaeili.Mizon.Apple";
+				"SUPPORTS_MACCATALYST" = "NO";
+				"SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD" = "NO";
+				"INFOPLIST_KEY_LSApplicationCategoryType" = "public.app-category.music";
+				"INFOPLIST_KEY_UILaunchScreen_Generation" = "YES";
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation" = "YES";
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents" = "YES";
+				"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad" = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone" = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				"ENABLE_APP_SANDBOX" = "YES";
+				"ENABLE_OUTGOING_NETWORK_CONNECTIONS" = "YES";
+				"ENABLE_HARDENED_RUNTIME" = "YES";
+				"ONLY_ACTIVE_ARCH" = "NO";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "";
+			};
+		};
+		"0C57D331A8C16D2F8B2D689F" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("79D9DA437CEDEC7E02277E6D", "746A8CBDDE0C5EB881696E88");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"AD57E4A0DB798ADB84F92EC2" = {
+			"isa" = "PBXNativeTarget";
+			"name" = "Mizon";
+			"productName" = "Mizon";
+			"productReference" = "A7A535A56CCC774B2129850E";
+			"productType" = "com.apple.product-type.application";
+			"buildConfigurationList" = "0C57D331A8C16D2F8B2D689F";
+			"buildPhases" = ("F92EF89B12E1513F62AA63AB", "F038C8CB5262975D84443B9B", "72070141A789D777B48D1B68");
+			"buildRules" = ();
+			"dependencies" = ();
+			"packageProductDependencies" = ("03C4F739C8BFCDF47AE5F902", "93799BA0BF6809B6AE2757ED");
+		};
+		"3C29716A5B261B1E0223E73D" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "App/Watch/MizonWatchApp.swift";
+			"sourceTree" = "<group>";
+		};
+		"4B006D1368F299F057F065C1" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "3C29716A5B261B1E0223E73D";
+		};
+		"693C24B5FEC97FF54D8D424D" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("4B006D1368F299F057F065C1");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"C768D365DB799814698E0E28" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"productName" = "MizonAppleCore";
+		};
+		"001BBD3D24558FB4B46D791A" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "C768D365DB799814698E0E28";
+		};
+		"A21523A3B519B3025010C80B" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"productName" = "MizonAppleUI";
+		};
+		"698ECAECC0DF52FADB214A18" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "A21523A3B519B3025010C80B";
+		};
+		"250E7B86F0EE1099F2958D63" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("001BBD3D24558FB4B46D791A", "698ECAECC0DF52FADB214A18");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"651AA4845C606A5A2D521C90" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "20E338624CEE29D0EFFEAD85";
+		};
+		"3D94E6A995A9104C70199594" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("651AA4845C606A5A2D521C90");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"A91D379F02B00DD78BE99226" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.application";
+			"includeInIndex" = "0";
+			"path" = "MizonWatch.app";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"44145195172FCBDCF0D8AC49" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"SWIFT_VERSION" = "6.0";
+				"SWIFT_STRICT_CONCURRENCY" = "complete";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"CURRENT_PROJECT_VERSION" = "1";
+				"MARKETING_VERSION" = "0.1.0";
+				"INFOPLIST_KEY_CFBundleDisplayName" = "Mizon";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"MACOSX_DEPLOYMENT_TARGET" = "26.0";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "26.0";
+				"WATCHOS_DEPLOYMENT_TARGET" = "26.0";
+				"SDKROOT" = "watchos";
+				"SUPPORTED_PLATFORMS" = "watchos watchsimulator";
+				"TARGETED_DEVICE_FAMILY" = "4";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "com.shahesmaeili.Mizon.Apple.watch";
+				"INFOPLIST_KEY_WKApplication" = "YES";
+				"INFOPLIST_KEY_WKWatchOnly" = "YES";
+				"SKIP_INSTALL" = "NO";
+				"ONLY_ACTIVE_ARCH" = "YES";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
+			};
+		};
+		"371738AAF329715E92A4D51F" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"SWIFT_VERSION" = "6.0";
+				"SWIFT_STRICT_CONCURRENCY" = "complete";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"CURRENT_PROJECT_VERSION" = "1";
+				"MARKETING_VERSION" = "0.1.0";
+				"INFOPLIST_KEY_CFBundleDisplayName" = "Mizon";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"MACOSX_DEPLOYMENT_TARGET" = "26.0";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "26.0";
+				"WATCHOS_DEPLOYMENT_TARGET" = "26.0";
+				"SDKROOT" = "watchos";
+				"SUPPORTED_PLATFORMS" = "watchos watchsimulator";
+				"TARGETED_DEVICE_FAMILY" = "4";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "com.shahesmaeili.Mizon.Apple.watch";
+				"INFOPLIST_KEY_WKApplication" = "YES";
+				"INFOPLIST_KEY_WKWatchOnly" = "YES";
+				"SKIP_INSTALL" = "NO";
+				"ONLY_ACTIVE_ARCH" = "NO";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "";
+			};
+		};
+		"155103CD3BA38C992110E1BD" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("44145195172FCBDCF0D8AC49", "371738AAF329715E92A4D51F");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"2FF5AD59F49C5E7C7BBB7061" = {
+			"isa" = "PBXNativeTarget";
+			"name" = "MizonWatch";
+			"productName" = "MizonWatch";
+			"productReference" = "A91D379F02B00DD78BE99226";
+			"productType" = "com.apple.product-type.application";
+			"buildConfigurationList" = "155103CD3BA38C992110E1BD";
+			"buildPhases" = ("693C24B5FEC97FF54D8D424D", "250E7B86F0EE1099F2958D63", "3D94E6A995A9104C70199594");
+			"buildRules" = ();
+			"dependencies" = ();
+			"packageProductDependencies" = ("C768D365DB799814698E0E28", "A21523A3B519B3025010C80B");
+		};
+		"FBDC4F23F93125BBEEAE800C" = {
+			"isa" = "PBXGroup";
+			"name" = "Products";
+			"children" = ("A7A535A56CCC774B2129850E", "A91D379F02B00DD78BE99226");
+			"sourceTree" = "<group>";
+		};
+		"870B3294C0CBD48AF6BBCC1B" = {
+			"isa" = "PBXGroup";
+			"children" = ("3054F05EEC88C1D09FADBDBF", "3C29716A5B261B1E0223E73D", "20E338624CEE29D0EFFEAD85", "FBDC4F23F93125BBEEAE800C");
+			"sourceTree" = "<group>";
+		};
+		"89E1FD6268CC0F221A2BE178" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"CLANG_ENABLE_MODULES" = "YES";
+				"ONLY_ACTIVE_ARCH" = "YES";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
+			};
+		};
+		"E6DE6C99132752C914FEF632" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"CLANG_ENABLE_MODULES" = "YES";
+				"ONLY_ACTIVE_ARCH" = "NO";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "";
+			};
+		};
+		"862894B703A6DEDF96A9DD6C" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("89E1FD6268CC0F221A2BE178", "E6DE6C99132752C914FEF632");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"98F54143AB4E86B28C3AFEE0" = {
+			"isa" = "PBXProject";
+			"attributes" = {
+				"LastUpgradeCheck" = "2700";
+				"BuildIndependentTargetsInParallel" = "YES";
+			};
+			"buildConfigurationList" = "862894B703A6DEDF96A9DD6C";
+			"compatibilityVersion" = "Xcode 15.0";
+			"developmentRegion" = "en";
+			"knownRegions" = ("en", "fa", "Base");
+			"mainGroup" = "870B3294C0CBD48AF6BBCC1B";
+			"productRefGroup" = "FBDC4F23F93125BBEEAE800C";
+			"projectDirPath" = "";
+			"projectRoot" = "";
+			"packageReferences" = ("CF21FADD42EAB8F8303A3895");
+			"targets" = ("AD57E4A0DB798ADB84F92EC2", "2FF5AD59F49C5E7C7BBB7061");
+		};
+	};
+	"rootObject" = "98F54143AB4E86B28C3AFEE0";
+}

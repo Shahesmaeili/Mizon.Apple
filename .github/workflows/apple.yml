@@ -1,0 +1,20 @@
+name: Apple login
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: macos-26-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: '6.4.1'
+      - name: Test login and compile shared Apple UI
+        run: ./Scripts/validate-apple.sh

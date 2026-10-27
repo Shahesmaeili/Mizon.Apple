@@ -1,0 +1,24 @@
+{
+  "originHash" : "592b9f702a027c28fabb5609152067471f9b11b43e30c01ba96e9a9984e4cd86",
+  "pins" : [
+    {
+      "identity" : "mizon.api.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Shahesmaeili/Mizon.API.Swift",
+      "state" : {
+        "branch" : "main",
+        "revision" : "92998d7edcd944d1c5596eed7b7f7fc431f05afa"
+      }
+    },
+    {
+      "identity" : "signalr-client-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/dotnet/signalr-client-swift",
+      "state" : {
+        "revision" : "1a27323e478ad75dc8383a11f0c5d5cce62afc6e",
+        "version" : "1.0.0"
+      }
+    }
+  ],
+  "version" : 3
+}
