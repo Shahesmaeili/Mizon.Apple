@@ -13,9 +13,9 @@ public struct ServerSettingsView: View {
     public var body: some View {
         VStack(alignment: .trailing, spacing: 20) {
             HStack {
-                Button { dismiss() } label: { Image(systemName: "xmark") }.buttonStyle(.glass).accessibilityLabel("بستن تنظیمات")
+                Button { dismiss() } label: { FluentIcon(symbol: .dismiss) }.buttonStyle(.glass).accessibilityLabel("بستن تنظیمات")
                 Spacer()
-                Label("اتصال به میزون", systemImage: "network").font(.title3.weight(.semibold))
+                HStack { FluentIcon(symbol: .networkCheck); Text("اتصال به میزون") }.font(.title3.weight(.semibold))
             }
             Text("آدرس سرور").font(.subheadline.weight(.medium))
             TextField("https://…", text: $address)

@@ -17,7 +17,7 @@ let package = Package(
         ]),
         .target(name: "MizonAppleUI", dependencies: ["MizonAppleCore"], resources: [.process("Resources")]),
         .executableTarget(name: "MizonPreview", dependencies: ["MizonAppleUI", "MizonAppleCore"], path: "App/Mac"),
-        .testTarget(name: "MizonAppleTests", dependencies: ["MizonAppleCore", .product(name: "MizonAPI", package: "Mizon.API.Swift"), .product(name: "MizonAPIClient", package: "Mizon.API.Swift")], path: "Tests")
+        .testTarget(name: "MizonAppleTests", dependencies: ["MizonAppleCore", "MizonAppleUI", .product(name: "MizonAPI", package: "Mizon.API.Swift"), .product(name: "MizonAPIClient", package: "Mizon.API.Swift")], path: "Tests")
     ],
     swiftLanguageModes: [.v6]
 )

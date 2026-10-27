@@ -1,48 +1,106 @@
 import SwiftUI
+import ImageIO
 
-struct Starfield: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let stars: [(Double, Double, Double, Double)] = {
-        var seed: UInt64 = 0x4D495A4F4E
-        func random() -> Double {
-            seed = seed &* 6364136223846793005 &+ 1
-            return Double(seed >> 11) / Double(UInt64.max >> 11)
+/// DevWinUI's Random.Create retries a rejected value at most FIVE times;
+/// its predicate means regenerate, not accept. Keeping that distinction matters.
+struct DevRandom {
+    var state: UInt64
+    mutating func next(_ min: Int, _ max: Int, reject: (Int) -> Bool = { _ in false }) -> Double {
+        func draw(_ state: inout UInt64) -> Int {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return min + Int((state >> 32) % UInt64(max - min))
         }
-        return (0..<125).map { _ in (random(), random(), random(), random()) }
-    }()
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 24, paused: reduceMotion)) { timeline in
-            Canvas(rendersAsynchronously: true) { context, size in
-                let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate * 0.35
-                for (x, y, radius, phase) in Self.stars {
-                    let r = 0.65 + radius * 1.25
-                    let opacity = 0.2 + (sin(t + phase * 30) + 1) * 0.19
-                    context.fill(Path(ellipseIn: CGRect(x: x * size.width, y: y * size.height, width: r, height: r)), with: .color(.white.opacity(opacity)))
-                }
-            }
+        var value = draw(&state)
+        for _ in 0..<5 {
+            if !reject(value) { break }
+            value = draw(&state)
         }
-        .accessibilityHidden(true)
-        .allowsHitTesting(false)
+        return Double(value)
     }
 }
-
-struct LoginBackdrop: View {
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Color(red: 0.025, green: 0.035, blue: 0.065)
-                RadialGradient(colors: [Color.cyan.opacity(0.2), .clear], center: .init(x: 0.15, y: 0.38), startRadius: 1, endRadius: geometry.size.width * 0.62)
-                RadialGradient(colors: [Color.indigo.opacity(0.25), .clear], center: .init(x: 0.85, y: 0.75), startRadius: 1, endRadius: geometry.size.width * 0.6)
-                Starfield()
-                Ellipse().stroke(.white.opacity(0.045), lineWidth: 1)
-                    .frame(width: geometry.size.width * 0.92, height: geometry.size.height * 0.55)
-                    .rotationEffect(.degrees(-24))
-                Ellipse().stroke(.cyan.opacity(0.045), lineWidth: 1)
-                    .frame(width: geometry.size.width * 1.2, height: geometry.size.height * 0.72)
-                    .rotationEffect(.degrees(-24))
-            }
-        }
-        .ignoresSafeArea()
-        .accessibilityHidden(true)
+struct DevStar {
+    let x, y, z, diameter, duration, deltaZ, minOpacity, maxOpacity, opacityDuration: Double
+    let movementSeed: UInt64
+    init(big: Bool, random: inout DevRandom) {
+        z = random.next(big ? -240 : -160, big ? 0 : 160)
+        diameter = big ? random.next(3, 5, reject: { $0 > 4 }) : random.next(1, 3)
+        // Normalized coordinates are expanded to the centered 1.2x window square.
+        x = random.next(-1_000_000, 1_000_000) / 1_000_000
+        y = random.next(-1_000_000, 1_000_000) / 1_000_000
+        deltaZ = big ? random.next(240, 400, reject: { $0 > 320 }) : 0
+        duration = (big ? random.next(10_000, 40_000, reject: { $0 < 20_000 }) : random.next(40_000, 80_000)) / 1000
+        minOpacity = big ? 0 : random.next(0, 60, reject: { $0 < 40 }) / 100
+        maxOpacity = (big ? random.next(60, 100) : random.next(60, 100, reject: { $0 > 70 })) / 100
+        opacityDuration = (big ? random.next(500, 1000) : random.next(250, 500)) / 1000
+        movementSeed = random.state
+        _ = random.next(0, Int.max / 2)
     }
+    func sample(time: Double) -> (dx: Double, dy: Double, z: Double, opacity: Double) {
+        let cycles = Int(time / duration)
+        let progress = devEase(time / duration - Double(cycles))
+        var random = DevRandom(state: movementSeed)
+        var dx = 0.0, dy = 0.0
+        for cycle in 0...cycles {
+            let fraction = cycle == cycles ? progress : 1
+            dx += random.next(-12, 12) * fraction
+            dy += random.next(-12, 12) * fraction
+        }
+        let opacityProgress = deltaZ == 0
+            ? (time / opacityDuration).truncatingRemainder(dividingBy: 1)
+            : min(1, time / opacityDuration)
+        return (dx, dy, z + deltaZ * (Double(cycles) + progress), minOpacity + (maxOpacity - minOpacity) * devEase(opacityProgress))
+    }
+}
+/// Composition's default cubic easing, control points (0.5,0), (0.5,1).
+func devEase(_ t: Double) -> Double {
+    let t = max(0, min(1, t))
+    if t == 0 || t == 1 { return t }
+    var lower = 0.0, upper = 1.0
+    for _ in 0..<14 {
+        let u = (lower + upper) / 2
+        let x = 1.5 * u * (1 - u) * (1 - u) + 1.5 * u * u * (1 - u) + u * u * u
+        if x < t { lower = u } else { upper = u }
+    }
+    let u = (lower + upper) / 2
+    return 3 * u * u - 2 * u * u * u
+}
+struct Starfield: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var start = Date()
+    @State private var stars: [DevStar] = {
+        var random = DevRandom(state: UInt64.random(in: 1...UInt64.max))
+        return (0..<2003).map { DevStar(big: $0 >= 1002, random: &random) }
+    }()
+    private static let mask: CGImage? = {
+        guard let url = Bundle.module.url(forResource: "CircleMask", withExtension: "png"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }()
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { timeline in
+            Canvas(rendersAsynchronously: true) { context, size in
+                let t = reduceMotion ? 1.6 : max(0, timeline.date.timeIntervalSince(start))
+                let startup = devEase(min(1, t / 1.6))
+                let skyScale = 0.8 + 0.2 * startup
+                let radius = max(size.width, size.height) * 1.2 / 2
+                guard let mask = Self.mask else { return }
+                let image = context.resolve(Image(decorative: mask, scale: 1))
+                for star in stars {
+                    let sample = star.sample(time: t)
+                    // PerspectiveTransform3D default depth: 1000. Preserve cumulative Z.
+                    guard sample.z < 999 else { continue }
+                    let perspective = 1000 / (1000 - sample.z)
+                    let x = size.width / 2 + (star.x * radius + sample.dx) * perspective * skyScale
+                    let y = size.height / 2 + (star.y * radius + sample.dy) * perspective * skyScale
+                    let diameter = star.diameter * perspective * skyScale
+                    guard x > -diameter, y > -diameter, x < size.width, y < size.height else { continue }
+                    context.opacity = startup * sample.opacity
+                    context.draw(image, in: CGRect(x: x, y: y, width: diameter, height: diameter))
+                }
+            }
+        }.accessibilityHidden(true).allowsHitTesting(false)
+    }
+}
+struct LoginBackdrop: View {
+    var body: some View { ZStack { WindowGlass(); Starfield() }.ignoresSafeArea() }
 }

@@ -15,12 +15,12 @@ struct MizonApp: App {
         WindowGroup("Mizon") {
             MizonRootView(model: model)
                 #if os(macOS)
-                .frame(minWidth: 620, minHeight: 720)
+                .frame(minWidth: 900, minHeight: 600)
                 #endif
         }
         #if os(macOS)
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1040, height: 820)
+        .defaultSize(width: 1000, height: 700)
         .defaultPosition(.center)
         .windowResizability(.contentMinSize)
         .commands { CommandGroup(replacing: .newItem) {} }

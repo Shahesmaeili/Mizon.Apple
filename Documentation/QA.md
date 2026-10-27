@@ -15,21 +15,15 @@ Local toolchain: Apple Swift 6.4 / Xcode 27.1. App minimums: macOS 26, iOS 26, w
 - Missing success content is rejected, and API error text/close-button text is preserved.
 - Tests use an in-memory store and URLProtocol fixtures; no personal credentials are persisted or sent.
 
-## Manual macOS checks
+## Source-driven presentation validation
 
-The real app bundle was launched, observed through accessibility and captured visually.
+Fourteen local tests cover the existing authentication/SDK contracts plus actual CoreText registration of IRANSans and Seagull Fluent Icons, required regular/RTL glyph availability, DevWinUI's five-retry random semantics, star parameter ranges, cumulative Z across successive movement segments, and composition easing endpoints.
 
-- The empty form disables the sign-in button.
-- Entering synthetic `preview@example.com` / `preview-only` enables submission.
-- The reveal-password control switches between secure and plain entry.
-- Submitting against unavailable localhost displays a Persian network error and restores controls.
-- Dismissing the error returns to the editable form.
-- Connection settings open as a native sheet; an HTTP URL is rejected without saving.
-- The registration link opens an honest availability message rather than simulating account creation.
-- Synthetic form values were cleared after testing.
-- Native window controls and the app's Settings menu are present.
+The actual Mac bundle is inspected in both card states. Synthetic credentials enable submission and survive a flip; an unavailable localhost produces the expected Persian alert and restores controls. The initial registration face, exact labels and placeholders, 304-point width, 440/500-point heights, original animated GIF, bottom app bar and toggling back and forth are checked. Screenshots are in Documentation/Screenshots. Passwords stay secure. The old custom password-reveal button, registration-information sheet, extra marketing text, system icons and decorative gradients have been removed.
 
-Screenshots are in `Documentation/Screenshots`. Error screenshots contain synthetic test data only. No live production service was used. A physical iPhone/Watch, successful live backend login, production signing, notarization and App Store distribution remain outside this login-only phase.
+The native glass window uses a clear nonopaque NSWindow and behind-window NSVisualEffectView. System transparency preferences affect the result. Mac has no Windows inclinometer; sensor-based tilt is unavailable on that platform. Rendering uses SwiftUI Canvas rather than Windows Composition, so native antialiasing and material appearance differ. Windows source initializes a random sky; pixel positions are not fixed across launches on either platform.
+
+A physical iPhone/Watch, successful live backend login, production signing, notarization and App Store distribution remain outside this login-only phase. CI is triggered by push; this iteration does not wait for GitHub Actions, as requested.
 
 ## Backend version contract
 
