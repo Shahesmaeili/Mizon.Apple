@@ -44,6 +44,7 @@ struct AuthLocalization: DynamicProperty {
 #if !os(watchOS)
 struct AuthLanguagePicker: View {
     var localization = AuthLocalization()
+    @State private var hovered = false
 
     var body: some View {
         Menu {
@@ -51,13 +52,15 @@ struct AuthLanguagePicker: View {
             Button(localization["GamepadKeyboardLanguagePersian"]) { selectLanguage("fa") }
         } label: {
             FluentIcon(symbol: .globe, size: 17)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(hovered ? .white : AuthAppearance.secondaryText)
                 .frame(width: 36, height: 36)
+                .background(.white.opacity(hovered ? 15.0 / 255 : 0), in: .rect(cornerRadius: 8))
                 .contentShape(.rect)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .authHandPointer(enabled: true)
+        .onHover { hovered = $0 }
         .fixedSize()
         .help(localization["LanguagePickerName"])
         .accessibilityIdentifier("auth.language")

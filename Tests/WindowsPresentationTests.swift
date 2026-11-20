@@ -1,5 +1,6 @@
 import Testing
 import CoreText
+import SwiftUI
 #if os(macOS)
 import Foundation
 import MizonAppleCore
@@ -7,6 +8,18 @@ import MizonAppleCore
 @testable import MizonAppleUI
 
 struct WindowsPresentationTests {
+    @Test @MainActor func flipHeightInterpolatesBetweenTheTwoForms() {
+        for (progress, height) in [(0.0, 100), (0.5, 160), (1.0, 220)] {
+            let renderer = ImageRenderer(content: FaceLayout(progress: progress) {
+                Color.cyan.frame(width: 120, height: 100)
+                Color.purple.frame(width: 120, height: 220)
+            })
+            renderer.scale = 1
+            #expect(renderer.cgImage?.width == 120)
+            #expect(renderer.cgImage?.height == height)
+        }
+    }
+
     @Test func authenticationStringsLoadFromEachLanguageBundle() {
         #expect(AuthLocalization.string("AuthEmailLabel", table: "Auth", language: "en") == "Email")
         #expect(AuthLocalization.string("AuthEmailLabel", table: "Auth", language: "fa") == "ایمیل")
@@ -81,6 +94,10 @@ struct WindowsPresentationTests {
                 #expect(glyphs.contains(where: { $0 != 0 }))
             }
         }
+        let coloredHeadphones = Array(FluentSymbol.headphones.glyph(usesColor: true).utf16)
+        var coloredGlyphs = [CGGlyph](repeating: 0, count: coloredHeadphones.count)
+        #expect(CTFontGetGlyphsForCharacters(font, coloredHeadphones, &coloredGlyphs, coloredGlyphs.count))
+        #expect(coloredGlyphs.contains(where: { $0 != 0 }))
         let persian = CTFontCreateWithName("IRANSans" as CFString, 18, nil)
         #expect(CTFontCopyPostScriptName(persian) as String == "IRANSans")
     }

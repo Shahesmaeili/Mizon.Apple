@@ -26,19 +26,20 @@ enum FluentSymbol: Int, CaseIterable {
     case personAdd = 217, play = 234, video = 309, moviesAndTv = 408, tv = 864
     case musicNote1 = 1087
     case shieldLock = 1449, eyeOff = 1498, eye = 1824, filmstrip = 2023, wifi = 2692
-    case checkmarkCircle = 82, networkCheck = 192, errorCircle = 425
-    func glyph(rightToLeft: Bool = false) -> String {
-        // FluentIcons.Common.Internals.Extensions.ToString(Regular, isRtl).
-        String(UnicodeScalar(0xF0000 + 4 * rawValue + (rightToLeft ? 0x10000 : 0))!)
+    case checkmarkCircle = 82, dismissCircle = 113, networkCheck = 192
+    func glyph(rightToLeft: Bool = false, usesColor: Bool = false) -> String {
+        // FluentIcons.Common.Internals.Extensions.ToString(Regular or Color, isRtl).
+        String(UnicodeScalar(0xF0000 + 4 * rawValue + (usesColor ? 2 : 0) + (rightToLeft ? 0x10000 : 0))!)
     }
 }
 struct FluentIcon: View {
     var symbol: FluentSymbol
     var size: CGFloat = 20
     var rightToLeft = false
+    var usesColor = false
     var body: some View {
         let _ = WindowsTypography.registered
-        Text(symbol.glyph(rightToLeft: rightToLeft))
+        Text(symbol.glyph(rightToLeft: rightToLeft, usesColor: usesColor))
             .font(.custom("SeagullFluentIcons", size: size))
             .accessibilityHidden(true)
     }

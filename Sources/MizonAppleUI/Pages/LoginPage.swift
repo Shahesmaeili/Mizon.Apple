@@ -27,6 +27,30 @@ public struct MizonRootView: View {
     }
 
     public var body: some View {
+        content
+            #if os(macOS)
+            .toolbar {
+                if showingAuthentication {
+                    ToolbarSpacer(.flexible, placement: .primaryAction)
+                    ToolbarItem(placement: .primaryAction) {
+                        AuthLanguagePicker()
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                }
+            }
+            .toolbarBackground(showingAuthentication ? .hidden : .automatic, for: .windowToolbar)
+            .environment(\.layoutDirection, .leftToRight)
+            #endif
+    }
+
+    #if os(macOS)
+    private var showingAuthentication: Bool {
+        home == nil || home?.sessionID != model.session?.sessionPublicId
+    }
+    #endif
+
+    @ViewBuilder
+    private var content: some View {
         #if os(watchOS)
         WatchLoginPage(model: model)
         #else
@@ -162,18 +186,30 @@ private struct AuthenticationPage: View {
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
+            #if os(macOS)
+            let height = geometry.size.height
+            #else
             let height = geometry.size.height - 48
+            #endif
             let wide = width >= 900 && height >= 550
             let split = wide || (width >= 680 && height >= 420)
+            let bottomInset: CGFloat = wide ? 14 : 8
+            let sideInset: CGFloat = wide ? 40 : split ? 24 : 16
+            let columnSpacing: CGFloat = wide ? 32 : split ? 20 : 0
+            let available = max(0, min(1040, width - sideInset * 2) - columnSpacing)
+            let artWidth = split ? available * (wide ? 1.1 / 2.1 : 0.9 / 1.9) : 0
+            let formWidth = available - artWidth
 
             VStack(spacing: 0) {
+                #if os(iOS)
                 header
+                #endif
                 if !split { wordmark.padding(.bottom, 6) }
-                HStack(spacing: wide ? 32 : 20) {
+                HStack(spacing: columnSpacing) {
                     if split {
                         showcase(wide: wide)
                             .frame(maxWidth: 430)
-                            .frame(maxWidth: .infinity)
+                            .frame(width: artWidth)
                     }
                     ScrollViewReader { proxy in
                         ScrollView {
@@ -184,20 +220,23 @@ private struct AuthenticationPage: View {
                             }
                                 .id("auth-form")
                                 .padding(.horizontal, 8)
-                                .padding(.vertical, 18)
-                                .frame(minHeight: max(0, height - (split ? 0 : 46)))
+                                .padding(.vertical, 24)
+                                .frame(minHeight: max(0, height - bottomInset - (split ? 0 : 46)))
                         }
                         .scrollIndicators(.hidden)
                         .defaultScrollAnchor(.top)
-                        .onChange(of: registration) { proxy.scrollTo("auth-form", anchor: .top) }
+                        .onChange(of: registration) {
+                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
+                                proxy.scrollTo("auth-form", anchor: .top)
+                            }
+                        }
                     }
                     .frame(maxWidth: 448)
+                    .frame(width: formWidth)
                 }
-                .padding(.horizontal, wide ? 40 : split ? 24 : 16)
-                .padding(.bottom, wide ? 14 : 8)
+                .padding(.bottom, bottomInset)
                 .opacity(entranceVisible ? 1 : 0)
                 .offset(y: entranceVisible ? 0 : 12)
-                .frame(maxWidth: 1040)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -261,16 +300,11 @@ private struct AuthenticationPage: View {
         #endif
     }
 
+    #if os(iOS)
     private var header: some View {
         HStack {
-            #if os(macOS)
-            Spacer()
-            AuthLanguagePicker()
-            #else
             AuthLanguagePicker()
             Spacer()
-            #endif
-            #if os(iOS)
             Button {
                 showsSettings = true
             } label: {
@@ -279,15 +313,15 @@ private struct AuthenticationPage: View {
             .buttonStyle(.glass)
             .disabled(model.isLoading)
             .accessibilityLabel(localization.string("ServerSettings", table: "Settings"))
-            #endif
         }
         .padding(.horizontal, 24)
         .frame(height: 48)
     }
+    #endif
 
     private var wordmark: some View {
         HStack(spacing: 10) {
-            FluentIcon(symbol: .headphones, size: 24)
+            FluentIcon(symbol: .headphones, size: 24, usesColor: true)
             Text("MIZON").tracking(2.99).font(englishFont(23, weight: .semibold))
         }
         .foregroundStyle(AuthAppearance.accent)
@@ -307,7 +341,7 @@ private struct AuthenticationPage: View {
                     .accessibilityAddTraits(.isHeader)
                 Text(text(registration ? "AuthRegisterDescription" : "AuthLoginDescription"))
                     .font(authFont(12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AuthAppearance.secondaryText)
             }
             VStack(alignment: .leading, spacing: registration ? 12 : 16) {
                 if registration {
@@ -326,64 +360,54 @@ private struct AuthenticationPage: View {
                     input(.identifier, label: "AuthLoginIdentifierLabel", value: $model.identifier, type: .username)
                     input(.loginPassword, label: "AuthPasswordLabel", value: $model.password, type: .password, secure: true)
                 }
-                if self.registration == registration, let key = errorKey {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 7) {
-                            FluentIcon(symbol: .errorCircle, size: 16)
-                            Text(text(registration ? "AuthRegisterErrorTitle" : "AuthLoginErrorTitle")).fontWeight(.semibold)
-                        }
-                        Text(text(key))
+            }
+            if self.registration == registration, let key = errorKey {
+                AuthErrorCard(title: text(registration ? "AuthRegisterErrorTitle" : "AuthLoginErrorTitle"),
+                              message: text(key))
+            }
+            Button(action: submit) {
+                HStack(spacing: 10) {
+                    FluentIcon(symbol: .arrowLeft, size: 17).frame(width: 20)
+                    Text(text(submitKey(registration: registration)))
+                        .font(authFont(13, weight: .semibold))
+                        .multilineTextAlignment(.center)
+                        .environment(\.layoutDirection, isPersian ? .rightToLeft : .leftToRight)
+                        .frame(maxWidth: .infinity)
+                    if model.isLoading && self.registration == registration {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(AuthAppearance.color(0x142331))
+                            .frame(width: 20, height: 18)
+                    } else {
+                        Color.clear.frame(width: 20, height: 1)
                     }
-                    .font(authFont(12))
-                    .foregroundStyle(AuthAppearance.errorText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .background(AuthAppearance.errorFill, in: .rect(cornerRadius: 12))
-                    .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(AuthAppearance.errorBorder) }
-                    .accessibilityElement(children: .combine)
                 }
-                Button(action: submit) {
-                    HStack(spacing: 10) {
-                        FluentIcon(symbol: .arrowLeft, size: 17).frame(width: 20)
-                        Text(text(submitKey(registration: registration)))
-                            .font(authFont(13, weight: .semibold))
-                            .multilineTextAlignment(.center)
-                            .environment(\.layoutDirection, isPersian ? .rightToLeft : .leftToRight)
-                            .frame(maxWidth: .infinity)
-                        if model.isLoading && self.registration == registration {
-                            ProgressView().controlSize(.small).frame(width: 20)
-                        } else {
-                            Color.clear.frame(width: 20, height: 1)
-                        }
-                    }
-                    .environment(\.layoutDirection, .leftToRight)
-                }
-                .buttonStyle(AuthActionStyle(primary: true, reduceMotion: reduceMotion, focused: primaryFocusMode == registration))
-                .focused($primaryFocusMode, equals: registration)
-                .accessibilityHint(text(registration ? "AuthRegisterSubmitHelp" : "AuthLoginSubmitHelp"))
-                .disabled(registration ? !model.canRegister : !model.canSubmit)
+                .environment(\.layoutDirection, .leftToRight)
+            }
+            .buttonStyle(AuthActionStyle(primary: true, reduceMotion: reduceMotion, focused: primaryFocusMode == registration))
+            .focused($primaryFocusMode, equals: registration)
+            .accessibilityHint(text(registration ? "AuthRegisterSubmitHelp" : "AuthLoginSubmitHelp"))
+            .disabled(registration ? !model.canRegister : !model.canSubmit)
 
-                VStack(spacing: 12) {
-                    Rectangle().fill(AuthAppearance.divider).frame(height: 1)
-                    Button(action: switchMode) {
-                        HStack(spacing: 9) {
-                            FluentIcon(symbol: .personAdd, size: 16)
-                            Text(text(registration ? "AuthSignInAccount" : "AuthCreateAccount"))
-                                .font(authFont(13, weight: .semibold))
-                        }
+            VStack(spacing: 12) {
+                Rectangle().fill(AuthAppearance.divider).frame(height: 1)
+                Button(action: switchMode) {
+                    HStack(spacing: 9) {
+                        FluentIcon(symbol: .personAdd, size: 16)
+                        Text(text(registration ? "AuthSignInAccount" : "AuthCreateAccount"))
+                            .font(authFont(13, weight: .semibold))
                     }
-                    .buttonStyle(AuthActionStyle(primary: false, reduceMotion: reduceMotion, focused: modeActionFocus == registration))
-                    .focused($modeActionFocus, equals: registration)
-                    .accessibilityHint(text("AuthModeSwitchHelp"))
-                    .disabled(model.isLoading)
                 }
+                .buttonStyle(AuthActionStyle(primary: false, reduceMotion: reduceMotion, focused: modeActionFocus == registration))
+                .focused($modeActionFocus, equals: registration)
+                .accessibilityHint(text("AuthModeSwitchHelp"))
+                .disabled(model.isLoading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, wide ? 30 : 22)
         .padding(.vertical, wide ? 32 : 24)
         .background(AuthAppearance.cardFill, in: .rect(cornerRadius: 20))
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .overlay {
             RoundedRectangle(cornerRadius: 20)
                 .strokeBorder(AuthAppearance.accentTint)
@@ -444,9 +468,13 @@ private struct AuthenticationPage: View {
             guard field.accepts(proposed) else { return }
             value.wrappedValue = proposed
         })
+        let hasClear = !secure && focus == field && !value.wrappedValue.isEmpty
+        let hasPeek = secure && field != .loginPassword && focus == field && !value.wrappedValue.isEmpty
+        let hasAction = hasClear || hasPeek || field == .loginPassword
+        let localizedRow = field == .firstName || field == .lastName || field == .loginPassword
         return VStack(alignment: .leading, spacing: registration ? 6 : 7) {
             Text(text(label)).font(authFont(12))
-            HStack {
+            HStack(spacing: 4) {
                 let showPeek = scenePhase == .active && field != .loginPassword
                     && (peeking == field || gamepadRevealedField == field)
                 if usesNativeIdentifier(field) {
@@ -477,13 +505,14 @@ private struct AuthenticationPage: View {
                     .accessibilityLabel(text(label))
                     .accessibilityHint(text(field.helpKey))
                     .accessibilityIdentifier(field.rawValue)
-                    .environment(\.layoutDirection, field == .firstName || field == .lastName
-                                 ? (isPersian ? .rightToLeft : .leftToRight) : .leftToRight)
+                    .environment(\.layoutDirection, isPersian && (field == .firstName || field == .lastName)
+                                 ? .rightToLeft : .leftToRight)
                     .onSubmit(submit)
                     .opacity(showPeek ? 0 : 1)
                     .overlay(alignment: .leading) {
                         if showPeek {
                             Text(value.wrappedValue)
+                                .font(authFont(14))
                                 .lineLimit(1)
                                 .truncationMode(.head)
                                 .accessibilityHidden(true)
@@ -497,20 +526,17 @@ private struct AuthenticationPage: View {
                     #endif
                 }
 
-                if !secure, focus == field, !value.wrappedValue.isEmpty {
+                if hasClear {
                     Button {
                         value.wrappedValue = ""
                     } label: {
                         FluentIcon(symbol: .dismiss, size: 12)
-                            .frame(width: 24, height: 28)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(AuthFieldActionStyle(isClear: true))
                     .focusable(false)
-                    .authHandPointer(enabled: !model.isLoading)
-                    .opacity(0.7)
                     .accessibilityLabel(text("ClearInputName"))
                     .accessibilityHint(text("ClearInputHelp"))
-                    .transition(.opacity)
+                    .help(text("ClearInputName"))
                 }
                 if field == .loginPassword {
                     Button {
@@ -518,16 +544,11 @@ private struct AuthenticationPage: View {
                         focus = .loginPassword
                     } label: {
                         FluentIcon(symbol: revealPassword ? .eyeOff : .eye, size: 17)
-                            .frame(width: 32, height: 32)
-                            .foregroundStyle(AuthAppearance.accent)
-                            .background(AuthAppearance.accentWash, in: .rect(cornerRadius: 9))
-                            .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(AuthAppearance.accentTint) }
                     }
-                    .buttonStyle(.plain)
-                    .authHandPointer(enabled: !model.isLoading)
+                    .buttonStyle(AuthFieldActionStyle(isClear: false))
                     .accessibilityLabel(text(revealPassword ? "AuthHidePassword" : "AuthShowPassword"))
                     .accessibilityHint(text("AuthPasswordRevealHelp"))
-                } else if secure {
+                } else if hasPeek {
                     FluentIcon(symbol: showPeek ? .eyeOff : .eye, size: 17)
                         .foregroundStyle(AuthAppearance.accent)
                         .frame(width: 32, height: 32)
@@ -540,7 +561,9 @@ private struct AuthenticationPage: View {
                         .help(text("AuthPasswordPeekHelp"))
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.leading, 12)
+            .padding(.trailing, hasAction ? 6 : 12)
+            .environment(\.layoutDirection, isPersian && localizedRow ? .rightToLeft : .leftToRight)
             .frame(minHeight: 44)
             .background(AuthAppearance.inputFill(focused: focus == field, hovered: hoveredField == field, disabled: model.isLoading),
                         in: .rect(cornerRadius: 10))
@@ -552,11 +575,10 @@ private struct AuthenticationPage: View {
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focus == field)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hoveredField == field)
             .onHover { if $0 { hoveredField = field } else if hoveredField == field { hoveredField = nil } }
-            if let hint { Text(text(hint)).font(authFont(10)).foregroundStyle(.secondary) }
+            if let hint { Text(text(hint)).font(authFont(10)).foregroundStyle(AuthAppearance.secondaryText) }
         }
         .frame(maxWidth: .infinity)
         .disabled(model.isLoading)
-        .onChange(of: value.wrappedValue) { model.dismissError() }
     }
 
     private func usesNativeIdentifier(_ field: Field) -> Bool {
@@ -773,12 +795,12 @@ private struct AuthenticationPage: View {
         return VStack(spacing: 14) {
             ZStack {
                 if let outgoing {
-                    AuthShowcaseArtwork(scene: outgoing, elapsed: 0)
+                    AuthShowcaseArtwork(scene: outgoing, elapsed: 0, moves: false)
                         .scaleEffect(1 - 0.02 * progress)
                         .offset(x: 12 * direction * progress)
                         .opacity(1 - progress)
                 }
-                AuthShowcaseArtwork(scene: scene, elapsed: reduceMotion ? 0 : elapsed)
+                AuthShowcaseArtwork(scene: scene, elapsed: elapsed, moves: !reduceMotion)
                     .scaleEffect(0.965 + 0.035 * progress)
                     .offset(x: -18 * direction * (1 - progress))
                     .opacity(progress)
@@ -789,7 +811,7 @@ private struct AuthenticationPage: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(text(caption.key + "Title")).font(authFont(24, weight: .semibold))
-                Text(text(caption.key + "Description")).font(authFont(12)).foregroundStyle(.secondary)
+                Text(text(caption.key + "Description")).font(authFont(12)).foregroundStyle(AuthAppearance.secondaryText)
             }
             .opacity(captionOpacity)
             .frame(maxWidth: .infinity, minHeight: 106, alignment: .topLeading)

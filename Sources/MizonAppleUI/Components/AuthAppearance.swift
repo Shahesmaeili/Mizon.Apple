@@ -9,11 +9,18 @@ enum AuthAppearance {
     static let accentWash = accent.opacity(22.0 / 255)
     static let accentTint = accent.opacity(50.0 / 255)
     static let accentBorder = accent.opacity(90.0 / 255)
-    static let cardFill = Color.white.opacity(0.035)
+    static let cardFill = Color.white.opacity(8.0 / 255)
+    static let secondaryText = Color.white.opacity(197.0 / 255)
+    static let stroke = Color.white.opacity(36.0 / 255)
     static let divider = Color.white.opacity(22.0 / 255)
     static let errorText = color(0xF5C6D2)
-    static let errorFill = color(0xC96787).opacity(33.0 / 255)
-    static let errorBorder = color(0xF0A1B5).opacity(64.0 / 255)
+    static let errorAccent = color(0xF0A1B5)
+    static let errorWash = errorAccent.opacity(22.0 / 255)
+    static let errorBorder = errorAccent.opacity(64.0 / 255)
+    static let errorFill = LinearGradient(
+        colors: [color(0xC96787).opacity(33.0 / 255), color(0xC96787).opacity(8.0 / 255)],
+        startPoint: .topLeading, endPoint: .bottomTrailing
+    )
     static let windowError = color(0xEF6A7A)
 
     static func color(_ rgb: UInt32) -> Color {
@@ -122,6 +129,37 @@ struct AuthSceneButtonStyle: ButtonStyle {
             .animation(moves ? .timingCurve(0.2, 0.8, 1, 1, duration: 0.18) : nil, value: over)
             .animation(moves ? .timingCurve(0.2, 0.8, 1, 1, duration: 0.18) : nil, value: pressed)
             .frame(height: 44)
+            .contentShape(.rect)
+            .onHover { hovered = $0 }
+            .authHandPointer(enabled: enabled)
+    }
+}
+
+struct AuthFieldActionStyle: ButtonStyle {
+    let isClear: Bool
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = enabled && configuration.isPressed
+        let over = enabled && hovered
+        let size: CGFloat = isClear ? 28 : 32
+        let fill = isClear ? (pressed ? AuthAppearance.accentTint : over ? AuthAppearance.accentWash : AuthAppearance.cardFill)
+            : AuthAppearance.accentWash
+        let opacity = isClear ? (enabled ? pressed ? 0.65 : over ? 1 : 0.7 : 0.3) : (enabled ? 1 : 0.45)
+        return configuration.label
+            .foregroundStyle(AuthAppearance.accent)
+            .opacity(opacity)
+            .frame(width: size, height: size)
+            .background(fill, in: .rect(cornerRadius: 9))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .strokeBorder(isClear ? AuthAppearance.stroke : AuthAppearance.accentTint)
+            }
+            .scaleEffect(isClear ? 1 : pressed ? 0.98 : over ? 1.012 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: over)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: pressed)
             .contentShape(.rect)
             .onHover { hovered = $0 }
             .authHandPointer(enabled: enabled)

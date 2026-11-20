@@ -59,7 +59,7 @@ struct WelcomePage: View {
                             .accessibilityAddTraits(.isHeader)
                             .accessibilityIdentifier("welcome.title")
                         Text(localization["WelcomeTagline"])
-                            .font(localization.font(12)).foregroundStyle(.secondary)
+                            .font(localization.font(12)).foregroundStyle(AuthAppearance.secondaryText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
@@ -79,13 +79,15 @@ struct WelcomePage: View {
             } action: { _, offset in
                 scrollOffset = offset
             }
-            .overlay(alignment: languagePickerAlignment) {
+            #if os(iOS)
+            .overlay(alignment: .topLeading) {
                 AuthLanguagePicker()
                     .frame(minHeight: 36)
                     .padding(.horizontal, 12)
                     .padding(.top, 6)
                     .environment(\.layoutDirection, .leftToRight)
             }
+            #endif
         }
         .environment(\.layoutDirection, .leftToRight)
         .background {
@@ -116,14 +118,6 @@ struct WelcomePage: View {
         } message: {
             Text(localization["GamepadWelcomeHelp"].split(separator: "\n").prefix(4).joined(separator: "\n"))
         }
-    }
-
-    private var languagePickerAlignment: Alignment {
-        #if os(macOS)
-        .topTrailing
-        #else
-        .topLeading
-        #endif
     }
 
     private var isActive: Bool {
@@ -158,7 +152,7 @@ struct WelcomePage: View {
                         .font(localization.font(13, weight: .semibold))
                         .accessibilityIdentifier("welcome.status")
                     Text(localization[statusKeys.detail])
-                        .font(localization.font(11)).foregroundStyle(.secondary)
+                        .font(localization.font(11)).foregroundStyle(AuthAppearance.secondaryText)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 ZStack {
@@ -171,6 +165,11 @@ struct WelcomePage: View {
                 }
                 .frame(width: 38, height: 38)
                 .background(model.isBusy ? AuthAppearance.accentWash : .clear, in: .rect(cornerRadius: 12))
+                .overlay {
+                    if model.isBusy {
+                        RoundedRectangle(cornerRadius: 12).strokeBorder(AuthAppearance.accentWash)
+                    }
+                }
             }
             ZStack {
                 if model.isBusy {
@@ -202,9 +201,8 @@ struct WelcomePage: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 14)
         .background(AuthAppearance.cardFill, in: .rect(cornerRadius: 16))
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
         .overlay {
-            RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(36.0 / 255))
+            RoundedRectangle(cornerRadius: 16).strokeBorder(AuthAppearance.stroke)
                 .allowsHitTesting(false)
         }
     }
@@ -218,7 +216,7 @@ struct WelcomePage: View {
             .background(emphasis ? AuthAppearance.accentWash : AuthAppearance.cardFill, in: .rect(cornerRadius: 9))
             .overlay {
                 RoundedRectangle(cornerRadius: 9)
-                    .strokeBorder(focus == control ? AuthAppearance.accent : emphasis ? AuthAppearance.accentBorder : AuthAppearance.divider)
+                    .strokeBorder(focus == control ? AuthAppearance.accent : emphasis ? AuthAppearance.accentBorder : AuthAppearance.stroke)
             }
             .contentShape(.rect)
     }

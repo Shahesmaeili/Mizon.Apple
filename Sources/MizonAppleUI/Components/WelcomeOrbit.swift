@@ -15,9 +15,7 @@ struct WelcomeProfileBadge: View {
                 if let avatar {
                     Image(decorative: avatar, scale: 1).resizable().scaledToFill()
                 } else {
-                    FluentIcon(symbol: .headphones, size: geometry.size.width * 0.45)
-                        .foregroundStyle(.linearGradient(colors: [AuthAppearance.accent, AuthAppearance.purple],
-                                                        startPoint: .topLeading, endPoint: .bottomTrailing))
+                    FluentIcon(symbol: .headphones, size: geometry.size.width * 0.45, usesColor: true)
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)

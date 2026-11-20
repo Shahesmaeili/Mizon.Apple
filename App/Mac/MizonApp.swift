@@ -19,7 +19,7 @@ struct MizonApp: App {
                 #endif
         }
         #if os(macOS)
-        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .defaultSize(width: 1000, height: 700)
         .defaultPosition(.center)
         .windowResizability(.contentMinSize)
