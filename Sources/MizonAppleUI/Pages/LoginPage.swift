@@ -157,7 +157,8 @@ private struct AuthenticationPage: View {
             #endif
         }
     }
-    @State private var registration = false
+    @State private var flip = FlipSelection()
+    private var registration: Bool { flip.showsBack }
     @State private var revealPassword = false
     @GestureState private var peeking: Field?
     @State private var request: Task<Void, Never>?
@@ -213,7 +214,7 @@ private struct AuthenticationPage: View {
                     }
                     ScrollViewReader { proxy in
                         ScrollView {
-                            FlipSide(isFlipped: registration) {
+                            FlipSide(selection: $flip) {
                                 form(wide: wide, registration: false)
                             } side2: {
                                 form(wide: wide, registration: true)
@@ -226,7 +227,7 @@ private struct AuthenticationPage: View {
                         .scrollIndicators(.hidden)
                         .defaultScrollAnchor(.top)
                         .onChange(of: registration) {
-                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
+                            withAnimation(nil) {
                                 proxy.scrollTo("auth-form", anchor: .top)
                             }
                         }
@@ -621,7 +622,7 @@ private struct AuthenticationPage: View {
         focus = nil
         primaryFocusMode = nil
         modeActionFocus = nil
-        registration.toggle()
+        flip.toggle(at: ContinuousClock().now, animated: !reduceMotion)
         AccessibilityNotification.Announcement(text(registration ? "AuthModeRegister" : "AuthModeLogin")).post()
     }
 

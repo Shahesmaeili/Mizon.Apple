@@ -1,87 +1,124 @@
+import QuartzCore
 import SwiftUI
 
+struct FlipSelection {
+    private(set) var showsBack = false
+    private(set) var motion: FlipMotion?
+
+    func angle(at now: ContinuousClock.Instant) -> Double {
+        motion?.angle(at: now) ?? restingAngle
+    }
+
+    mutating func toggle(at now: ContinuousClock.Instant, animated: Bool) {
+        let startingAngle = angle(at: now)
+        showsBack.toggle()
+        motion = animated && abs(startingAngle - restingAngle) > FlipMotion.angleTolerance
+            ? FlipMotion(startedAt: now, from: startingAngle, to: restingAngle)
+            : nil
+    }
+
+    mutating func settle() { motion = nil }
+
+    private var restingAngle: Double { showsBack ? 180 : 0 }
+}
+
+struct FlipMotion {
+    private static let period = 0.2
+    private static let dampingRatio = 0.5
+    private static let frequency = 2 * Double.pi / period
+    private static let sineWeight = dampingRatio / sqrt(1 - dampingRatio * dampingRatio)
+    private static let decay = frequency * sineWeight
+
+    // WinUI's completion threshold is internal. Bound the remaining travel and speed.
+    static let angleTolerance = 0.1
+    private static let velocityTolerance = 2.0
+
+    let startedAt: ContinuousClock.Instant
+    let from: Double
+    let to: Double
+    let end: ContinuousClock.Instant
+
+    init(startedAt: ContinuousClock.Instant, from: Double, to: Double) {
+        self.startedAt = startedAt
+        self.from = from
+        self.to = to
+        let amplitude = abs(from - to) * hypot(1, Self.sineWeight)
+        let speed = amplitude * hypot(Self.frequency, Self.decay)
+        let decayRatio = max(1, amplitude / Self.angleTolerance, speed / Self.velocityTolerance)
+        end = startedAt.advanced(by: .seconds(log(decayRatio) / Self.decay))
+    }
+
+    func angle(at now: ContinuousClock.Instant) -> Double {
+        guard now < end else { return to }
+        let elapsed = startedAt.duration(to: now).components
+        let seconds = max(0, Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18)
+        let phase = seconds * Self.frequency
+        // Composition describes Period as a complete oscillation. The sine term starts the
+        // spring from rest at the current angle, including when a turn is interrupted.
+        let remaining = exp(-Self.decay * seconds) * (cos(phase) + Self.sineWeight * sin(phase))
+        return to + (from - to) * remaining
+    }
+}
+
 struct FlipSide<Front: View, Back: View>: View {
-    var isFlipped: Bool
+    @Binding var selection: FlipSelection
     @ViewBuilder var side1: () -> Front
     @ViewBuilder var side2: () -> Back
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var rotation = 0.0
-    @State private var layoutProgress = 0.0
-    @State private var isTurning = false
-    @State private var transitionID = 0
     @State private var frontSize = CGSize.zero
     @State private var backSize = CGSize.zero
 
     var body: some View {
+        let clock = ContinuousClock()
+        let motion = selection.motion
+        let showsBack = selection.showsBack
+        let turning = motion != nil && !reduceMotion
         let depth = max(frontSize.width, frontSize.height, backSize.width, backSize.height, 1)
-        let turning = !reduceMotion && (isTurning || rotation != (isFlipped ? 1 : 0))
-        FaceLayout(progress: layoutProgress) {
-            side1()
-                .onGeometryChange(for: CGSize.self, of: \.size) { frontSize = $0 }
-                .geometryGroup()
-                .modifier(FlipFace(rotation: rotation, back: false, depth: depth))
-                .allowsHitTesting(!isFlipped).accessibilityHidden(isFlipped)
-                .disabled(isFlipped && !turning)
-            side2()
-                .onGeometryChange(for: CGSize.self, of: \.size) { backSize = $0 }
-                .geometryGroup()
-                .modifier(FlipFace(rotation: rotation, back: true, depth: depth))
-                .allowsHitTesting(isFlipped).accessibilityHidden(!isFlipped)
-                .disabled(!isFlipped && !turning)
+        let front = side1().onGeometryChange(for: CGSize.self, of: \.size) { frontSize = $0 }
+        let back = side2().onGeometryChange(for: CGSize.self, of: \.size) { backSize = $0 }
+
+        TimelineView(.animation(paused: !turning)) { _ in
+            let angle = turning ? selection.angle(at: clock.now) : (showsBack ? 180.0 : 0)
+            FaceLayout(showsBack: showsBack, reservesBothFaces: turning) {
+                front.geometryGroup()
+                    .modifier(FlipProjection(angle: angle, depth: depth))
+                    .opacity(angle <= 90 ? 1 : 0)
+                    .allowsHitTesting(!showsBack && angle <= 90)
+                    .accessibilityHidden(showsBack)
+                    .disabled(showsBack && !turning)
+                back.geometryGroup()
+                    .modifier(FlipProjection(angle: angle - 180, depth: depth))
+                    .opacity(angle > 90 ? 1 : 0)
+                    .allowsHitTesting(showsBack && angle > 90)
+                    .accessibilityHidden(!showsBack)
+                    .disabled(!showsBack && !turning)
+            }
         }
-        .onAppear { settle(at: isFlipped ? 1 : 0) }
-        .onChange(of: isFlipped) { turn(to: isFlipped ? 1 : 0) }
+        .task(id: motion?.startedAt) {
+            guard let motion else { return }
+            do { try await clock.sleep(until: motion.end) }
+            catch { return }
+            // An interrupted turn owns a different deadline.
+            if !Task.isCancelled && selection.motion?.startedAt == motion.startedAt {
+                selection.settle()
+            }
+        }
         .onChange(of: reduceMotion) {
-            if reduceMotion { settle(at: isFlipped ? 1 : 0) }
-        }
-    }
-
-    private func turn(to target: Double) {
-        guard !reduceMotion else {
-            settle(at: target)
-            return
-        }
-        transitionID += 1
-        isTurning = true
-        let turnID = transitionID
-
-        // Let the scroll content follow the card without jumping at the spring endpoints.
-        withAnimation(.smooth(duration: 0.28)) { layoutProgress = target }
-        // Match the WinUI spring's 200 ms natural period and damping ratio of 0.5.
-        withAnimation(.interpolatingSpring(mass: 1, stiffness: 986.96044, damping: 31.41593),
-                      completionCriteria: .removed) {
-            rotation = target
-        } completion: {
-            if transitionID == turnID { isTurning = false }
-        }
-    }
-
-    private func settle(at target: Double) {
-        transitionID += 1
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            rotation = target
-            layoutProgress = target
-            isTurning = false
+            if reduceMotion { selection.settle() }
         }
     }
 }
 
 struct FaceLayout: Layout {
-    var progress: Double
-
-    var animatableData: Double {
-        get { progress }
-        set { progress = newValue }
-    }
+    let showsBack: Bool
+    let reservesBothFaces: Bool
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let sizes = subviews.map { $0.sizeThatFits(.init(width: proposal.width, height: nil)) }
-        let front = sizes[0]
-        let back = sizes[1]
-        let amount = min(1, max(0, progress))
-        return CGSize(width: max(front.width, back.width), height: front.height + (back.height - front.height) * amount)
+        let faceProposal = ProposedViewSize(width: proposal.width, height: nil)
+        let active = subviews[showsBack ? 1 : 0].sizeThatFits(faceProposal)
+        guard reservesBothFaces else { return active }
+        let outgoing = subviews[showsBack ? 0 : 1].sizeThatFits(faceProposal)
+        return CGSize(width: max(active.width, outgoing.width), height: max(active.height, outgoing.height))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -92,22 +129,19 @@ struct FaceLayout: Layout {
     }
 }
 
-private nonisolated struct FlipFace: AnimatableModifier {
-    var rotation: Double
-    let back: Bool
+private nonisolated struct FlipProjection: GeometryEffect {
+    let angle: Double
     let depth: CGFloat
-    var animatableData: Double {
-        get { rotation }
-        set { rotation = newValue }
-    }
 
-    func body(content: Content) -> some View {
-        let visible = (rotation > 0.5) == back
-        let angle = Angle.degrees(180 * (rotation + (back ? 1 : 0)))
-        return content.visualEffect { effect, geometry in
-            effect
-                .rotation3DEffect(angle, axis: (0, 1, 0), perspective: geometry.size.width / (6 * depth))
-                .opacity(visible ? 1 : 0)
-        }
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        guard angle != 0 else { return ProjectionTransform() }
+        let x = size.width / 2
+        let y = size.height / 2
+        let rotation = CATransform3DMakeRotation(angle * .pi / 180, 0, 1, 0)
+        var perspective = CATransform3DIdentity
+        perspective.m34 = -1 / (6 * depth)
+        let centered = CATransform3DConcat(CATransform3DMakeTranslation(-x, -y, 0), rotation)
+        let projected = CATransform3DConcat(centered, perspective)
+        return ProjectionTransform(CATransform3DConcat(projected, CATransform3DMakeTranslation(x, y, 0)))
     }
 }

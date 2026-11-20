@@ -8,9 +8,9 @@ import MizonAppleCore
 @testable import MizonAppleUI
 
 struct WindowsPresentationTests {
-    @Test @MainActor func flipHeightInterpolatesBetweenTheTwoForms() {
-        for (progress, height) in [(0.0, 100), (0.5, 160), (1.0, 220)] {
-            let renderer = ImageRenderer(content: FaceLayout(progress: progress) {
+    @Test @MainActor func flipReservesTheTallerFaceOnlyWhileTurning() {
+        for (back, turning, height) in [(false, false, 100), (false, true, 220), (true, true, 220), (true, false, 220)] {
+            let renderer = ImageRenderer(content: FaceLayout(showsBack: back, reservesBothFaces: turning) {
                 Color.cyan.frame(width: 120, height: 100)
                 Color.purple.frame(width: 120, height: 220)
             })
@@ -18,6 +18,38 @@ struct WindowsPresentationTests {
             #expect(renderer.cgImage?.width == 120)
             #expect(renderer.cgImage?.height == height)
         }
+    }
+
+    @Test func flipCrossesAtNinetyDegreesAndPeaksHalfAnOscillationIn() {
+        let start = ContinuousClock().now
+        let motion = FlipMotion(startedAt: start, from: 0, to: 180)
+        #expect(motion.angle(at: start) == 0)
+        #expect(motion.angle(at: start.advanced(by: .milliseconds(35))) < 90)
+        #expect(motion.angle(at: start.advanced(by: .milliseconds(36))) > 90)
+        let peak = motion.angle(at: start.advanced(by: .milliseconds(100)))
+        #expect(abs(peak - 209.346) < 0.01)
+        #expect(peak > motion.angle(at: start.advanced(by: .milliseconds(99))))
+        #expect(peak > motion.angle(at: start.advanced(by: .milliseconds(101))))
+        #expect(abs(motion.angle(at: start.advanced(by: .milliseconds(200))) - 175.216) < 0.01)
+        #expect(motion.angle(at: motion.end) == 180)
+    }
+
+    @Test func reversingTheFlipStartsAtTheCurrentAngleAndReduceMotionSettles() throws {
+        let start = ContinuousClock().now
+        var flip = FlipSelection()
+        flip.toggle(at: start, animated: true)
+        let reversedAt = start.advanced(by: .milliseconds(55))
+        let interruptedAngle = flip.angle(at: reversedAt)
+        flip.toggle(at: reversedAt, animated: true)
+        #expect(!flip.showsBack)
+        #expect(abs(flip.angle(at: reversedAt) - interruptedAngle) < 0.001)
+        let reversedMotion = try #require(flip.motion)
+        #expect(flip.angle(at: reversedAt.advanced(by: .milliseconds(36))) < interruptedAngle)
+        #expect(flip.angle(at: reversedMotion.end) == 0)
+        flip.toggle(at: reversedAt.advanced(by: .milliseconds(40)), animated: false)
+        #expect(flip.showsBack)
+        #expect(flip.motion == nil)
+        #expect(flip.angle(at: reversedAt.advanced(by: .milliseconds(40))) == 180)
     }
 
     @Test func authenticationStringsLoadFromEachLanguageBundle() {
