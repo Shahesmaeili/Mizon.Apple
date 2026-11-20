@@ -1,10 +1,11 @@
 import Foundation
+import CoreGraphics
 import Testing
 import MizonAPI
 import MizonAPIClient
 @testable import MizonAppleCore
 
-private actor FakeAuthentication: AuthenticationService {
+private actor FakeAuthentication: AuthenticationService, WelcomeService {
     var failure: LoginFailure?
     var calls = 0
     init(failure: LoginFailure? = nil) { self.failure = failure }
@@ -15,6 +16,10 @@ private actor FakeAuthentication: AuthenticationService {
         return AuthSession(accessToken: "access", refreshToken: "refresh", sessionPublicId: UUID(), clientPublicId: UUID(), identifier: identifier, server: configuration.baseURL)
     }
     func signOut(session: AuthSession) {}
+    func account(for session: AuthSession) async throws -> WelcomeAccount {
+        WelcomeAccount(displayName: session.identifier, avatarID: nil)
+    }
+    func avatar(for mediaID: UUID, session: AuthSession) async throws -> CGImage? { nil }
 }
 
 @MainActor
@@ -34,14 +39,16 @@ struct LoginTests {
         #expect(try BackendConfiguration(address: " https://localhost:5128/api ").baseURL.absoluteString == "https://localhost:5128/api")
     }
     @Test func emptyOrWhitespaceIdentifierCannotSubmit() {
-        let model = LoginViewModel(authentication: FakeAuthentication())
+        let service = FakeAuthentication()
+        let model = LoginViewModel(authentication: service, welcomeService: service)
         #expect(!model.canSubmit)
         model.identifier = " \n "; model.password = "p"; #expect(!model.canSubmit)
         model.identifier = "ali"; #expect(model.canSubmit)
         model.password = ""; #expect(!model.canSubmit)
     }
     @Test func successClearsPasswordAndSupportsLocalSignOut() async {
-        let model = LoginViewModel(authentication: FakeAuthentication())
+        let service = FakeAuthentication()
+        let model = LoginViewModel(authentication: service, welcomeService: service)
         model.identifier = "ali"; model.password = "secret"
         await model.login()
         #expect(model.session?.identifier == "ali")
@@ -50,16 +57,18 @@ struct LoginTests {
     }
     @Test func failureRestoresControlsAndPreservesServerMessage() async {
         let expected = LoginFailure.api(code: 401, title: "ورود ناموفق", details: "اطلاعات ورود را بررسی کنید.", closeButton: "بستن")
-        let model = LoginViewModel(authentication: FakeAuthentication(failure: expected))
+        let service = FakeAuthentication(failure: expected)
+        let model = LoginViewModel(authentication: service, welcomeService: service)
         model.identifier = "ali"; model.password = "secret"
         await model.login()
         #expect(model.error == expected); #expect(model.session == nil)
         #expect(model.canSubmit); #expect(model.error?.closeButtonText == "بستن")
-        model.dismissError(); #expect(model.error == nil)
+        model.password = "corrected"
+        #expect(model.error == nil)
     }
     @Test func cancellationAndDoubleSubmission() async {
         let service = FakeAuthentication()
-        let model = LoginViewModel(authentication: service)
+        let model = LoginViewModel(authentication: service, welcomeService: service)
         model.identifier = "ali"; model.password = "p"
         let task = Task { await model.login() }
         while !model.isLoading { await Task.yield() }

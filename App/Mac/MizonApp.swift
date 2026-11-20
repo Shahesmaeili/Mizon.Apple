@@ -15,7 +15,7 @@ struct MizonApp: App {
         WindowGroup("Mizon") {
             MizonRootView(model: model)
                 #if os(macOS)
-                .frame(minWidth: 900, minHeight: 600)
+                .frame(minWidth: 340, minHeight: 350)
                 #endif
         }
         #if os(macOS)

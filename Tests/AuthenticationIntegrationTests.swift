@@ -11,6 +11,9 @@ private actor MemorySessionStore: SessionStore {
         if fails { throw LoginFailure.storage(-1) }
         saved = session
     }
+    func load(server: URL) -> AuthSession? {
+        saved?.server == server ? saved : nil
+    }
     func remove(server: URL) { saved = nil }
 }
 private final class AuthProtocol: URLProtocol, @unchecked Sendable {
@@ -59,6 +62,88 @@ struct AuthenticationIntegrationTests {
         try await service.signOut(session: session)
         #expect(await api.getToken() == nil); #expect(await store.saved == nil)
     }
+    @Test func registrationPostsToTheServerAndStartsTheSession() async throws {
+        AuthProtocol.configure(validResponse)
+        let http = network()
+        defer { http.invalidateAndCancel() }
+        let api = MizonApi(session: http)
+        let store = MemorySessionStore()
+        let service = MizonAuthenticationService(api: api, store: store, installationID: "apple-test")
+        let session = try await service.register(
+            configuration: BackendConfiguration(address: "https://example.com/api"),
+            registration: registration())
+        #expect(session.identifier == "mizon.user")
+        #expect(await store.saved == session)
+        #expect(await api.getToken() == session.accessToken)
+        let request = try #require(AuthProtocol.capturedRequest())
+        #expect(request.url?.path == "/api/Clients/Register")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(request.value(forHTTPHeaderField: "Content-Encoding") == "gzip")
+        #expect(request.value(forHTTPHeaderField: "Mizon-Device-Username")?.isEmpty == false)
+    }
+
+    @Test func restoresTheServerScopedSessionAndChecksTheRealMeOperation() async throws {
+        let http = network()
+        defer { http.invalidateAndCancel() }
+        let api = MizonApi(session: http)
+        let store = MemorySessionStore()
+        let config = try BackendConfiguration(address: "https://example.com/api")
+        let session = AuthSession(accessToken: "test-access", refreshToken: "test-refresh",
+                                  sessionPublicId: UUID(), clientPublicId: UUID(), identifier: "ali", server: config.baseURL)
+        try await store.save(session)
+        let auth = MizonAuthenticationService(api: api, store: store, installationID: "welcome-test")
+        let otherServer = try BackendConfiguration(address: "https://other.example.com")
+        #expect(try await auth.restore(configuration: otherServer) == nil)
+        let restored = try #require(try await auth.restore(configuration: config))
+        #expect(restored == session)
+
+        AuthProtocol.configure(#"{"content":{"firstName":"Ali","lastName":"Test","nickName":"  Mizon User  "}}"#)
+        let service = MizonWelcomeService(api: api)
+        let account = try await service.account(for: restored)
+        #expect(account.displayName == "Mizon User")
+        #expect(account.avatarID == nil)
+        let request = try #require(AuthProtocol.capturedRequest())
+        #expect(request.url?.path == "/api/Clients/Me")
+        #expect(request.httpMethod == "GET")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-access")
+        #expect(request.value(forHTTPHeaderField: "Mizon-Device-Identifier") == "welcome-test")
+
+        AuthProtocol.configure(#"{"error":{"code":20000,"title":"Expired"}}"#)
+        await #expect(throws: WelcomeFailure.sessionExpired) { try await service.account(for: restored) }
+    }
+
+    @Test func authenticationIdentifiersUseTheWindowsASCIIAllowList() {
+        #expect(AuthIdentifierInput.isAllowed("ALi.09_dev", allowsEmail: false))
+        #expect(AuthIdentifierInput.isAllowed("ali+dev%tag@example-domain.com", allowsEmail: true))
+        #expect(!AuthIdentifierInput.isAllowed("ali+dev@example.com", allowsEmail: false))
+        for value in ["علی", "ali 1", "ali۱", "ali🙂", "café", "ali\n", "ali!"] {
+            #expect(!AuthIdentifierInput.isAllowed(value, allowsEmail: true))
+        }
+    }
+
+    @Test func registrationChecksConfirmationAndIdentifierRules() {
+        var value = registration()
+        value.username = "mizon.user"
+        #expect(value.validationError(confirmation: value.password) == nil)
+        #expect(value.validationError(confirmation: "secret-test") == "AuthPasswordMismatchError")
+        value.username = "نام"
+        #expect(value.validationError(confirmation: value.password) == "AuthInvalidUsernameError")
+        value.username = "mizon.user"
+        value.emailAddress = "a..b@example.com"
+        #expect(value.validationError(confirmation: value.password) == "AuthInvalidEmailError")
+    }
+
+    private func registration() -> Registration {
+        var value = Registration()
+        value.firstName = "Ali"
+        value.lastName = "Test"
+        value.username = " mizon.user "
+        value.emailAddress = "test@example.com"
+        value.password = " secret-test "
+        return value
+    }
+
     @Test func failedSecureStorageClearsTheSDKToken() async throws {
         AuthProtocol.configure(validResponse)
         let http = network(); defer { http.invalidateAndCancel() }

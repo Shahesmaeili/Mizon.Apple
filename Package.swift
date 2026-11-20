@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Mizon.Apple",
+    defaultLocalization: "en",
     platforms: [.macOS(.v26), .iOS(.v26), .watchOS(.v26)],
     products: [
         .library(name: "MizonAppleCore", targets: ["MizonAppleCore"]),

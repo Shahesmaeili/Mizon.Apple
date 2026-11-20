@@ -1,0 +1,8 @@
+"ServerSettings" = "تنظیمات سرور";
+"CloseServerSettings" = "بستن تنظیمات سرور";
+"ServerConnection" = "اتصال به میزون";
+"ServerAddress" = "آدرس سرور";
+"ServerAddressHelp" = "آدرس HTTPS سرویس میزون را وارد کنید. روی آیفون و ساعت از آدرسی استفاده کنید که از همان دستگاه قابل‌دسترسی باشد.";
+"InvalidServerAddress" = "یک آدرس HTTPS معتبر وارد کنید.";
+"Save" = "ذخیره";
+"SignOut" = "خروج از این حساب";

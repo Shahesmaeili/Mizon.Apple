@@ -1,0 +1,8 @@
+"ServerSettings" = "Server settings";
+"CloseServerSettings" = "Close server settings";
+"ServerConnection" = "Connect to Mizon";
+"ServerAddress" = "Server address";
+"ServerAddressHelp" = "Enter your Mizon server’s HTTPS address. On iPhone and Apple Watch, use an address that the device can reach.";
+"InvalidServerAddress" = "Enter a valid HTTPS address.";
+"Save" = "Save";
+"SignOut" = "Sign out";

@@ -1,8 +1,42 @@
 import Testing
 import CoreText
+#if os(macOS)
+import Foundation
+import MizonAppleCore
+#endif
 @testable import MizonAppleUI
 
 struct WindowsPresentationTests {
+    @Test func authenticationStringsLoadFromEachLanguageBundle() {
+        #expect(AuthLocalization.string("AuthEmailLabel", table: "Auth", language: "en") == "Email")
+        #expect(AuthLocalization.string("AuthEmailLabel", table: "Auth", language: "fa") == "ایمیل")
+        #expect(AuthLocalization.string("ServerAddress", table: "Settings", language: "fa") == "آدرس سرور")
+        #expect(AuthLocalization.string("SearchEmpty", table: "Search", language: "en") == "No results")
+        #expect(AuthLocalization.string("AuthEmailLabel", table: "Auth", language: "de") == "Email")
+    }
+
+    #if os(macOS)
+    @Test func macFieldFormatterRejectsTheProposedEdit() {
+        let formatter = AuthInputFormatter {
+            $0.utf16.count <= 128 && AuthIdentifierInput.isAllowed($0, allowsEmail: true)
+        }
+        let original = "sample@example.org"
+        let originalSelection = NSRange(location: 2, length: 2)
+        var selection = NSRange(location: 3, length: 0)
+        var replacement: NSString = "saشle@example.org"
+        #expect(!formatter.isPartialStringValid(&replacement, proposedSelectedRange: &selection,
+                                               originalString: original, originalSelectedRange: originalSelection,
+                                               errorDescription: nil))
+        #expect(replacement == "saشle@example.org")
+        replacement = "satle@example.org"
+        #expect(formatter.isPartialStringValid(&replacement, proposedSelectedRange: &selection,
+                                              originalString: original, originalSelectedRange: originalSelection,
+                                              errorDescription: nil))
+        #expect(!formatter.isPartialStringValid(String(repeating: "a", count: 129), newEditingString: nil,
+                                               errorDescription: nil))
+    }
+    #endif
+
     @Test func randomRegeneratesAtMostFiveTimes() {
         var actual = DevRandom(state: 42)
         _ = actual.next(0, 100, reject: { _ in true })
@@ -38,7 +72,7 @@ struct WindowsPresentationTests {
         _ = WindowsTypography.registered
         let font = CTFontCreateWithName("SeagullFluentIcons" as CFString, 20, nil)
         #expect(CTFontCopyPostScriptName(font) as String == "SeagullFluentIcons")
-        for symbol in [FluentSymbol.personAccounts, .inPrivateAccount, .webAsset, .xboxController, .dismiss, .networkCheck, .checkmarkCircle] {
+        for symbol in FluentSymbol.allCases {
             for rtl in [false, true] {
                 var chars = Array(symbol.glyph(rightToLeft: rtl).utf16)
                 var glyphs = [CGGlyph](repeating: 0, count: chars.count)
