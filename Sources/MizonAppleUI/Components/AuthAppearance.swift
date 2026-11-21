@@ -1,44 +1,35 @@
 import SwiftUI
 
 enum AuthAppearance {
-    static let accent = color(0x9CDDED)
-    static let purple = color(0xC7A0F6)
-    static let green = color(0x93D9C0)
-    static let warm = color(0xE4BC94)
-    static let brand = color(0xB9CFF0)
+    static let accent = MizonPalette.accent
+    static let purple = MizonPalette.secondaryAccent
+    static let green = MizonPalette.positive
+    static let warm = MizonPalette.ink
+    static let brand = MizonPalette.ink
     static let accentWash = accent.opacity(22.0 / 255)
     static let accentTint = accent.opacity(50.0 / 255)
     static let accentBorder = accent.opacity(90.0 / 255)
-    static let cardFill = Color.white.opacity(8.0 / 255)
-    static let secondaryText = Color.white.opacity(197.0 / 255)
-    static let stroke = Color.white.opacity(36.0 / 255)
-    static let divider = Color.white.opacity(22.0 / 255)
-    static let errorText = color(0xF5C6D2)
-    static let errorAccent = color(0xF0A1B5)
+    static let cardFill = MizonPalette.ink.opacity(8.0 / 255)
+    static let stroke = MizonPalette.ink.opacity(36.0 / 255)
+    static let divider = MizonPalette.ink.opacity(22.0 / 255)
+    static let errorAccent = MizonPalette.negative
     static let errorWash = errorAccent.opacity(22.0 / 255)
     static let errorBorder = errorAccent.opacity(64.0 / 255)
     static let errorFill = LinearGradient(
-        colors: [color(0xC96787).opacity(33.0 / 255), color(0xC96787).opacity(8.0 / 255)],
+        colors: [errorAccent.opacity(33.0 / 255), errorAccent.opacity(8.0 / 255)],
         startPoint: .topLeading, endPoint: .bottomTrailing
     )
-    static let windowError = color(0xEF6A7A)
-
-    static func color(_ rgb: UInt32) -> Color {
-        Color(red: Double((rgb >> 16) & 255) / 255,
-              green: Double((rgb >> 8) & 255) / 255,
-              blue: Double(rgb & 255) / 255)
-    }
 
     static func inputFill(focused: Bool, hovered: Bool, disabled: Bool) -> Color {
-        if disabled { return .white.opacity(8.0 / 255) }
+        if disabled { return MizonPalette.ink.opacity(8.0 / 255) }
         if focused { return accent.opacity(30.0 / 255) }
-        return .white.opacity((hovered ? 22.0 : 12.0) / 255)
+        return MizonPalette.ink.opacity((hovered ? 22.0 : 12.0) / 255)
     }
 
     static func inputBorder(focused: Bool, hovered: Bool, disabled: Bool) -> Color {
         if disabled { return divider }
         if focused { return accent.opacity(185.0 / 255) }
-        return .white.opacity((hovered ? 75.0 : 40.0) / 255)
+        return MizonPalette.ink.opacity((hovered ? 75.0 : 40.0) / 255)
     }
 }
 
@@ -55,33 +46,33 @@ struct AuthActionStyle: ButtonStyle {
         let radius: CGFloat = primary ? 13 : 23
         let animation = reduceMotion ? nil : Animation.timingCurve(0.2, 0.8, 1, 1, duration: 0.16)
         return configuration.label
-            .foregroundStyle(primary ? AuthAppearance.color(0x142331) : .white)
+            .foregroundStyle(primary ? MizonPalette.surface : MizonPalette.ink)
             .padding(.horizontal, primary ? 14 : 22)
             .frame(minHeight: primary ? 48 : 46)
             .background {
                 RoundedRectangle(cornerRadius: radius)
                     .fill(LinearGradient(stops: primary ? [
-                        .init(color: AuthAppearance.color(0xB6E8EE), location: 0),
-                        .init(color: AuthAppearance.color(0xA9D2ED), location: 0.55),
-                        .init(color: AuthAppearance.color(0xBBBDF1), location: 1)
+                        .init(color: MizonPalette.accent, location: 0),
+                        .init(color: MizonPalette.accent, location: 0.55),
+                        .init(color: MizonPalette.secondaryAccent, location: 1)
                     ] : [
                         .init(color: AuthAppearance.accent.opacity(37.0 / 255), location: 0),
-                        .init(color: AuthAppearance.color(0xB6A6ED).opacity(21.0 / 255), location: 0.6),
+                        .init(color: MizonPalette.secondaryAccent.opacity(21.0 / 255), location: 0.6),
                         .init(color: AuthAppearance.accent.opacity(7.0 / 255), location: 1)
                     ], startPoint: .topTrailing, endPoint: .bottomLeading))
                     .overlay {
                         RoundedRectangle(cornerRadius: radius)
-                            .strokeBorder(primary ? .white.opacity(101.0 / 255) : AuthAppearance.accentBorder)
+                            .strokeBorder(primary ? MizonPalette.ink.opacity(101.0 / 255) : AuthAppearance.accentBorder)
                     }
                     .overlay(alignment: .top) {
-                        Rectangle().fill(.white.opacity(64.0 / 255))
+                        Rectangle().fill(MizonPalette.ink.opacity(64.0 / 255))
                             .frame(height: 1)
                             .padding(.horizontal, 14)
                             .padding(.top, 1)
                     }
                     .overlay {
                         RoundedRectangle(cornerRadius: radius)
-                            .fill(.white.opacity(64.0 / 255 * (pressed ? 0.04 : over ? 0.16 : 0)))
+                            .fill(MizonPalette.ink.opacity(64.0 / 255 * (pressed ? 0.04 : over ? 0.16 : 0)))
                     }
             }
             .opacity(enabled ? 1 : 0.45)
@@ -115,7 +106,7 @@ struct AuthSceneButtonStyle: ButtonStyle {
         return configuration.label
             .opacity(opacity)
             .background(color.opacity(tint), in: .rect(cornerRadius: 11))
-            .background(.white.opacity(5.0 / 255), in: .rect(cornerRadius: 11))
+            .background(MizonPalette.ink.opacity(5.0 / 255), in: .rect(cornerRadius: 11))
             .overlay(alignment: .bottom) {
                 Capsule().fill(color)
                     .frame(width: 20, height: 2)

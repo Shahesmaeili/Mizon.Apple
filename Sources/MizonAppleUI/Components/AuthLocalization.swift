@@ -52,9 +52,9 @@ struct AuthLanguagePicker: View {
             Button(localization["GamepadKeyboardLanguagePersian"]) { selectLanguage("fa") }
         } label: {
             FluentIcon(symbol: .globe, size: 17)
-                .foregroundStyle(hovered ? .white : AuthAppearance.secondaryText)
+                .foregroundStyle(hovered ? MizonPalette.ink : MizonPalette.secondaryText)
                 .frame(width: 36, height: 36)
-                .background(.white.opacity(hovered ? 15.0 / 255 : 0), in: .rect(cornerRadius: 8))
+                .background(MizonPalette.ink.opacity(hovered ? 15.0 / 255 : 0), in: .rect(cornerRadius: 8))
                 .contentShape(.rect)
         }
         .menuStyle(.borderlessButton)

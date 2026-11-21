@@ -28,6 +28,10 @@ public struct MizonRootView: View {
 
     public var body: some View {
         content
+            .foregroundStyle(MizonPalette.ink)
+            .tint(MizonPalette.accent)
+            .preferredColorScheme(.dark)
+            .background { WindowGlass().ignoresSafeArea() }
             #if os(macOS)
             .toolbar {
                 if showingAuthentication {
@@ -38,7 +42,7 @@ public struct MizonRootView: View {
                     .sharedBackgroundVisibility(.hidden)
                 }
             }
-            .toolbarBackground(showingAuthentication ? .hidden : .automatic, for: .windowToolbar)
+            .toolbarBackground(.hidden, for: .windowToolbar)
             .environment(\.layoutDirection, .leftToRight)
             #endif
     }
@@ -241,15 +245,10 @@ private struct AuthenticationPage: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background {
-            WindowGlass()
-                .overlay(Color.black.opacity(0.42))
-                .ignoresSafeArea()
-        }
         #if os(macOS)
         .overlay {
             RoundedRectangle(cornerRadius: 18)
-                .strokeBorder(AuthAppearance.windowError, lineWidth: 1)
+                .strokeBorder(MizonPalette.negative, lineWidth: 1)
                 .opacity(errorKey == nil ? 0 : 1)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
@@ -275,9 +274,7 @@ private struct AuthenticationPage: View {
         .task(id: scenePhase) {
             if scenePhase == .active { await observeGamepad() }
         }
-        .preferredColorScheme(.dark)
         .environment(\.layoutDirection, .leftToRight)
-        .tint(AuthAppearance.accent)
         .onAppear {
             withAnimation(reduceMotion ? nil : .timingCurve(0.16, 0.8, 1, 1, duration: 0.42)) {
                 entranceVisible = true
@@ -342,7 +339,7 @@ private struct AuthenticationPage: View {
                     .accessibilityAddTraits(.isHeader)
                 Text(text(registration ? "AuthRegisterDescription" : "AuthLoginDescription"))
                     .font(authFont(12))
-                    .foregroundStyle(AuthAppearance.secondaryText)
+                    .foregroundStyle(MizonPalette.secondaryText)
             }
             VStack(alignment: .leading, spacing: registration ? 12 : 16) {
                 if registration {
@@ -377,7 +374,7 @@ private struct AuthenticationPage: View {
                     if model.isLoading && self.registration == registration {
                         ProgressView()
                             .controlSize(.small)
-                            .tint(AuthAppearance.color(0x142331))
+                            .tint(MizonPalette.surface)
                             .frame(width: 20, height: 18)
                     } else {
                         Color.clear.frame(width: 20, height: 1)
@@ -576,7 +573,7 @@ private struct AuthenticationPage: View {
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focus == field)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hoveredField == field)
             .onHover { if $0 { hoveredField = field } else if hoveredField == field { hoveredField = nil } }
-            if let hint { Text(text(hint)).font(authFont(10)).foregroundStyle(AuthAppearance.secondaryText) }
+            if let hint { Text(text(hint)).font(authFont(10)).foregroundStyle(MizonPalette.secondaryText) }
         }
         .frame(maxWidth: .infinity)
         .disabled(model.isLoading)
@@ -812,7 +809,7 @@ private struct AuthenticationPage: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(text(caption.key + "Title")).font(authFont(24, weight: .semibold))
-                Text(text(caption.key + "Description")).font(authFont(12)).foregroundStyle(AuthAppearance.secondaryText)
+                Text(text(caption.key + "Description")).font(authFont(12)).foregroundStyle(MizonPalette.secondaryText)
             }
             .opacity(captionOpacity)
             .frame(maxWidth: .infinity, minHeight: 106, alignment: .topLeading)

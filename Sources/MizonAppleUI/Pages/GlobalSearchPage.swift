@@ -25,8 +25,11 @@ struct GlobalSearchPage: View {
                     Text(isPersian ? result.persianTitle.flatMap { $0.isEmpty ? nil : $0 } ?? result.title : result.title)
                 } icon: {
                     Image(systemName: result.kind == .music ? "music.note" : "person.crop.circle")
+                        .foregroundStyle(MizonPalette.accent)
                 }
+                .listRowBackground(AuthAppearance.cardFill)
             }
+            .scrollContentBackground(.hidden)
             .overlay {
                 if loading && results.isEmpty {
                     ProgressView()

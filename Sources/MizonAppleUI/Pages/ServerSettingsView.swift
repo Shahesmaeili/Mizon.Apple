@@ -27,9 +27,10 @@ public struct ServerSettingsView: View {
                 .environment(\.layoutDirection, .leftToRight)
                 .accessibilityIdentifier("server.address")
             Text(text("ServerAddressHelp"))
-                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+                .font(.caption).foregroundStyle(MizonPalette.secondaryText).multilineTextAlignment(.leading)
             if showsValidation {
-                Text(text("InvalidServerAddress")).font(.caption).foregroundStyle(.red).accessibilityIdentifier("server.error")
+                Text(text("InvalidServerAddress")).font(.caption).foregroundStyle(MizonPalette.negative)
+                    .accessibilityIdentifier("server.error")
             }
             Button(text("Save")) {
                 do {
@@ -39,7 +40,7 @@ public struct ServerSettingsView: View {
                     model.dismissError(); dismiss()
                 } catch { showsValidation = true }
             }
-            .buttonStyle(.glassProminent).tint(.cyan).disabled(model.isLoading)
+            .buttonStyle(.glassProminent).tint(MizonPalette.accent).disabled(model.isLoading)
             #if !os(watchOS)
             .keyboardShortcut(.defaultAction)
             #endif
@@ -53,6 +54,8 @@ public struct ServerSettingsView: View {
         #if os(macOS)
         .frame(width: 420)
         #endif
+        .foregroundStyle(MizonPalette.ink)
+        .background { WindowGlass().ignoresSafeArea() }
         .preferredColorScheme(.dark)
     }
 

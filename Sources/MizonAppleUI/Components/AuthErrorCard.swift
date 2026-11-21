@@ -17,7 +17,7 @@ struct AuthErrorCard: View {
                 .overlay { RoundedRectangle(cornerRadius: 11).strokeBorder(AuthAppearance.errorBorder) }
             VStack(alignment: .leading, spacing: 5) {
                 Text(title).font(localization.font(12, weight: .semibold))
-                    .foregroundStyle(AuthAppearance.errorText)
+                    .foregroundStyle(MizonPalette.negative)
                 Text(message).font(localization.font(11))
                     .foregroundStyle(.primary)
             }

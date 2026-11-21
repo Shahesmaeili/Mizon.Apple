@@ -59,7 +59,7 @@ struct WelcomePage: View {
                             .accessibilityAddTraits(.isHeader)
                             .accessibilityIdentifier("welcome.title")
                         Text(localization["WelcomeTagline"])
-                            .font(localization.font(12)).foregroundStyle(AuthAppearance.secondaryText)
+                            .font(localization.font(12)).foregroundStyle(MizonPalette.secondaryText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
@@ -90,13 +90,6 @@ struct WelcomePage: View {
             #endif
         }
         .environment(\.layoutDirection, .leftToRight)
-        .background {
-            WindowGlass()
-                .overlay(.black.opacity(0.42))
-                .ignoresSafeArea()
-        }
-        .preferredColorScheme(.dark)
-        .tint(AuthAppearance.accent)
         .accessibilityIdentifier("welcome")
         .onAppear {
             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.42)) { entranceVisible = true }
@@ -152,7 +145,7 @@ struct WelcomePage: View {
                         .font(localization.font(13, weight: .semibold))
                         .accessibilityIdentifier("welcome.status")
                     Text(localization[statusKeys.detail])
-                        .font(localization.font(11)).foregroundStyle(AuthAppearance.secondaryText)
+                        .font(localization.font(11)).foregroundStyle(MizonPalette.secondaryText)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 ZStack {

@@ -61,6 +61,7 @@ struct FilteredAuthField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField()
         field.delegate = context.coordinator
+        field.textColor = NSColor(MizonPalette.ink)
         field.formatter = AuthInputFormatter(accepts: accepts)
         field.isBordered = false
         field.drawsBackground = false
