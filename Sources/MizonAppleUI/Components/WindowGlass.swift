@@ -12,14 +12,14 @@ struct WindowGlass: View {
             MizonPalette.surface
         } else {
             WindowBackdrop()
-                .overlay(MizonPalette.surface.opacity(0.84))
+                .overlay(MizonPalette.surface.opacity(0.73))
         }
         #elseif os(iOS)
         if reduceTransparency {
             MizonPalette.surface
         } else {
             Rectangle().fill(.ultraThinMaterial)
-                .overlay(MizonPalette.surface.opacity(0.92))
+                .overlay(MizonPalette.surface.opacity(0.86))
         }
         #else
         MizonPalette.surface
