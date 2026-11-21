@@ -51,11 +51,17 @@ struct WelcomeTests {
         #expect(!model.isBusy)
 
         await service.recover()
-        guard case .home(let accepted)? = await model.prepare(session: { active }) else {
+        var readySessions: [UUID] = []
+        guard case .home(let accepted)? = await model.prepare(onAccount: { session, account in
+            #expect(model.stage == .profile)
+            #expect(account.displayName == "Test")
+            readySessions.append(session.sessionPublicId)
+        }, session: { active }) else {
             Issue.record("Expected home with the current session")
             return
         }
         #expect(accepted == active)
+        #expect(readySessions == [active.sessionPublicId])
         #expect(model.stage == .ready)
         #expect(model.account?.displayName == "Test")
         #expect(model.avatar == nil)

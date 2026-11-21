@@ -24,7 +24,8 @@ public final class WelcomeViewModel {
         self.service = service
     }
 
-    public func prepare(session: () async throws -> AuthSession?) async -> Destination? {
+    public func prepare(onAccount: (AuthSession, WelcomeAccount) -> Void = { _, _ in },
+                        session: () async throws -> AuthSession?) async -> Destination? {
         guard !isBusy else { return nil }
         isBusy = true
         stage = .checking
@@ -42,6 +43,7 @@ public final class WelcomeViewModel {
             try Task.checkCancellation()
             self.account = account
             stage = .profile
+            onAccount(session, account)
             if let avatarID = account.avatarID {
                 avatar = try? await service.avatar(for: avatarID, session: session)
             }

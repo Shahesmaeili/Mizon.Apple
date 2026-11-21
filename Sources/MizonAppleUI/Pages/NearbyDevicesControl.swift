@@ -8,6 +8,7 @@ import AppKit
 
 struct NearbyDevicesControl: View {
     let peers: [NearbyDiscoveredPeer]
+    var avatars: [String: CGImage] = [:]
     @Binding var enabled: Bool
     let status: NearbyDiscoveryStatus
     let viewport: CGSize
@@ -34,7 +35,7 @@ struct NearbyDevicesControl: View {
         .accessibilityValue(text(status.titleKey))
         .help(text("Title"))
         .popover(isPresented: $showing, arrowEdge: .top) {
-            NearbyDevicesPanel(peers: peers, enabled: $enabled, status: status, viewport: viewport,
+            NearbyDevicesPanel(peers: peers, avatars: avatars, enabled: $enabled, status: status, viewport: viewport,
                                controllerEntry: controllerEntry) { showing = false }
                 .presentationCompactAdaptation(.popover)
         }
@@ -56,6 +57,7 @@ private struct NearbyDevicesPanel: View {
     private enum FocusTarget: Hashable { case close, visibility }
 
     let peers: [NearbyDiscoveredPeer]
+    let avatars: [String: CGImage]
     @Binding var enabled: Bool
     let status: NearbyDiscoveryStatus
     let viewport: CGSize
@@ -215,7 +217,8 @@ private struct NearbyDevicesPanel: View {
 
             LazyVStack(spacing: 5) {
                 ForEach(devices) { peer in
-                    NearbyDeviceRow(peer: peer)
+                    let account = NearbyProfileArtworkService.normalizedUsername(peer.account)
+                    NearbyDeviceRow(peer: peer, avatar: account.flatMap { avatars[$0] })
                 }
             }
         }
@@ -311,6 +314,7 @@ struct NearbyControllerLatch {
 
 private struct NearbyDeviceRow: View {
     let peer: NearbyDiscoveredPeer
+    let avatar: CGImage?
     private var localization = AuthLocalization()
 
     private var identity: String? {
@@ -323,11 +327,8 @@ private struct NearbyDeviceRow: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            Image(systemName: peer.platform.symbol)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(peer.platform.tint)
+            badge
                 .frame(width: 33, height: 33)
-                .background(peer.platform.tint.opacity(0.12), in: .rect(cornerRadius: 10))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(peer.deviceName)
@@ -352,6 +353,21 @@ private struct NearbyDeviceRow: View {
         .frame(minHeight: 45)
         .background(.primary.opacity(0.045), in: .rect(cornerRadius: 12))
         .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var badge: some View {
+        if let avatar {
+            WelcomeProfileBadge(avatar: avatar)
+        } else {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(peer.platform.tint.opacity(0.12))
+                .overlay {
+                    Image(systemName: peer.platform.symbol)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(peer.platform.tint)
+                }
+        }
     }
 }
 

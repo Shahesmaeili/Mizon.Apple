@@ -16,12 +16,32 @@ public struct MizonRootView: View {
     @Namespace private var profileTransition
     @State private var checkedStartup = false
     @State private var home: HomeEntrance?
+    @State private var nearby = NearbyDiscoveryModel()
+    @State private var nearbyIdentity: NearbyIdentity?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if os(iOS)
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var nearbyInForeground = false
+    #endif
 
     private struct HomeEntrance {
         let sessionID: UUID
         let account: WelcomeAccount?
         let avatar: CGImage?
+    }
+
+    private struct NearbyIdentity: Equatable {
+        let sessionID: UUID
+        let username: String?
+        let displayName: String
+    }
+
+    private var discoverableIdentity: NearbyIdentity? {
+        #if os(iOS)
+        guard nearbyInForeground else { return nil }
+        #endif
+        guard nearby.enabled, let nearbyIdentity, nearbyIdentity.sessionID == model.session?.sessionPublicId else { return nil }
+        return nearbyIdentity
     }
     #endif
 
@@ -31,6 +51,18 @@ public struct MizonRootView: View {
 
     public var body: some View {
         content
+            #if os(iOS)
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                if phase == .active { nearbyInForeground = true }
+                if phase == .background { nearbyInForeground = false }
+            }
+            #endif
+            #if os(macOS) || os(iOS)
+            .task(id: discoverableIdentity) { [identity = discoverableIdentity] in
+                await nearby.discover(inForeground: identity != nil,
+                                      publicUsername: identity?.username, displayName: identity?.displayName)
+            }
+            #endif
             #if os(macOS)
             .toolbar {
                 if showingAuthentication {
@@ -59,7 +91,7 @@ public struct MizonRootView: View {
         #else
         if let session = model.session, let home, home.sessionID == session.sessionPublicId {
             MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
-                          publicUsername: home.account?.publicUsername,
+                          nearby: nearby,
                           avatar: home.avatar, profileTransition: profileTransition, initialMood: home.account?.mood) {
                 Task {
                     await model.signOut()
@@ -86,6 +118,11 @@ public struct MizonRootView: View {
                     checkedStartup = true
                     home = nil
                     return true
+                },
+                accountReady: { session, account in
+                    guard model.session?.sessionPublicId == session.sessionPublicId else { return }
+                    nearbyIdentity = NearbyIdentity(sessionID: session.sessionPublicId, username: account.publicUsername,
+                                                    displayName: account.displayName)
                 },
                 enter: { session, account, avatar in
                     guard model.session == session else { return }

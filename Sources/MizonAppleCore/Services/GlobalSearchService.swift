@@ -34,4 +34,21 @@ public struct GlobalSearchService: Sendable {
             await onResult(.init(publicID: item.publicId, kind: kind, title: title, persianTitle: item.persianTitle))
         }
     }
+
+    func exactClientID(forNormalizedUsername username: String, endpoints: Endpoints) async throws -> UUID? {
+        var operation = GlobalSearchOperation(.init(query: username), endpoints: endpoints)
+        operation.apiRequest.callTimeoutDuration = 4
+
+        // The backend interleaves up to ten Client results and ten Music results.
+        let results = await api.sendStreamRequest(operation)
+        for try await item in results.prefix(20) {
+            try Task.checkCancellation()
+            guard item.itemType == GlobalSearchResult.Kind.client.rawValue,
+                  NearbyProfileArtworkService.normalizedUsername(item.username) == username,
+                  item.publicId != UUID.emptyPublicIdentifier else { continue }
+            return item.publicId
+        }
+        try Task.checkCancellation()
+        return nil
+    }
 }
