@@ -9,6 +9,7 @@ struct MusicHomeDestinationView: View {
     private enum Details {
         case track(UUID, MusicResponse)
         case artist(PersonProfileResponse)
+        case client(ClientProfileResponse)
         case playlist(MusicPlaylistDetailsResponse)
         case story(StoryResponse)
     }
@@ -42,6 +43,9 @@ struct MusicHomeDestinationView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle(title)
+        #if os(iOS)
+        .toolbar(.visible, for: .navigationBar)
+        #endif
         .navigationBarBackButtonHidden()
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -64,6 +68,7 @@ struct MusicHomeDestinationView: View {
         switch details {
         case .track(_, let item): localized(item.title, item.persianTitle)
         case .artist(let item): "\(item.firstName) \(item.lastName)"
+        case .client(let item): item.nickName ?? [item.firstName, item.lastName].filter { !$0.isEmpty }.joined(separator: " ")
         case .playlist(let item): item.title
         case .story(let item): item.title ?? text("Story")
         case nil: text("PageName")
@@ -100,6 +105,15 @@ struct MusicHomeDestinationView: View {
             }
             Label(artist.followersCount.formatted(), systemImage: "person.2").foregroundStyle(.secondary)
             rows
+        case .client(let item):
+            MusicArtwork(mediaID: item.profileMediaPublicId, model: model, symbol: "person.fill")
+                .frame(width: 118, height: 118)
+                .background(MusicHomeStyle.inset)
+                .clipShape(.circle)
+            Text(title).font(localization.font(25, weight: .semibold)).accessibilityAddTraits(.isHeader)
+            if let username = item.username, !username.isEmpty {
+                Text("@" + username).font(localization.font(12)).foregroundStyle(MusicHomeStyle.cyan)
+            }
         case .playlist(let playlist):
             Text(playlist.title).font(localization.font(25, weight: .semibold)).accessibilityAddTraits(.isHeader)
             rows
@@ -166,6 +180,8 @@ struct MusicHomeDestinationView: View {
             switch route {
             case .track(let id):
                 details = .track(id, try await model.service.track(id, session: model.session))
+            case .client(let id):
+                details = .client(try await model.service.client(id, session: model.session))
             case .artist(let id):
                 async let artist = model.service.artist(id, session: model.session)
                 async let music = model.service.artistMusic(id, after: nil, session: model.session)

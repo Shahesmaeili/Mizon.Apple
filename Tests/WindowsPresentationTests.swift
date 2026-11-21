@@ -61,6 +61,17 @@ struct WindowsPresentationTests {
         #expect(AuthLocalization.string("AuthEmailLabel", table: "Auth", language: "de") == "Email")
     }
 
+    #if os(macOS) || os(iOS)
+    @Test(arguments: ["blue-hour", "orbit-models", "orbit-illustration", "orbit-team", "friend-amir", "friend-sara"])
+    func musicArtworkDecodesFromTheResourceBundle(_ asset: String) async throws {
+        let image = await MusicLocalArtwork.image(named: asset, maximumPixelSize: 256)
+        let artwork = try #require(image)
+        #expect(artwork.width > 0)
+        #expect(artwork.height > 0)
+        #expect(max(artwork.width, artwork.height) <= 256)
+    }
+    #endif
+
     #if os(macOS)
     @Test @MainActor func macFieldReportsFocusBeforeTyping() {
         _ = NSApplication.shared

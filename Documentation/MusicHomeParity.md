@@ -14,3 +14,11 @@ The Windows reference still has a more extensive signed-in shell, Story viewer, 
 The iOS simulator smoke test uses a synthetic session and response fixtures, with a Windows Kana model from the reference checkout. The fixture, local developer trust configuration, device logs and build artifacts stay outside the source commits.
 
 Validation completed with Xcode 27.1 and Swift 6.4. The 29 Swift tests passed. The iOS 27.1 UI smoke case loaded the Kana artist model, advanced and reversed the hero, opened a track and returned to Music Home, then scrolled to the Add Story preview. The main macOS Debug and iOS Simulator Release builds passed. The Catppuccin macOS Release build includes arm64 and x86_64 and ran with one application instance. A development-signed build was installed and the app process confirmed on the connected iPhone 16 Pro Max. The device's signed-in Music Home was not exercised with an account.
+
+## Visual parity revision
+
+Windows reference remained `ac0ea2c525a7d5e6cd1213c8364322466330aff9` when checked against the remote branch. Apple revision bases were `b8ef1bb891f0778a729b57a2b7e04f6b45b6ef5e` and `9670bd3e3c15b69653a2ed305afff51c3ff8c064`. The Swift SDK revision above remains pinned.
+
+The signed-in music page uses the Windows top navigation and embedded search, the original featured-player overlay and spotlight proportions, and closer ports of the card rails and sidebar widgets. The search and mood controls use the existing SDK operations. The reference timings drive the hero selection, spotlight entrances, and news transitions. The actual Windows photos are loaded from the SwiftPM bundle with bounded ImageIO decoding. The rendering check covered 320, 390, 1000, 1100, and 1600 point macOS fixtures. The iPhone simulator exercised the search field and selected music tab, feature controls, the Windows Kana model, track navigation, page scrolling, and the story preview. The 30-test Swift suite includes bundled artwork coverage.
+
+The test fixtures used synthetic data. A live pixel comparison with the Windows app remains open. The English typography falls back to the Apple system font when Segoe UI Variable is unavailable. The mood control displays the API emoji and supports selection, with the Windows Lottie effects still pending. The non-music sections still need their own Apple destinations.

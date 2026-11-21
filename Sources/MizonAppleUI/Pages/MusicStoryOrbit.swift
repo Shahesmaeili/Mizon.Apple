@@ -19,9 +19,12 @@ struct MusicStoryOrbit: View {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.displayScale) private var displayScale
     @Environment(\.scenePhase) private var scenePhase
     @State private var visible = false
     @State private var pointer: CGPoint?
+    @State private var pixelWidth = 512
+    @State private var artwork: [String: CGImage] = [:]
 
     private static let typeface: String = {
         guard let url = Bundle.module.url(forResource: "BodoniModa", withExtension: "ttf"),
@@ -33,8 +36,10 @@ struct MusicStoryOrbit: View {
 
     var body: some View {
         let animating = visible && !reduceMotion && scenePhase == .active
+        let displayScale = displayScale
         TimelineView(.animation(minimumInterval: 1 / 30, paused: !animating)) { time in
             Canvas { context, size in
+                guard size.width > 0 else { return }
                 var context = context
                 let scale = size.width / 1440
                 context.scaleBy(x: scale, y: scale)
@@ -47,6 +52,16 @@ struct MusicStoryOrbit: View {
         }
         .aspectRatio(1440 / 560.0, contentMode: .fit)
         .frame(maxWidth: 1130)
+        .onGeometryChange(for: Int.self) { geometry in
+            // Quantize resize requests to avoid decoding again for every window-size change.
+            let width = min(4096, max(0, geometry.size.width * displayScale))
+            return Int(ceil(width / 256)) * 256
+        } action: { width in
+            if width > 0 { pixelWidth = width }
+        }
+        .task(id: pixelWidth) {
+            await loadArtwork(pixelWidth: pixelWidth)
+        }
         .frame(maxWidth: .infinity)
         .onScrollVisibilityChange(threshold: 0.1) { visible = $0 }
         .onContinuousHover { phase in
@@ -57,6 +72,24 @@ struct MusicStoryOrbit: View {
         }
         .environment(\.layoutDirection, .leftToRight)
         .accessibilityHidden(true)
+    }
+
+    private func loadArtwork(pixelWidth: Int) async {
+        let requests = Self.cards.map { card in
+            let dimension = max(card.imageBounds.width, card.imageBounds.height)
+            return (card.asset, Int(ceil(dimension * CGFloat(pixelWidth) / 1440)))
+        }
+        await withTaskGroup(of: (String, CGImage?).self) { group in
+            for (asset, size) in requests {
+                group.addTask {
+                    (asset, await MusicLocalArtwork.image(named: asset, maximumPixelSize: size))
+                }
+            }
+            for await (asset, image) in group {
+                guard !Task.isCancelled else { return }
+                artwork[asset] = image
+            }
+        }
     }
 
     private func draw(_ card: Card, index: Int, context: GraphicsContext, elapsed: Double?, pointer: CGPoint?) {
@@ -90,14 +123,14 @@ struct MusicStoryOrbit: View {
         var photo = layer(period: 23 + Double(index) * 2.3, x: 4 * direction, y: -4, pointerX: 10, pointerY: 7)
         photo.clip(to: card.photo)
         photo.fill(card.photo, with: .color(card.accent))
-        let image = photo.resolve(Image(card.asset, bundle: .module))
         let bounds = card.imageBounds
-        if image.size.width > 0, image.size.height > 0 {
-            let scale = max(bounds.width / image.size.width, bounds.height / image.size.height)
-            let width = image.size.width * scale
-            let height = image.size.height * scale
-            photo.draw(image, in: CGRect(x: bounds.midX - width / 2, y: bounds.midY - height / 2,
-                                        width: width, height: height))
+        if let artwork = artwork[card.asset] {
+            let size = CGSize(width: artwork.width, height: artwork.height)
+            let scale = max(bounds.width / size.width, bounds.height / size.height)
+            let width = size.width * scale
+            let height = size.height * scale
+            photo.draw(Image(decorative: artwork, scale: 1),
+                       in: CGRect(x: bounds.midX - width / 2, y: bounds.midY - height / 2, width: width, height: height))
         }
 
         var year = layer(period: 26 + Double(index) * 1.3, phase: 43, x: -5, y: 5 * direction, pointerX: -14, pointerY: -10)

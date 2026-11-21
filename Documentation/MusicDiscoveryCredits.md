@@ -18,7 +18,8 @@ Wikimedia Commons supplied resized JPEG thumbnails (960px covers, 250px portrait
 | `somewhere-new.jpg` | [Comandau forest railway.jpg](https://commons.wikimedia.org/wiki/File:Comandau_forest_railway.jpg) — Jan Pešula | [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) |
 | `stay-awhile.jpg` | [Three pink cherry blossoms in Tuntorp.jpg](https://commons.wikimedia.org/wiki/File:Three_pink_cherry_blossoms_in_Tuntorp.jpg) — W.carter | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0) |
 | `velvet-sky.jpg` | [Aurora borealis over Eielson Air Force Base, Alaska.jpg](https://commons.wikimedia.org/wiki/File:Aurora_borealis_over_Eielson_Air_Force_Base,_Alaska.jpg) — United States Air Force photo by Senior Airman Joshua Strang | Public domain (see source) |
-
+| `friend-amir.jpg` | [Curly hair and freckles man (Unsplash).jpg](https://commons.wikimedia.org/wiki/File:Curly_hair_and_freckles_man_(Unsplash).jpg) — Jeremy Bishop tidesinourveins | [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) |
+| `friend-sara.jpg` | [Winter Woman Portrait.jpg](https://commons.wikimedia.org/wiki/File:Winter_Woman_Portrait.jpg) — Petr Kratochvil | [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) |
 
 Downloaded from Wikimedia Commons on 2026-10-29. The linked original file pages contain the full provenance and licensing statements.
 

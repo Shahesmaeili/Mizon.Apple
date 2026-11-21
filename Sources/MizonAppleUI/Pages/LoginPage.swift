@@ -59,12 +59,13 @@ public struct MizonRootView: View {
         #else
         if let session = model.session, let home, home.sessionID == session.sessionPublicId {
             MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
-                          avatar: home.avatar, profileTransition: profileTransition) {
+                          avatar: home.avatar, profileTransition: profileTransition, initialMood: home.account?.mood) {
                 Task {
                     await model.signOut()
                     if model.session == nil { self.home = nil }
                 }
             }
+            .background { WindowGlass().ignoresSafeArea() }
             .alert(model.error?.errorDescription ?? "Sign out failed", isPresented: Binding(
                 get: { model.error != nil },
                 set: { if !$0 { model.dismissError() } }
