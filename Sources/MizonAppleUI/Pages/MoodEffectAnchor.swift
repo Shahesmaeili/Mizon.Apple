@@ -12,7 +12,7 @@ struct MoodEffectPresentation: Equatable {
     let playback = MoodLottieEffectPlayback()
 }
 
-private let moodEffectSize: CGFloat = 208
+private let moodEffectSize = MoodLottiePlayback.effectSize.width
 
 private struct MoodEffectSurface: View {
     let effect: MoodEffectPresentation
@@ -29,7 +29,7 @@ private struct MoodEffectSurface: View {
 
 #if os(macOS)
 struct MoodEffectAnchor: NSViewRepresentable {
-    let effect: MoodEffectPresentation?
+    let effect: MoodEffectPresentation
     let onCompletion: (UUID) -> Void
 
     func makeNSView(context: Context) -> Anchor { Anchor() }
@@ -124,7 +124,7 @@ struct MoodEffectAnchor: NSViewRepresentable {
 }
 #else
 struct MoodEffectAnchor: UIViewRepresentable {
-    let effect: MoodEffectPresentation?
+    let effect: MoodEffectPresentation
     let onCompletion: (UUID) -> Void
 
     func makeUIView(context: Context) -> Anchor {

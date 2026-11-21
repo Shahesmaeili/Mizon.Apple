@@ -11,6 +11,16 @@ import UIKit
 enum MoodLottiePlayback: Equatable {
     case loop
     case once(MoodLottieEffectPlayback)
+
+    static let badgeSize = CGSize(width: 30, height: 26)
+    static let effectSize = CGSize(width: 208, height: 208)
+
+    var canvasSize: CGSize {
+        switch self {
+        case .loop: Self.badgeSize
+        case .once: Self.effectSize
+        }
+    }
 }
 
 final class MoodLottieEffectPlayback: Equatable {
@@ -49,6 +59,8 @@ struct MoodLottieView: View {
                 Color.clear
             }
         }
+        .frame(width: playback.canvasSize.width, height: playback.canvasSize.height)
+        .clipped()
         .accessibilityHidden(true)
         .allowsHitTesting(false)
         .task(id: file) {
@@ -88,9 +100,35 @@ struct MoodLottieView: View {
 
 #if os(macOS)
 private typealias MoodNativeRepresentable = NSViewRepresentable
+private typealias MoodNativeView = NSView
 #else
 private typealias MoodNativeRepresentable = UIViewRepresentable
+private typealias MoodNativeView = UIView
 #endif
+
+private final class MoodLottieCanvas: MoodNativeView {
+    let player: LottieAnimationView
+
+    init(size: CGSize, player: LottieAnimationView) {
+        self.player = player
+        super.init(frame: CGRect(origin: .zero, size: size))
+        // Lottie reports the source artwork dimensions as its intrinsic size.
+        // The host owns the visible dimensions and clips the player independently.
+        #if os(macOS)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        player.autoresizingMask = [.width, .height]
+        #else
+        clipsToBounds = true
+        player.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        #endif
+        player.frame = bounds
+        addSubview(player)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("Mood animation canvases are created by SwiftUI") }
+}
 
 private struct MoodLottieSurface: MoodNativeRepresentable {
     let animation: LottieAnimation
@@ -100,22 +138,24 @@ private struct MoodLottieSurface: MoodNativeRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    private func make() -> LottieAnimationView {
+    private func make() -> MoodLottieCanvas {
         let view = LottieAnimationView()
         view.contentMode = .scaleAspectFit
         view.backgroundBehavior = playback == .loop ? .pauseAndRestore : .stop
         view.maskAnimationToBounds = true
-        return view
+        return MoodLottieCanvas(size: playback.canvasSize, player: view)
     }
 
     #if os(macOS)
-    func makeNSView(context: Context) -> LottieAnimationView { make() }
-    func updateNSView(_ view: LottieAnimationView, context: Context) { context.coordinator.update(view, from: self) }
-    static func dismantleNSView(_ view: LottieAnimationView, coordinator: Coordinator) { coordinator.clear(view) }
+    func makeNSView(context: Context) -> MoodLottieCanvas { make() }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: MoodLottieCanvas, context: Context) -> CGSize? { playback.canvasSize }
+    func updateNSView(_ view: MoodLottieCanvas, context: Context) { context.coordinator.update(view.player, from: self) }
+    static func dismantleNSView(_ view: MoodLottieCanvas, coordinator: Coordinator) { coordinator.clear(view.player) }
     #else
-    func makeUIView(context: Context) -> LottieAnimationView { make() }
-    func updateUIView(_ view: LottieAnimationView, context: Context) { context.coordinator.update(view, from: self) }
-    static func dismantleUIView(_ view: LottieAnimationView, coordinator: Coordinator) { coordinator.clear(view) }
+    func makeUIView(context: Context) -> MoodLottieCanvas { make() }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: MoodLottieCanvas, context: Context) -> CGSize? { playback.canvasSize }
+    func updateUIView(_ view: MoodLottieCanvas, context: Context) { context.coordinator.update(view.player, from: self) }
+    static func dismantleUIView(_ view: MoodLottieCanvas, coordinator: Coordinator) { coordinator.clear(view.player) }
     #endif
 
     @MainActor

@@ -167,9 +167,11 @@ struct MusicHomeMoodButton: View {
             .highPriorityGesture(LongPressGesture(minimumDuration: 0.28).onEnded { _ in openPicker(.direct) })
             #endif
             .background {
-                MoodEffectAnchor(effect: shownEffect, onCompletion: completeEffect)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                if let shownEffect {
+                    MoodEffectAnchor(effect: shownEffect, onCompletion: completeEffect)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
             .popover(isPresented: pickerBinding, arrowEdge: .top) {
                 picker
@@ -204,7 +206,8 @@ struct MusicHomeMoodButton: View {
                 .id(loop.media)
             }
         }
-        .frame(width: 30, height: 26)
+        .frame(width: MoodLottiePlayback.badgeSize.width, height: MoodLottiePlayback.badgeSize.height)
+        .clipped()
         .frame(width: 36, height: 32)
         .accessibilityHidden(true)
     }
