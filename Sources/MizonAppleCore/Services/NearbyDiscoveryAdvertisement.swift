@@ -17,9 +17,11 @@ public struct NearbyPresenceAdvertisement: Equatable, Sendable {
     public let account: String?
     public let displayName: String?
     public let mediaCertificateSHA256: String?
+    public let mediaPort: UInt16?
 
     public init(id: UUID, platform: NearbyPeerPlatform, appVersion: String, deviceName: String,
-                account: String? = nil, displayName: String? = nil, mediaCertificateSHA256: String? = nil) {
+                account: String? = nil, displayName: String? = nil, mediaCertificateSHA256: String? = nil,
+                mediaPort: UInt16? = nil) {
         self.id = id
         self.platform = platform
         self.appVersion = appVersion
@@ -27,6 +29,7 @@ public struct NearbyPresenceAdvertisement: Equatable, Sendable {
         self.account = account
         self.displayName = displayName
         self.mediaCertificateSHA256 = mediaCertificateSHA256
+        self.mediaPort = mediaPort
     }
 
     func advertisingMedia(certificateSHA256: String?) -> Self {
@@ -92,6 +95,7 @@ enum NearbyAdvertisementCodec {
         if let pin = advertisement.mediaCertificateSHA256, isFingerprint(pin) {
             fields.append(("media", "1"))
             fields.append(("cert", pin))
+            if let port = advertisement.mediaPort, port > 0 { fields.append(("media-port", String(port))) }
         }
 
         var record = Data()
@@ -116,7 +120,7 @@ enum NearbyAdvertisementCodec {
                   let equal = entry.firstIndex(of: "=") else { return nil }
             let key = String(entry[..<equal]).lowercased()
             switch key {
-            case "v", "id", "platform", "app", "device", "account", "display", "media", "cert": break
+            case "v", "id", "platform", "app", "device", "account", "display", "media", "cert", "media-port": break
             default: return nil
             }
             guard fields[key] == nil else { return nil }
@@ -130,14 +134,21 @@ enum NearbyAdvertisementCodec {
               let platform = fields["platform"].flatMap(NearbyPeerPlatform.init(rawValue:)),
               let appVersion = fields["app"], let deviceName = fields["device"] else { return nil }
         let fingerprint = fields["cert"].flatMap { fields["media"] == "1" && isFingerprint($0) ? $0 : nil }
+        let mediaPort = fingerprint == nil ? nil : fields["media-port"].flatMap(decodePort)
         let advertisement = NearbyPresenceAdvertisement(id: id, platform: platform, appVersion: appVersion,
             deviceName: deviceName, account: fields["account"], displayName: fields["display"],
-            mediaCertificateSHA256: fingerprint)
+            mediaCertificateSHA256: fingerprint, mediaPort: mediaPort)
         return isValid(advertisement) ? advertisement : nil
     }
 
     private static func isFingerprint(_ value: String) -> Bool {
         value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+
+    private static func decodePort(_ value: String) -> UInt16? {
+        guard (1...5).contains(value.utf8.count), value.utf8.allSatisfy({ (48...57).contains($0) }),
+              let port = UInt16(value), port > 0 else { return nil }
+        return port
     }
 
     private static func isValid(_ advertisement: NearbyPresenceAdvertisement) -> Bool {

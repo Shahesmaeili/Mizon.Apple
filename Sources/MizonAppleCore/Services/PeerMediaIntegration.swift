@@ -25,7 +25,9 @@ struct PeerMediaAssetKey: Codable, Hashable, Sendable {
 
 struct NearbyMediaSource: Sendable {
     let endpoint: NWEndpoint
+    let interfaces: [NWInterface]
     let fingerprint: String
+    let alternatePort: UInt16?
 }
 
 struct NearbySharedMedia: Sendable {

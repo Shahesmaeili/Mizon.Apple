@@ -175,7 +175,8 @@ public actor NearbyDiscoveryService: NearbyDiscovering {
         return mediaPeers.compactMap { peer in
             guard let fingerprint = peer.advertisement.mediaCertificateSHA256,
                   let result = samples.first(where: { Self.advertisement(from: $0) == peer.advertisement }) else { return nil }
-            return NearbyMediaSource(endpoint: result.endpoint, fingerprint: fingerprint)
+            return NearbyMediaSource(endpoint: result.endpoint, interfaces: Array(result.interfaces), fingerprint: fingerprint,
+                                     alternatePort: peer.advertisement.mediaPort)
         }
     }
 
@@ -186,7 +187,8 @@ public actor NearbyDiscoveryService: NearbyDiscovering {
         let id = UUID()
         let fetch = Task {
             try await PeerMediaTransport.fetchPiece(from: source.endpoint, fingerprint: source.fingerprint,
-                                                    request: request, expectedLength: length)
+                                                    alternatePort: source.alternatePort, interfaces: source.interfaces, request: request,
+                                                    expectedLength: length)
         }
         session?.outgoing[id] = fetch
         defer {

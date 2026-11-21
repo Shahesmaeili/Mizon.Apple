@@ -3,10 +3,72 @@ import CryptoKit
 import Foundation
 import MizonAPI
 import MizonAPIClient
+import Network
 import Testing
 @testable import MizonAppleCore
 
 struct PeerMediaLANGatewayTests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MIZON_PEER_LAN_TEST"] == "1"),
+          .timeLimit(.minutes(1)))
+    func resolvesANativeBonjourAnnouncementWithSeparateTLSDataPort() async throws {
+        let identity = try PeerMediaTransportIdentity()
+        let payload = Data("TLS alternate port fixture".utf8)
+        let hash = Data(SHA256.hash(data: payload))
+        let request = PeerMediaTransportRequest(sha256: hash, chunkSize: payload.count, index: 0)
+        let server = PeerMediaTransportServer { received in received == request ? payload : nil }
+        let queue = DispatchQueue(label: "app.mizon.peer-lan.alternate-port")
+        let dataListener = try NWListener(using: identity.listenerParameters())
+        let presenceListener = try NWListener(using: .tcp)
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: NearbyAdvertisementCodec.serviceType,
+                                                            domain: NearbyAdvertisementCodec.domain), using: .tcp)
+        defer {
+            browser.cancel()
+            presenceListener.cancel()
+            dataListener.cancel()
+            server.close()
+        }
+
+        let (ports, portUpdates) = AsyncStream<NWEndpoint.Port>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        dataListener.stateUpdateHandler = { [weak dataListener] state in
+            switch state {
+            case .ready:
+                if let port = dataListener?.port { portUpdates.yield(port) }
+                portUpdates.finish()
+            case .failed, .cancelled: portUpdates.finish()
+            default: break
+            }
+        }
+        dataListener.newConnectionHandler = { server.accept($0) }
+        dataListener.start(queue: queue)
+        let dataPort = try #require(await firstEvent(in: ports))
+
+        let advertisement = NearbyPresenceAdvertisement(id: UUID(), platform: .windows, appVersion: "peer-fixture",
+            deviceName: "Mizon alternate port fixture", mediaCertificateSHA256: identity.fingerprint, mediaPort: dataPort.rawValue)
+        let name = NearbyAdvertisementCodec.serviceName(for: advertisement.id)
+        let record = try #require(NearbyAdvertisementCodec.encode(advertisement))
+        presenceListener.service = .init(name: name, type: NearbyAdvertisementCodec.serviceType,
+                                         domain: NearbyAdvertisementCodec.domain, txtRecord: NWTXTRecord(record))
+        presenceListener.newConnectionHandler = { connection in connection.cancel() }
+        presenceListener.start(queue: queue)
+
+        let (samples, results) = AsyncStream<NWBrowser.Result>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        browser.browseResultsChangedHandler = { records, _ in
+            for candidate in records {
+                guard case .service(let instance, _, _, _) = candidate.endpoint, instance == name else { continue }
+                results.yield(candidate)
+            }
+        }
+        browser.start(queue: queue)
+        let result = try #require(await firstEvent(in: samples))
+        guard case .bonjour(let discovered) = result.metadata else { throw FixtureError.missingPeers }
+        let peer = try #require(NearbyAdvertisementCodec.decode(discovered.data, serviceName: name))
+        #expect(dataPort != presenceListener.port)
+        #expect(peer.mediaPort == dataPort.rawValue)
+        let downloaded = try await PeerMediaTransport.fetchPiece(from: result.endpoint, fingerprint: identity.fingerprint,
+            alternatePort: peer.mediaPort, interfaces: Array(result.interfaces), request: request, expectedLength: payload.count)
+        #expect(downloaded == payload)
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MIZON_PEER_LAN_TEST"] == "1"),
           .timeLimit(.minutes(1)))
     func composesTwoSparsePeersAndTheOriginOverNativeBonjourTLS() async throws {
@@ -104,6 +166,22 @@ struct PeerMediaLANGatewayTests {
             return result
         }
         guard ready else { throw FixtureError.missingPeers }
+    }
+
+    private func firstEvent<Value: Sendable>(in stream: AsyncStream<Value>) async -> Value? {
+        await withTaskGroup(of: Value?.self) { group in
+            group.addTask {
+                for await event in stream { return event }
+                return nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(8))
+                return nil
+            }
+            let value = await group.next() ?? nil
+            group.cancelAll()
+            return value
+        }
     }
 
     private enum FixtureError: Error { case originUnavailable, unexpectedCompleteSeed, missingPeers }

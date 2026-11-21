@@ -44,6 +44,11 @@ public actor PeerMediaTransfer {
         let continuation: CheckedContinuation<Void, any Error>
     }
 
+    private struct LegacyPrefix: Sendable {
+        let file: URL
+        let length: UInt64
+    }
+
     private let store: PeerMediaPartialStore
     private let maximumConcurrentChunks: Int
     private var active: [String: ActiveDownload] = [:]
@@ -152,7 +157,9 @@ public actor PeerMediaTransfer {
         let peers = Array(peers.prefix(Self.maximumPeers))
         let rejected = RejectedPeerSources()
         let partial = store.payloadURL(for: manifest)
-        try await fillMissing(manifest, origin: origin, peers: peers, rejected: rejected)
+        let legacyFile = Self.legacyPartial(for: destination)
+        let legacy = LegacyPrefix(file: legacyFile, length: (try? PeerMediaFileIntegrity.regularFileLength(legacyFile)) ?? 0)
+        try await fillMissing(manifest, origin: origin, peers: peers, rejected: rejected, legacy: legacy)
         if try await PeerMediaFileIntegrity.matches(partial, manifest: manifest) == false {
             let damaged = try await PeerMediaFileIntegrity.invalidPieces(in: partial, manifest: manifest)
             guard !damaged.isEmpty else {
@@ -160,7 +167,7 @@ public actor PeerMediaTransfer {
                 throw PeerMediaTransferError.fileIntegrityMismatch
             }
             try store.invalidate(damaged, manifest: manifest)
-            try await fillMissing(manifest, origin: origin, peers: peers, rejected: rejected)
+            try await fillMissing(manifest, origin: origin, peers: peers, rejected: rejected, legacy: legacy)
             guard try await PeerMediaFileIntegrity.matches(partial, manifest: manifest) else {
                 try? store.discard(manifest)
                 throw PeerMediaTransferError.fileIntegrityMismatch
@@ -203,20 +210,23 @@ public actor PeerMediaTransfer {
         try Self.checkFileSize(manifest)
         guard let range = manifest.range(for: index) else { return nil }
         if (try? store.contains(index, manifest: manifest)) == true {
-            if let data = try? PeerMediaFileIntegrity.read(range, from: store.payloadURL(for: manifest)),
-               manifest.verify(data, at: index) {
+            if let piece = Self.readVerified(range, index: index, manifest: manifest,
+                                             from: store.payloadURL(for: manifest)) {
                 try Task.checkCancellation()
-                return data
+                return piece.bytes
             }
             try? store.invalidate(IndexSet(integer: index), manifest: manifest)
         }
 
-        try Task.checkCancellation()
-        guard let completedFile, completedFile.isFileURL,
-              let data = try PeerMediaFileIntegrity.read(range, from: completedFile),
-              manifest.verify(data, at: index) else { return nil }
-        try Task.checkCancellation()
-        return data
+        guard let completedFile, completedFile.isFileURL else { return nil }
+        for file in [completedFile, Self.legacyPartial(for: completedFile)] {
+            try Task.checkCancellation()
+            if let piece = Self.readVerified(range, index: index, manifest: manifest, from: file) {
+                try Task.checkCancellation()
+                return piece.bytes
+            }
+        }
+        return nil
     }
 
     public func discard(_ manifest: VerifiedMediaManifest) throws {
@@ -233,7 +243,7 @@ public actor PeerMediaTransfer {
     }
 
     private func fillMissing(_ manifest: VerifiedMediaManifest, origin: PeerMediaChunkProvider,
-                             peers: [PeerMediaChunkProvider], rejected: RejectedPeerSources) async throws {
+                             peers: [PeerMediaChunkProvider], rejected: RejectedPeerSources, legacy: LegacyPrefix) async throws {
         let all = IndexSet(integersIn: 0..<manifest.pieceCount)
         let saved = try store.availablePieces(for: manifest)
         let missing = all.subtracting(saved)
@@ -247,21 +257,33 @@ public actor PeerMediaTransfer {
         try await withThrowingTaskGroup(of: VerifiedTransferPiece.self) { group in
             for _ in 0..<maximumConcurrentChunks {
                 guard let index = order.next() else { break }
-                group.addTask { try await Self.fetch(index, manifest: manifest, peers: peers, origin: origin, rejected: rejected) }
+                group.addTask {
+                    try await Self.fetch(index, manifest: manifest, peers: peers, origin: origin, rejected: rejected, legacy: legacy)
+                }
             }
 
             while let piece = try await group.next() {
                 try Task.checkCancellation()
                 try store.write(piece, manifest: manifest)
                 if let index = order.next() {
-                    group.addTask { try await Self.fetch(index, manifest: manifest, peers: peers, origin: origin, rejected: rejected) }
+                    group.addTask {
+                        try await Self.fetch(index, manifest: manifest, peers: peers, origin: origin, rejected: rejected, legacy: legacy)
+                    }
                 }
             }
         }
     }
 
     private static func fetch(_ index: Int, manifest: VerifiedMediaManifest, peers: [PeerMediaChunkProvider],
-                              origin: PeerMediaChunkProvider, rejected: RejectedPeerSources) async throws -> VerifiedTransferPiece {
+                              origin: PeerMediaChunkProvider, rejected: RejectedPeerSources,
+                              legacy: LegacyPrefix) async throws -> VerifiedTransferPiece {
+        try Task.checkCancellation()
+        if let range = manifest.range(for: index), UInt64(range.upperBound) < legacy.length,
+           let piece = readVerified(range, index: index, manifest: manifest, from: legacy.file) {
+            try Task.checkCancellation()
+            return piece
+        }
+
         var attempts = 0
         for source in candidates(for: index, from: peers) {
             try Task.checkCancellation()
@@ -289,6 +311,16 @@ public actor PeerMediaTransfer {
             throw PeerMediaTransferError.invalidOriginPiece(index)
         }
         return piece
+    }
+
+    private static func legacyPartial(for destination: URL) -> URL {
+        destination.appendingPathExtension("part")
+    }
+
+    private static func readVerified(_ range: ClosedRange<Int64>, index: Int, manifest: VerifiedMediaManifest,
+                                     from file: URL) -> VerifiedTransferPiece? {
+        guard let data = try? PeerMediaFileIntegrity.read(range, from: file) else { return nil }
+        return VerifiedTransferPiece(index: index, bytes: data, manifest: manifest)
     }
 
     private static func candidates(for index: Int, from peers: [PeerMediaChunkProvider]) -> [Int] {

@@ -1,5 +1,6 @@
 #if os(macOS) || os(iOS) || os(watchOS)
 import CryptoKit
+import dnssd
 import Foundation
 import Network
 import Security
@@ -47,20 +48,15 @@ enum PeerMediaTransport {
     private static let outgoingCount = Mutex(0)
     private static let maximumOutgoing = 8
 
-    static func fetchPiece(from endpoint: NWEndpoint, fingerprint: String, request: PeerMediaTransportRequest,
+    static func fetchPiece(from endpoint: NWEndpoint, fingerprint: String, alternatePort: UInt16? = nil,
+                           interfaces: [NWInterface] = [], request: PeerMediaTransportRequest,
                            expectedLength: Int) async throws -> Data? {
-        guard case .service(let name, let type, let domain, _) = endpoint,
+        guard case .service(let name, let type, let domain, let browserInterface) = endpoint,
               !name.isEmpty,
               type == NearbyAdvertisementCodec.serviceType || type == NearbyAdvertisementCodec.serviceType + ".",
               domain.lowercased() == NearbyAdvertisementCodec.domain else {
             throw PeerMediaTransportError.invalidEndpoint
         }
-        return try await fetch(from: endpoint, fingerprint: fingerprint, request: request,
-                               expectedLength: expectedLength, timeout: .seconds(8))
-    }
-
-    private static func fetch(from endpoint: NWEndpoint, fingerprint: String, request: PeerMediaTransportRequest,
-                              expectedLength: Int, timeout: Duration) async throws -> Data? {
         let requestData = try request.encode()
         guard (1...request.chunkSize).contains(expectedLength) else { throw PeerMediaTransportError.invalidRequest }
         guard let pin = parseFingerprint(fingerprint) else { throw PeerMediaTransportError.invalidFingerprint }
@@ -72,6 +68,21 @@ enum PeerMediaTransport {
         }
         guard admitted else { throw PeerMediaTransportError.busy }
         defer { outgoingCount.withLock { $0 -= 1 } }
+
+        let destination: NWEndpoint
+        let selectedInterface: NWInterface?
+        if let alternatePort, alternatePort > 0, let port = NWEndpoint.Port(rawValue: alternatePort) {
+            let interface = browserInterface ?? (interfaces.count == 1 ? interfaces.first : nil)
+            let lookup = PeerMediaBonjourLookup(name: name, type: type, domain: domain, interface: interface,
+                                               pin: fingerprint, port: alternatePort)
+            let service = try await lookup.resolve()
+            try Task.checkCancellation()
+            selectedInterface = interface ?? interfaces.first { UInt32(exactly: $0.index) == service.interfaceIndex }
+            destination = .hostPort(host: .name(service.host, selectedInterface), port: port)
+        } else {
+            selectedInterface = browserInterface
+            destination = endpoint
+        }
 
         let tls = tlsOptions()
         sec_protocol_options_set_peer_authentication_required(tls.securityProtocolOptions, true)
@@ -86,8 +97,10 @@ enum PeerMediaTransport {
             let digest = SHA256.hash(data: SecCertificateCopyData(leaf) as Data)
             completion(digest.elementsEqual(pin))
         }, queue)
-        let connection = NWConnection(to: endpoint, using: parameters(for: tls))
-        return try await run(connection, timeout: timeout) {
+        let parameters = parameters(for: tls)
+        parameters.requiredInterface = selectedInterface
+        let connection = NWConnection(to: destination, using: parameters)
+        return try await run(connection, timeout: .seconds(8)) {
             try await send(requestData, to: connection)
             let header = try await receive(4, from: connection)
             let length = Int(readWireInteger(header, at: 0))
@@ -216,6 +229,91 @@ enum PeerMediaTransport {
                 else { continuation.resume(throwing: PeerMediaTransportError.invalidResponse) }
             }
         }
+    }
+}
+
+/// Only alternate data ports need an explicit SRV lookup. Standard peers connect to the original service endpoint.
+private final class PeerMediaBonjourLookup: @unchecked Sendable {
+    private static let queue = DispatchQueue(label: "app.mizon.peer-media.resolve", qos: .utility)
+    private let name: String
+    private let type: String
+    private let domain: String
+    private let interfaceIndex: UInt32
+    private let pin: String
+    private let port: UInt16
+
+    struct Service: Sendable {
+        let host: String
+        let interfaceIndex: UInt32
+    }
+
+    // DNS-SD delivers callbacks and releases its reference on the same serial queue.
+    private var reference: DNSServiceRef?
+    private var continuation: CheckedContinuation<Service, any Error>?
+    private var finished = false
+
+    init(name: String, type: String, domain: String, interface: NWInterface?, pin: String, port: UInt16) {
+        self.name = name
+        self.type = type
+        self.domain = domain
+        interfaceIndex = interface.flatMap { UInt32(exactly: $0.index) } ?? 0
+        self.pin = pin
+        self.port = port
+    }
+
+    func resolve() async throws -> Service {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                Self.queue.async { self.start(continuation) }
+            }
+        } onCancel: {
+            Self.queue.async { self.finish(.failure(CancellationError())) }
+        }
+    }
+
+    private func start(_ continuation: CheckedContinuation<Service, any Error>) {
+        guard !finished else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        self.continuation = continuation
+        let result = DNSServiceResolve(&reference, DNSServiceFlags(kDNSServiceFlagsForceMulticast), interfaceIndex,
+                                       name, type, domain, { _, _, index, error, _, host, _, length, record, context in
+            guard let context else { return }
+            let lookup = Unmanaged<PeerMediaBonjourLookup>.fromOpaque(context).takeUnretainedValue()
+            lookup.receive(index: index, error: error, host: host, length: length, record: record)
+        }, Unmanaged.passUnretained(self).toOpaque())
+        guard result == kDNSServiceErr_NoError, let reference,
+              DNSServiceSetDispatchQueue(reference, Self.queue) == kDNSServiceErr_NoError else {
+            finish(.failure(PeerMediaTransportError.invalidEndpoint))
+            return
+        }
+        Self.queue.asyncAfter(deadline: .now() + .seconds(3)) { [weak self] in
+            self?.finish(.failure(PeerMediaTransportError.timedOut))
+        }
+    }
+
+    private func receive(index: UInt32, error: DNSServiceErrorType, host: UnsafePointer<CChar>?, length: UInt16,
+                         record: UnsafePointer<UInt8>?) {
+        guard error == kDNSServiceErr_NoError, let host, let target = String(validatingCString: host),
+              target.utf8.count > NearbyAdvertisementCodec.domain.utf8.count + 1,
+              target.lowercased().hasSuffix("." + NearbyAdvertisementCodec.domain),
+              let record,
+              let advertisement = NearbyAdvertisementCodec.decode(Data(bytes: record, count: Int(length)), serviceName: name),
+              advertisement.mediaCertificateSHA256 == pin, advertisement.mediaPort == port else {
+            finish(.failure(PeerMediaTransportError.invalidEndpoint))
+            return
+        }
+        finish(.success(Service(host: target, interfaceIndex: index)))
+    }
+
+    private func finish(_ result: Result<Service, any Error>) {
+        guard !finished else { return }
+        finished = true
+        if let reference { DNSServiceRefDeallocate(reference) }
+        reference = nil
+        continuation?.resume(with: result)
+        continuation = nil
     }
 }
 
