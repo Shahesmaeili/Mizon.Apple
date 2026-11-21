@@ -177,6 +177,68 @@ func peerMediaReusesAValidatedDestinationWithoutCreatingPartialFiles() async thr
 }
 
 @Test
+func peerMediaServesAndReusesOnlyVerifiedLegacyPrefixPieces() async throws {
+    let root = try temporaryTransferFolder()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let data = Data(0..<15)
+    let manifest = try transferManifest(data, chunkSize: 4)
+    let directory = root.appending(path: "parts")
+    let destination = root.appending(path: "existing")
+    let legacyFile = destination.appendingPathExtension("part")
+    var legacyData = Data(data.prefix(4))
+    legacyData.append(Data(repeating: 255, count: 4))
+    legacyData.append(data[8..<10])
+    try legacyData.write(to: legacyFile)
+    try Data(repeating: 254, count: data.count).write(to: destination)
+
+    let transfer = PeerMediaTransfer(partialDirectory: directory)
+    #expect(try await transfer.verifiedPiece(0, from: manifest, completedFile: destination) == Data(0..<4))
+    #expect(try await transfer.verifiedPiece(1, from: manifest, completedFile: destination) == nil)
+    #expect(try await transfer.verifiedPiece(2, from: manifest, completedFile: destination) == nil)
+    #expect(try await transfer.verifiedPiece(3, from: manifest, completedFile: destination) == nil)
+    #expect(!FileManager.default.fileExists(atPath: directory.path))
+
+    let peers = PieceRequests()
+    let origin = PieceRequests()
+    let result = try await transfer.download(manifest: manifest, origin: PeerMediaChunkProvider { index in
+        await origin.record(index)
+        return bytes(of: data, at: index, manifest: manifest)
+    }, peers: [PeerMediaChunkProvider(availablePieces: IndexSet(integer: 1)) { index in
+        await peers.record(index)
+        return bytes(of: data, at: index, manifest: manifest)
+    }], destination: destination)
+
+    #expect(await peers.recorded() == Set([1]))
+    #expect(await origin.recorded() == Set([2, 3]))
+    #expect(try Data(contentsOf: result) == data)
+    #expect(try Data(contentsOf: legacyFile) == legacyData)
+}
+
+@Test
+func peerMediaDoesNotReadASymlinkedLegacyPrefix() async throws {
+    let root = try temporaryTransferFolder()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let data = Data([1, 2, 3, 4])
+    let manifest = try transferManifest(data, chunkSize: 4)
+    let destination = root.appending(path: "cache")
+    let target = root.appending(path: "unexpected")
+    try data.write(to: target)
+    try FileManager.default.createSymbolicLink(at: destination.appendingPathExtension("part"), withDestinationURL: target)
+
+    let transfer = PeerMediaTransfer(partialDirectory: root.appending(path: "parts"))
+    #expect(try await transfer.verifiedPiece(0, from: manifest, completedFile: destination) == nil)
+
+    let requests = PieceRequests()
+    let result = try await transfer.download(manifest: manifest, origin: PeerMediaChunkProvider { index in
+        await requests.record(index)
+        return data
+    }, peers: [], destination: destination)
+    #expect(await requests.recorded() == Set([0]))
+    #expect(try Data(contentsOf: result) == data)
+    #expect(try Data(contentsOf: target) == data)
+}
+
+@Test
 func peerMediaRepairsCorruptPartialBytesWithoutChangingAnExistingCompletedFile() async throws {
     let root = try temporaryTransferFolder()
     defer { try? FileManager.default.removeItem(at: root) }

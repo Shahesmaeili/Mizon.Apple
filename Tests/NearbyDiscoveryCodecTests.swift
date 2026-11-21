@@ -41,6 +41,27 @@ struct NearbyDiscoveryCodecTests {
         #expect(recovered.mediaCertificateSHA256 == nil)
     }
 
+    @Test func acceptsOnlyValidOptionalMediaPortsAndRetainsTheOriginalServiceOtherwise() throws {
+        let pin = String(repeating: "d2", count: 32)
+        let name = NearbyAdvertisementCodec.serviceName(for: id)
+        let presence = ["v=1", "id=\(id.uuidString.lowercased())", "platform=windows", "app=1", "device=Fixture PC"]
+        let media = presence + ["media=1", "cert=\(pin)"]
+
+        let alternate = try #require(NearbyAdvertisementCodec.decode(packet(media + ["media-port=65535"]), serviceName: name))
+        #expect(alternate.mediaPort == 65535)
+        #expect(NearbyAdvertisementCodec.encode(alternate) == packet(media + ["media-port=65535"]))
+
+        for value in ["", "0", "65536", "-2", "+2", "2 ", "۲", "2.0"] {
+            let decoded = try #require(NearbyAdvertisementCodec.decode(packet(media + ["media-port=\(value)"]), serviceName: name))
+            #expect(decoded.mediaCertificateSHA256 == pin)
+            #expect(decoded.mediaPort == nil)
+        }
+        let absent = try #require(NearbyAdvertisementCodec.decode(packet(media), serviceName: name))
+        #expect(absent.mediaCertificateSHA256 == pin)
+        #expect(absent.mediaPort == nil)
+        #expect(NearbyAdvertisementCodec.decode(packet(presence + ["media-port=4000"]), serviceName: name)?.mediaPort == nil)
+    }
+
     @Test func rejectsMalformedAndUnrecognizedAnnouncements() {
         let prefix = ["v=1", "id=\(id.uuidString.lowercased())", "platform=windows", "app=2.1"]
         let serviceName = NearbyAdvertisementCodec.serviceName(for: id)

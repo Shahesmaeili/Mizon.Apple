@@ -12,6 +12,12 @@ enum PeerMediaFileIntegrity {
         return try read(range, handle: handle)
     }
 
+    static func regularFileLength(_ file: URL) throws -> UInt64? {
+        guard let handle = try openRegularFile(file) else { return nil }
+        defer { try? handle.close() }
+        return try handle.seekToEnd()
+    }
+
     @concurrent
     static func matches(_ file: URL, manifest: VerifiedMediaManifest) async throws -> Bool {
         try hash(file, manifest: manifest, copyTo: nil)
@@ -80,14 +86,31 @@ enum PeerMediaFileIntegrity {
     }
 
     private static func openRegularFile(_ file: URL) throws -> FileHandle? {
-        guard file.isFileURL, FileManager.default.fileExists(atPath: file.path) else { return nil }
-        let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-        guard values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
-        do {
-            return try FileHandle(forReadingFrom: file)
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+        guard file.isFileURL else { return nil }
+        let opened = file.withUnsafeFileSystemRepresentation { path -> (descriptor: Int32, error: Int32)? in
+            guard let path else { return nil }
+            let descriptor = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+            return (descriptor, descriptor < 0 ? errno : 0)
+        }
+        guard let opened else { return nil }
+        let descriptor = opened.descriptor
+        guard descriptor >= 0 else {
+            let code = POSIXErrorCode(rawValue: opened.error) ?? .EIO
+            if code == .ENOENT || code == .ENOTDIR || code == .ELOOP { return nil }
+            throw POSIXError(code)
+        }
+
+        var status = stat()
+        guard fstat(descriptor, &status) == 0 else {
+            let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+            Darwin.close(descriptor)
+            throw POSIXError(code)
+        }
+        guard status.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else {
+            Darwin.close(descriptor)
             return nil
         }
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
     private static func read(_ range: ClosedRange<Int64>, handle: FileHandle) throws -> Data? {
