@@ -72,7 +72,7 @@ struct MusicHomePage: View {
     @State private var showingSearch = false
     @State private var showingMoodPicker = false
     @State private var moodPress: UInt = 0
-    @State private var nearby = NearbyDiscoveryModel()
+    @State private var nearbyAvatars = NearbyAvatarModel()
     @State private var showingNearby = false
     @State private var nearbyPress: UInt = 0
     @FocusState private var controlFocus: Action?
@@ -81,17 +81,17 @@ struct MusicHomePage: View {
     var localization = AuthLocalization()
 
     let displayName: String?
-    let publicUsername: String?
+    let nearby: NearbyDiscoveryModel
     let avatar: CGImage?
     let profileTransition: Namespace.ID
     let initialMood: ClientMoodItemResponse?
     let signOut: () -> Void
 
-    init(session: AuthSession, service: MusicHomeService, displayName: String?, publicUsername: String? = nil, avatar: CGImage?,
+    init(session: AuthSession, service: MusicHomeService, displayName: String?, nearby: NearbyDiscoveryModel, avatar: CGImage?,
          profileTransition: Namespace.ID, initialMood: ClientMoodItemResponse? = nil, signOut: @escaping () -> Void) {
         _model = State(initialValue: MusicHomeViewModel(session: session, service: service))
         self.displayName = displayName
-        self.publicUsername = publicUsername
+        self.nearby = nearby
         self.avatar = avatar
         self.profileTransition = profileTransition
         self.initialMood = initialMood
@@ -157,9 +157,13 @@ struct MusicHomePage: View {
             if model.playingTrack != nil || model.requestingPlayback { transport }
         }
         .task { await model.refresh() }
-        .task(id: nearby.enabled && scenePhase != .background) {
-            await nearby.discover(inForeground: scenePhase != .background,
-                                  publicUsername: publicUsername, displayName: displayName)
+        .task(id: nearbyAvatarUsernames) { [usernames = nearbyAvatarUsernames] in
+            let service = model.service.nearbyProfileArtworkService
+            let session = model.session
+            let artwork = model.artwork
+            await nearbyAvatars.load(for: usernames) { username in
+                try await service.image(for: username, session: session, artwork: artwork)
+            }
         }
         .task(id: scenePhase) {
             if scenePhase == .active { await observeGamepad() }
@@ -291,7 +295,7 @@ struct MusicHomePage: View {
 
     private func nearbyControl(viewport: CGSize) -> some View {
         @Bindable var model = nearby
-        return NearbyDevicesControl(peers: model.peers, enabled: $model.enabled, status: model.status,
+        return NearbyDevicesControl(peers: model.peers, avatars: nearbyAvatars.images, enabled: $model.enabled, status: model.status,
                                     viewport: viewport, controllerPress: nearbyPress) { showingNearby = $0 }
             .focusable()
             .focused($controlFocus, equals: .nearby)
@@ -301,6 +305,11 @@ struct MusicHomePage: View {
                         .allowsHitTesting(false)
                 }
             }
+    }
+
+    private var nearbyAvatarUsernames: [String] {
+        guard showingNearby, scenePhase != .background, nearby.enabled, nearby.status == .ready else { return [] }
+        return NearbyAvatarModel.usernames(for: nearby.peers)
     }
 
     private func layout(width: CGFloat) -> some View {

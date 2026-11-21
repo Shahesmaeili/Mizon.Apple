@@ -14,23 +14,31 @@ enum NearbyDiscoveryStatus: Equatable {
 
 @MainActor @Observable
 final class NearbyDiscoveryModel {
-    var enabled = false
+    private static let preferenceKey = "mizon.nearby.discoveryEnabled"
+
+    var enabled: Bool {
+        didSet { defaults.set(enabled, forKey: Self.preferenceKey) }
+    }
     private(set) var peers: [NearbyDiscoveredPeer] = []
     private(set) var status: NearbyDiscoveryStatus = .off
 
     @ObservationIgnored private let service: any NearbyDiscovering
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var generation: UInt = 0
 
-    init(service: any NearbyDiscovering = NearbyDiscoveryService()) {
+    init(service: any NearbyDiscovering = NearbyDiscoveryService(), defaults: UserDefaults = .standard) {
         self.service = service
+        self.defaults = defaults
+        enabled = defaults.object(forKey: Self.preferenceKey) as? Bool ?? true
     }
 
     func discover(inForeground: Bool, publicUsername: String?, displayName: String?) async {
+        guard !Task.isCancelled else { return }
         generation &+= 1
         let currentGeneration = generation
         peers = []
         status = enabled && inForeground ? .searching : .off
-        guard enabled, inForeground, !Task.isCancelled else { return }
+        guard enabled, inForeground else { return }
         let identity = Self.advertisement(publicUsername: publicUsername, displayName: displayName)
         let events = await service.start(advertising: identity)
         for await event in events {

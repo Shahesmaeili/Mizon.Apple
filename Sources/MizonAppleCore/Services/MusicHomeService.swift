@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import MizonAPI
 import MizonAPIClient
+import UniformTypeIdentifiers
 
 public struct MusicHomeService: Sendable {
     public enum Section: String, CaseIterable, Sendable {
@@ -23,6 +24,7 @@ public struct MusicHomeService: Sendable {
     public init(api: MizonApi = MizonApi()) { self.api = api }
 
     public var searchService: GlobalSearchService { GlobalSearchService(api: api) }
+    public var nearbyProfileArtworkService: NearbyProfileArtworkService { NearbyProfileArtworkService(api: api) }
 
     public func load(_ section: Section, session: AuthSession) async throws -> Content {
         let endpoints = Endpoints(baseURL: session.server)
@@ -139,14 +141,20 @@ public struct MusicHomeService: Sendable {
 public actor MusicArtworkStore {
     private let downloader: MediaDownloader
     private let service: MusicHomeService
+    private let accountID: UUID
+    private let server: URL
     private let cache = NSCache<NSUUID, CGImage>()
+    private let profileThumbnails = NSCache<NSUUID, CGImage>()
     private var requests: [UUID: Task<CGImage, Error>] = [:]
 
-    public init(service: MusicHomeService, session: AuthSession) {
+    public init(service: MusicHomeService, session: AuthSession, cacheRoot: URL? = nil) {
         self.service = service
-        let directory = URL.cachesDirectory.appending(path: "Mizon/Music/\(session.clientPublicId)", directoryHint: .isDirectory)
+        accountID = session.clientPublicId
+        server = session.server
+        let directory = cacheRoot ?? URL.cachesDirectory.appending(path: "Mizon/Music/\(session.clientPublicId)", directoryHint: .isDirectory)
         downloader = MediaDownloader(cacheRoot: directory)
         cache.totalCostLimit = 32 * 1024 * 1024
+        profileThumbnails.totalCostLimit = 2 * 1024 * 1024
     }
 
     public func image(_ id: UUID, session: AuthSession) async throws -> CGImage {
@@ -170,6 +178,31 @@ public actor MusicArtworkStore {
         defer { requests[id] = nil }
         let image = try await request.value
         cache.setObject(image, forKey: key, cost: image.bytesPerRow * image.height)
+        return image
+    }
+
+    func profileImage(_ id: UUID, session: AuthSession) async throws -> CGImage {
+        try Task.checkCancellation()
+        guard session.clientPublicId == accountID, session.server == server else { throw CancellationError() }
+        let key = id as NSUUID
+        if let image = profileThumbnails.object(forKey: key) { return image }
+
+        let media = try await service.media(id, session: session)
+        guard media.mediaPublicId == id else { throw LoginFailure.invalidResponse }
+        let path = try await service.cacheMedia(media, session: session, downloader: downloader, maximumBytes: 4 * 1024 * 1024)
+        try Task.checkCancellation()
+
+        guard let source = CGImageSourceCreateWithURL(path as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let contentType = CGImageSourceGetType(source) as String?, UTType(contentType)?.conforms(to: .image) == true,
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 128,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary) else { throw LoginFailure.invalidResponse }
+
+        try Task.checkCancellation()
+        profileThumbnails.setObject(image, forKey: key, cost: image.bytesPerRow * image.height)
         return image
     }
 

@@ -27,16 +27,19 @@ struct WelcomePage: View {
     let profileTransition: Namespace.ID
     let restoreSession: () async throws -> AuthSession?
     let signIn: () async -> Bool
+    let accountReady: (AuthSession, WelcomeAccount) -> Void
     let enter: (AuthSession, WelcomeAccount?, CGImage?) -> Void
 
     init(service: any WelcomeService, profileTransition: Namespace.ID,
          restoreSession: @escaping () async throws -> AuthSession?,
          signIn: @escaping () async -> Bool,
+         accountReady: @escaping (AuthSession, WelcomeAccount) -> Void = { _, _ in },
          enter: @escaping (AuthSession, WelcomeAccount?, CGImage?) -> Void) {
         _model = State(initialValue: WelcomeViewModel(service: service))
         self.profileTransition = profileTransition
         self.restoreSession = restoreSession
         self.signIn = signIn
+        self.accountReady = accountReady
         self.enter = enter
     }
 
@@ -231,7 +234,7 @@ struct WelcomePage: View {
     private func prepare() async {
         let clock = ContinuousClock()
         let started = clock.now
-        guard let result = await model.prepare(session: restoreSession), !Task.isCancelled else { return }
+        guard let result = await model.prepare(onAccount: accountReady, session: restoreSession), !Task.isCancelled else { return }
         switch result {
         case .login:
             await goToLogin()

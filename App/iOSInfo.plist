@@ -7,6 +7,6 @@
         <string>_mizon-peer._tcp</string>
     </array>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Mizon uses your local network to connect to your configured server and, when Nearby Devices is on, to find and be found by other Mizon devices.</string>
+    <string>Mizon uses your local network to connect to your server and discover devices while you are signed in. Nearby Mizon users can see your device details and public profile. You can turn discovery off in Mizon.</string>
 </dict>
 </plist>
