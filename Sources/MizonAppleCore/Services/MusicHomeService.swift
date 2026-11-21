@@ -114,6 +114,12 @@ public struct MusicHomeService: Sendable {
         try await request(MediaOperation(.init(mediaPublicId: id), endpoints: .init(baseURL: session.server)))
     }
 
+    fileprivate func cacheMedia(_ info: MediaResponse, session: AuthSession, downloader: MediaDownloader,
+                                maximumBytes: Int64) async throws -> URL {
+        guard info.fileSize > 0, info.fileSize <= maximumBytes else { throw LoginFailure.invalidResponse }
+        return try await downloader.downloadToCache(info, api: api, endpoints: .init(baseURL: session.server))
+    }
+
     public static func storageURL(_ address: String) throws -> URL {
         guard let components = URLComponents(string: address), components.scheme?.lowercased() == "https",
               let host = components.host, !host.isEmpty, components.user == nil, components.password == nil,
@@ -149,9 +155,8 @@ public actor MusicArtworkStore {
         if let request = requests[id] { return try await request.value }
         let request = Task { [service, downloader] in
             let media = try await service.media(id, session: session)
-            guard media.fileSize > 0, media.fileSize <= 24 * 1024 * 1024 else { throw LoginFailure.invalidResponse }
-            let storage = try MusicHomeService.storageURL(media.storagePath)
-            let path = try await downloader.downloadToCache(media, storageURL: storage)
+            let path = try await service.cacheMedia(media, session: session, downloader: downloader,
+                                                   maximumBytes: 24 * 1024 * 1024)
             try Task.checkCancellation()
             guard let source = CGImageSourceCreateWithURL(path as CFURL, nil),
                   let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
@@ -170,9 +175,16 @@ public actor MusicArtworkStore {
 
     public func file(_ id: UUID, session: AuthSession, maximumBytes: Int64) async throws -> URL {
         let media = try await service.media(id, session: session)
-        guard media.fileSize > 0, media.fileSize <= maximumBytes else { throw LoginFailure.invalidResponse }
-        let storage = try MusicHomeService.storageURL(media.storagePath)
-        return try await downloader.downloadToCache(media, storageURL: storage)
+        return try await service.cacheMedia(media, session: session, downloader: downloader, maximumBytes: maximumBytes)
+    }
+
+    public func playableURL(_ id: UUID, session: AuthSession) async throws -> URL {
+        let media = try await service.media(id, session: session)
+        if URL(string: media.storagePath)?.isFileURL == true {
+            return try await service.cacheMedia(media, session: session, downloader: downloader,
+                                                maximumBytes: 128 * 1024 * 1024)
+        }
+        return try MusicHomeService.storageURL(media.storagePath)
     }
 
     public func cancel() {

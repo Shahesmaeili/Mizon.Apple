@@ -36,8 +36,10 @@ struct AuthLocalization: DynamicProperty {
     }
 
     static func englishFont(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        WindowsTypography.segoeAvailable ? .custom("Segoe UI Variable", size: size).weight(weight)
-            : .system(size: size, weight: weight)
+        if let face = WindowsTypography.englishFontName(weight: weight) {
+            return .custom(face, size: size)
+        }
+        return .system(size: size, weight: weight)
     }
 }
 

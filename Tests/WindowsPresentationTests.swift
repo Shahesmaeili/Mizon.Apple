@@ -142,6 +142,21 @@ struct WindowsPresentationTests {
         #expect(abs(devEase(0.5) - 0.5) < 0.0001)
         #expect(abs(devEase(1) - 1) < 0.00001)
     }
+    @Test func englishPresentationRegistersTheBundledWeightsAndNativeFieldFace() throws {
+        let faces: [(Font.Weight, String)] = [
+            (.light, "Selawik-Light"), (.regular, "Selawik-Regular"),
+            (.semibold, "Selawik-Semibold"), (.bold, "Selawik-Bold"),
+        ]
+        for (weight, expectedFace) in faces {
+            let name = try #require(WindowsTypography.englishFontName(weight: weight))
+            #expect(name == expectedFace)
+            let font = CTFontCreateWithName(name as CFString, 14, nil)
+            #expect(CTFontCopyPostScriptName(font) as String == expectedFace)
+        }
+        #expect(WindowsTypography.inputFontName(isPersian: false) == "Selawik-Regular")
+        #expect(WindowsTypography.inputFontName(isPersian: true) == "IRANSans")
+    }
+
     @Test @MainActor func actualWindowsFontsContainAllUsedGlyphs() {
         _ = WindowsTypography.registered
         let font = CTFontCreateWithName("SeagullFluentIcons" as CFString, 20, nil)
