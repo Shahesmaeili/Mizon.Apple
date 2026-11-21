@@ -19,6 +19,7 @@ struct MusicArtistModel: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    private var localization = AuthLocalization()
     @State private var visible = false
     @State private var scene: ArtistPreviewScene?
     @State private var dragOrigin: simd_quatf?
@@ -48,7 +49,7 @@ struct MusicArtistModel: View {
                     .buttonStyle(MusicHomeButtonStyle(fill: MusicHomeStyle.inset, stroke: MusicHomeStyle.stroke, corner: 8))
                     .accessibilityLabel(resetLabel)
                     if showsRotationHint {
-                        Text(rotateHint).font(.system(size: 8)).foregroundStyle(MusicHomeStyle.secondary)
+                        Text(rotateHint).font(localization.font(8)).foregroundStyle(MusicHomeStyle.secondary)
                             .lineLimit(1).allowsHitTesting(false)
                     }
                 }

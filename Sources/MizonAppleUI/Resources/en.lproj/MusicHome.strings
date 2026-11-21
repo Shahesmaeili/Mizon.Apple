@@ -189,3 +189,16 @@
 "ShellSelectMood" = "Select mood";
 "ShellClearMood" = "Clear mood";
 "ShellMoreTabs" = "More tabs";
+"ShellMoodTitle" = "Your mood";
+"ShellMoodSubtitle" = "Show how you feel with an emoji";
+"ShellMoodSearchHint" = "Search emoji…";
+"ShellMoodSearch" = "Search moods";
+"ShellMoodSearchHelp" = "Enter a Persian or English name or the emoji itself.";
+"ShellMoodLoading" = "Moods are on the way…";
+"ShellMoodLoadFailed" = "Moods could not be loaded. Try again.";
+"ShellMoodEmpty" = "No emoji found";
+"ShellMoodSaving" = "Saving your mood";
+"ShellMoodSaveFailed" = "Your mood could not be saved. Try again.";
+"ShellMoodSaved" = "Your mood was saved";
+"ShellMoodFooter" = "Click the emoji next to your profile to play its effect";
+"ShellMoodEffectHint" = "Play the effect. Press Down or touch and hold to choose an emoji.";

@@ -142,7 +142,8 @@ struct MusicStoryOrbit: View {
         var rating = layer(period: 21 + Double(index) * 2.1, phase: 173, x: 5 * direction, y: -5, pointerX: 18, pointerY: -12)
         rating.translateBy(x: card.badge.x, y: card.badge.y)
         rating.rotate(by: .degrees(card.angles.1 + influence.x * 7))
-        rating.draw(Text(card.rating).font(.system(size: 12)).foregroundStyle(.primary), at: CGPoint(x: 29, y: 6))
+        rating.draw(Text(card.rating).font(AuthLocalization.englishFont(12)).foregroundStyle(.primary),
+                    at: CGPoint(x: 29, y: 6))
         rating.fill(Path(ellipseIn: CGRect(x: 9, y: 28, width: 40, height: 40)), with: .color(.black))
         rating.draw(rating.resolve(Image(systemName: "star.fill").symbolRenderingMode(.monochrome)),
                     in: CGRect(x: 21, y: 40, width: 16, height: 16))

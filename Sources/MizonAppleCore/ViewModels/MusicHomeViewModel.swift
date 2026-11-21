@@ -35,6 +35,11 @@ public final class MusicHomeViewModel {
         artwork = MusicArtworkStore(service: service, session: session)
     }
 
+    public func moodAnimationURL(_ mediaID: UUID) async throws -> URL {
+        let source = try await artwork.file(mediaID, session: session, maximumBytes: Int64(MoodAnimationAsset.maximumBytes))
+        return try await MoodAnimationAsset.jsonFile(for: source)
+    }
+
     public func refresh() async {
         await withTaskGroup(of: Void.self) { group in
             for section in Section.allCases {

@@ -1,5 +1,5 @@
 {
-  "originHash" : "c0c2077204fc0f1ba731d2f0ba4174c7e09f4848b55b8f6b72d569face5c7b9a",
+  "originHash" : "9e975f76a884719946c2bf9036dddf2eafd1fcd57b090c3db869999a301415b2",
   "pins" : [
     {
       "identity" : "gltfkit2",
@@ -11,12 +11,21 @@
       }
     },
     {
+      "identity" : "lottie-spm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/airbnb/lottie-spm.git",
+      "state" : {
+        "revision" : "0aff16288f8dc1e3dab35cbf5cf45979673fd3df",
+        "version" : "4.6.1"
+      }
+    },
+    {
       "identity" : "mizon.api.swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Shahesmaeili/Mizon.API.Swift",
       "state" : {
         "branch" : "main",
-        "revision" : "f295dc53c3bc9e1cc09bf1226c35548cac1429a9"
+        "revision" : "6b6279cff54d35e747934cf168d38331cd24c1bd"
       }
     },
     {

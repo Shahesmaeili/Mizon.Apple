@@ -3,52 +3,26 @@ import MizonAPIClient
 import MizonAppleCore
 import SwiftUI
 
-struct MusicHomeHeader<HomeTab: View, Account: View>: View {
+struct MusicHomeHeader<Search: View, HomeTab: View, Account: View>: View {
     let width: CGFloat
-    let search: MusicHomeSearch
+    @ViewBuilder let search: () -> Search
     @ViewBuilder let home: () -> HomeTab
     @ViewBuilder let account: () -> Account
     private var localization = AuthLocalization()
 
     var body: some View {
-        Group {
-            if width >= 810 {
-                HStack(spacing: 8) {
-                    tabs
-                    search.frame(maxWidth: 640).frame(maxWidth: .infinity)
-                    account()
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        search.frame(maxWidth: .infinity)
-                        account()
-                    }
-                    tabs
-                }
-            }
+        HStack(spacing: 8) {
+            tabStrip(showsMovies: width >= 625, showsApps: width >= 725, showsVPN: width >= 825)
+            search().frame(maxWidth: 640).frame(maxWidth: .infinity, alignment: .trailing)
+            account()
         }
-        .padding(.horizontal, width >= 1040 ? 24 : 10)
-        .padding(.vertical, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .zIndex(1)
+        .padding(.horizontal, width >= 960 ? 18 : 8)
+        .frame(width: width)
         .environment(\.layoutDirection, .leftToRight)
-    }
-
-    private var tabs: some View {
-        ViewThatFits(in: .horizontal) {
-            tabStrip(showsMovies: true, showsApps: true, showsVPN: true)
-            tabStrip(showsMovies: true, showsApps: true, showsVPN: false)
-            tabStrip(showsMovies: true, showsApps: false, showsVPN: false)
-            tabStrip(showsMovies: false, showsApps: false, showsVPN: false)
-        }
     }
 
     private func tabStrip(showsMovies: Bool, showsApps: Bool, showsVPN: Bool) -> some View {
         HStack(spacing: 5) {
-            FluentIcon(symbol: .arrowLeft, size: 14).foregroundStyle(MusicHomeStyle.tertiary.opacity(0.7))
-                .frame(width: 32, height: 36)
-                .accessibilityHidden(true)
             home()
             if showsMovies { inactive("ShellMovies", icon: .video) }
             if showsApps { inactive("ShellApps", icon: .apps) }
@@ -64,6 +38,7 @@ struct MusicHomeHeader<HomeTab: View, Account: View>: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .accessibilityLabel(localization.string("ShellMoreTabs", table: "MusicHome"))
+                .accessibilityIdentifier("music.home.menu")
             }
         }
         .fixedSize(horizontal: true, vertical: true)
@@ -94,7 +69,10 @@ struct MusicHomeHeader<HomeTab: View, Account: View>: View {
 
 struct MusicHomeSearch: View {
     let model: MusicHomeViewModel
+    let viewportWidth: CGFloat
+    let compact: Bool
     @Binding var focusRequest: Int
+    @Binding var showingSearch: Bool
     let onSelect: (GlobalSearchResult) -> Void
     @FocusState private var focused: Bool
     @State private var query = ""
@@ -102,7 +80,6 @@ struct MusicHomeSearch: View {
     @State private var selected: String?
     @State private var loading = false
     @State private var failed = false
-    @State private var expanded = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var localization = AuthLocalization()
 
@@ -110,16 +87,52 @@ struct MusicHomeSearch: View {
     private var searchCyan: Color { musicColor("A1E8EE") }
 
     var body: some View {
+        Button { showingSearch = true } label: {
+            HStack(spacing: 6) {
+                if !compact {
+                    Text(searchText("ShellSearchPlaceholder"))
+                        .font(localization.font(12)).foregroundStyle(MusicHomeStyle.secondary).lineLimit(1)
+                    Spacer(minLength: 0)
+                    #if os(macOS)
+                    Text("⌘ K").font(.system(size: 10)).foregroundStyle(MusicHomeStyle.tertiary)
+                    #endif
+                }
+                FluentIcon(symbol: .search, size: 16).foregroundStyle(searchCyan)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(MusicHomeStyle.secondaryCard, in: .rect(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .authHandPointer(enabled: true)
+        .accessibilityLabel(localization.string("SearchPrompt", table: "Search"))
+        .accessibilityIdentifier("music.home.search.button")
+        .keyboardShortcut("k", modifiers: .command)
+        .popover(isPresented: $showingSearch, arrowEdge: .top) {
+            VStack(spacing: 8) {
+                searchField
+                if normalized.count >= 2 { searchSuggestions }
+            }
+            .padding(10)
+            .frame(width: min(420, max(240, viewportWidth - 42)))
+            .presentationCompactAdaptation(.popover)
+            .task {
+                focused = true
+                await Task.yield()
+                if !Task.isCancelled { focused = true }
+            }
+        }
+        .onChange(of: focusRequest) { _, _ in showingSearch = true }
+        .task(id: normalized) { await find(normalized) }
+    }
+
+    private var searchField: some View {
         HStack(spacing: 4) {
             FluentIcon(symbol: .mic, size: 16)
                 .foregroundStyle(MusicHomeStyle.secondary)
                 .frame(width: 28, height: 28)
                 .background(.white.opacity(0.042), in: .rect(cornerRadius: 8))
                 .accessibilityHidden(true)
-            #if os(macOS)
-            Text("⌘ K").font(.system(size: 10)).foregroundStyle(MusicHomeStyle.tertiary)
-                .padding(.leading, 4).accessibilityHidden(true)
-            #endif
             TextField(searchText("ShellSearchPlaceholder"), text: $query)
                 .textFieldStyle(.plain)
                 .font(localization.font(12))
@@ -131,7 +144,6 @@ struct MusicHomeSearch: View {
                 .accessibilityIdentifier("music.home.search")
                 .onChange(of: query) { _, value in
                     if value.count > 120 { query = String(value.prefix(120)) }
-                    expanded = focused
                 }
                 .onSubmit {
                     if let result = results.first(where: { $0.id == selected }) ?? results.first { choose(result) }
@@ -139,8 +151,7 @@ struct MusicHomeSearch: View {
                 .onKeyPress(.downArrow) { move(1) }
                 .onKeyPress(.upArrow) { move(-1) }
                 .onKeyPress(.escape) {
-                    expanded = false
-                    focused = false
+                    showingSearch = false
                     return .handled
                 }
             FluentIcon(symbol: .search, size: 16).foregroundStyle(searchCyan)
@@ -157,22 +168,6 @@ struct MusicHomeSearch: View {
                 .allowsHitTesting(false)
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focused)
-        .overlay(alignment: .topLeading) {
-            if expanded && (focused || loading) && normalized.count >= 2 {
-                searchSuggestions.offset(y: 48)
-            }
-        }
-        .background {
-            Button { focused = true } label: { EmptyView() }
-                .keyboardShortcut("k", modifiers: .command)
-                .accessibilityHidden(true).frame(width: 0, height: 0)
-        }
-        .onChange(of: focusRequest) { _, _ in
-            focused = true
-            expanded = true
-        }
-        .onChange(of: focused) { _, value in expanded = value }
-        .task(id: normalized) { await find(normalized) }
     }
 
     private var searchSuggestions: some View {
@@ -231,14 +226,14 @@ struct MusicHomeSearch: View {
 
     private func choose(_ item: GlobalSearchResult) {
         focused = false
-        expanded = false
+        showingSearch = false
         selected = nil
         query = ""
         onSelect(item)
     }
 
     private func move(_ step: Int) -> KeyPress.Result {
-        guard expanded, !results.isEmpty else { return .ignored }
+        guard showingSearch, !results.isEmpty else { return .ignored }
         let position = selected.flatMap { id in results.firstIndex { $0.id == id } }
         let index = position.map { max(0, min(results.count - 1, $0 + step)) } ?? (step > 0 ? 0 : results.count - 1)
         selected = results[index].id
@@ -264,102 +259,4 @@ struct MusicHomeSearch: View {
         }
     }
 }
-struct MusicHomeMoodButton: View {
-    let model: MusicHomeViewModel
-    @State private var mood: ClientMoodItemResponse?
-    @State private var loaded = false
-    @State private var failed = false
-    @State private var options: [ClientMoodItemResponse] = []
-    @State private var showing = false
-    @State private var saving = false
-    private var localization = AuthLocalization()
-
-    init(model: MusicHomeViewModel, initialMood: ClientMoodItemResponse?) {
-        self.model = model
-        _mood = State(initialValue: initialMood)
-    }
-
-    var body: some View {
-        Button {
-            showing = true
-        } label: {
-            Group {
-                if let emoji = mood?.emoji, !emoji.isEmpty { Text(emoji).font(.system(size: 20)) }
-                else { Image(systemName: "face.smiling").font(.system(size: 18)).foregroundStyle(MusicHomeStyle.secondary) }
-            }
-            .frame(width: 36, height: 32)
-        }
-        .padding(.horizontal, 3)
-        .buttonStyle(MusicHomeButtonStyle(corner: 10))
-        .accessibilityLabel(label("ShellSelectMood"))
-        .accessibilityValue(mood.map(title) ?? "")
-        .popover(isPresented: $showing, arrowEdge: .top) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(label("ShellSelectMood")).font(localization.font(14, weight: .semibold))
-                if failed {
-                    Text(label("FeatureServiceFailed")).font(localization.font(11)).foregroundStyle(MusicHomeStyle.secondary)
-                }
-                if loaded {
-                    ForEach(options, id: \.publicId) { option in
-                        Button {
-                            set(option.publicId)
-                        } label: {
-                            HStack {
-                                Text(option.emoji)
-                                Text(title(option))
-                                Spacer()
-                                if mood?.publicId == option.publicId { FluentIcon(symbol: .checkmark, size: 12) }
-                            }
-                            .padding(.horizontal, 8).frame(height: 30)
-                        }
-                        .buttonStyle(MusicHomeButtonStyle(fill: MusicHomeStyle.inset))
-                        .disabled(saving)
-                    }
-                    if mood != nil {
-                        Button(label("ShellClearMood")) { set(nil) }
-                            .disabled(saving)
-                    }
-                } else if failed {
-                    Button(label("Retry")) { Task { await load() } }
-                } else {
-                    ProgressView().controlSize(.small)
-                }
-            }
-            .frame(width: 240)
-            .padding(12)
-            .task { if !loaded { await load() } }
-        }
-    }
-
-    private func load() async {
-        failed = false
-        do {
-            options = try await model.service.moodOptions(session: model.session)
-            loaded = true
-        } catch {
-            if !Task.isCancelled { failed = true }
-        }
-    }
-
-    private func set(_ id: UUID?) {
-        guard !saving else { return }
-        saving = true
-        failed = false
-        Task {
-            defer { saving = false }
-            do {
-                mood = try await model.service.setMood(id, session: model.session)
-                showing = false
-            } catch {
-                failed = true
-            }
-        }
-    }
-
-    private func label(_ key: String) -> String { localization.string(key, table: "MusicHome") }
-    private func title(_ mood: ClientMoodItemResponse) -> String {
-        localization.isPersian ? mood.persianTitle ?? mood.title : mood.title
-    }
-}
-
 #endif

@@ -636,15 +636,13 @@ private struct AuthenticationPage: View {
 
     #if os(macOS)
     private var nativeInputFont: NSFont {
-        _ = WindowsTypography.registered
-        let fontName = isPersian ? "IRANSans" : "Segoe UI Variable"
-        return NSFont(name: fontName, size: 14) ?? .systemFont(ofSize: 14)
+        WindowsTypography.inputFontName(isPersian: isPersian)
+            .flatMap { NSFont(name: $0, size: 14) } ?? .systemFont(ofSize: 14)
     }
     #elseif os(iOS)
     private var passwordInputFont: UIFont {
-        _ = WindowsTypography.registered
-        let fontName = isPersian ? "IRANSans" : "Segoe UI Variable"
-        return UIFont(name: fontName, size: 14) ?? .systemFont(ofSize: 14)
+        WindowsTypography.inputFontName(isPersian: isPersian)
+            .flatMap { UIFont(name: $0, size: 14) } ?? .systemFont(ofSize: 14)
     }
     #endif
 

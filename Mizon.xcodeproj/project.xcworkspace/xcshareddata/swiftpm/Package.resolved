@@ -11,12 +11,21 @@
       }
     },
     {
+      "identity" : "lottie-spm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/airbnb/lottie-spm.git",
+      "state" : {
+        "revision" : "0aff16288f8dc1e3dab35cbf5cf45979673fd3df",
+        "version" : "4.6.1"
+      }
+    },
+    {
       "identity" : "mizon.api.swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Shahesmaeili/Mizon.API.Swift",
       "state" : {
         "branch" : "main",
-        "revision" : "f295dc53c3bc9e1cc09bf1226c35548cac1429a9"
+        "revision" : "6b6279cff54d35e747934cf168d38331cd24c1bd"
       }
     },
     {

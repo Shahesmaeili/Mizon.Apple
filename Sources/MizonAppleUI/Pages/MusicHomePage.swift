@@ -19,7 +19,7 @@ enum MusicDestination: Hashable, Identifiable {
 
 struct MusicHomePage: View {
     enum Action: Hashable {
-        case search, home, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
+        case search, home, mood, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
         case featureControls, featureThumbnail(Int), retryFeatureMedia
         case allGenres, genre(UUID), story(UUID), profile(UUID), follow(UUID)
         case playlist(UUID), library, activity(String), moreActivity, recent, news(Int), transport
@@ -43,7 +43,10 @@ struct MusicHomePage: View {
     @State private var featureIndex = 0
     @State private var featureDirection = 1
     @State private var heroHovered = false
-    @State private var heroMediaFailed = false
+    @State private var heroArtwork: FeatureArtwork?
+    @State private var outgoingHeroArtwork: FeatureArtwork?
+    @State private var heroArtworkStatus = FeatureMediaStatus.waiting
+    @State private var heroVideoStatus = FeatureMediaStatus.waiting
     @State private var heroVideoEnded = false
     @State private var heroMediaRetry = 0
     @State private var featurePaused = false
@@ -63,6 +66,12 @@ struct MusicHomePage: View {
     @State private var recentScrollRequest = 0
     @State private var scrollHomeRequest = 0
     @State private var searchFocusRequest = 0
+    #if os(macOS)
+    @State private var headerViewport = CGSize(width: 960, height: 700)
+    #endif
+    @State private var showingSearch = false
+    @State private var showingMoodPicker = false
+    @State private var moodPress: UInt = 0
     @FocusState private var controlFocus: Action?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -88,6 +97,11 @@ struct MusicHomePage: View {
         model.features.indices.contains(featureIndex) ? model.features[featureIndex] : model.features.first
     }
 
+    private var heroMediaFailed: Bool {
+        guard let feature = currentFeature else { return false }
+        return (isVideo(feature) ? heroVideoStatus : heroArtworkStatus) == .failed
+    }
+
     private var currentArtist: FeaturedPersonItem? {
         model.artists.indices.contains(spotlightIndex) ? model.artists[spotlightIndex] : model.artists.first
     }
@@ -108,13 +122,25 @@ struct MusicHomePage: View {
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
-                VStack(spacing: 0) {
-                    header(width: geometry.size.width)
-                    layout(width: geometry.size.width)
-                }
+                #if os(iOS)
+                AnyView(layout(width: geometry.size.width))
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        AnyView(header(viewport: geometry.size, width: geometry.size.width))
+                    }
+                #else
+                layout(width: geometry.size.width)
+                #endif
             }
                 .navigationTitle("")
-                #if os(iOS)
+                #if os(macOS)
+                .onGeometryChange(for: CGSize.self, of: \.size) { headerViewport = $0 }
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        header(viewport: headerViewport, width: min(1120, max(230, headerViewport.width - 168)))
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                }
+                #else
                 .toolbar(.hidden, for: .navigationBar)
                 #endif
                 .navigationDestination(item: $destination) { route in
@@ -195,14 +221,21 @@ struct MusicHomePage: View {
         .onDisappear { model.stop() }
     }
 
-    private func header(width: CGFloat) -> some View {
-        MusicHomeHeader(width: width, search: MusicHomeSearch(model: model, focusRequest: $searchFocusRequest) { result in
-            destination = result.kind == .music ? .track(result.publicID) : .client(result.publicID)
-        }) {
+    private func header(viewport: CGSize, width: CGFloat) -> some View {
+        MusicHomeHeader(width: width) {
+            MusicHomeSearch(model: model, viewportWidth: viewport.width, compact: width < 440,
+                            focusRequest: $searchFocusRequest, showingSearch: $showingSearch) { result in
+                destination = result.kind == .music ? .track(result.publicID) : .client(result.publicID)
+            }
+            .focusable()
+            .focused($controlFocus, equals: .search)
+        } home: {
             control(.home) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     FluentIcon(symbol: .headphones, size: 18, usesColor: true)
-                    Text(text("ShellMusic")).font(localization.font(14, weight: .semibold)).lineLimit(1)
+                    if width >= 320 {
+                        Text(text("ShellMusic")).font(localization.font(14, weight: .semibold)).lineLimit(1)
+                    }
                 }
                 .padding(.horizontal, 10)
                 .frame(height: 36)
@@ -211,11 +244,21 @@ struct MusicHomePage: View {
                 }
             }
             .buttonStyle(MusicHomeButtonStyle(corner: 6))
+            .accessibilityLabel(text("ShellMusic"))
             .accessibilityAddTraits(.isSelected)
             .accessibilityIdentifier("music.home.tab")
         } account: {
             HStack(spacing: 0) {
-                MusicHomeMoodButton(model: model, initialMood: initialMood)
+                MusicHomeMoodButton(model: model, initialMood: initialMood, viewport: viewport,
+                                    controllerPress: moodPress) { showingMoodPicker = $0 }
+                    .focusable()
+                    .focused($controlFocus, equals: .mood)
+                    .overlay {
+                        if controlFocus == .mood {
+                            RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2)
+                                .allowsHitTesting(false)
+                        }
+                    }
                 Menu {
                     if let displayName, !displayName.isEmpty { Text(displayName) }
                     Button(text("Profile")) { destination = .client(model.session.clientPublicId) }
@@ -229,6 +272,7 @@ struct MusicHomePage: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .accessibilityLabel(displayName ?? text("Profile"))
+                .accessibilityIdentifier("music.home.profile")
             }
             .background(.white.opacity(15.0 / 255), in: UnevenRoundedRectangle(
                 topLeadingRadius: 8, bottomLeadingRadius: 8, bottomTrailingRadius: 16, topTrailingRadius: 16))
@@ -252,19 +296,19 @@ struct MusicHomePage: View {
             ScrollViewReader { reader in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 28) {
-                        feature(width: feedWidth).id(Action.home)
-                        artistSpotlight(width: feedWidth)
+                        // Keep each deep section out of the feed's composite layout metadata.
+                        AnyView(feature(width: feedWidth)).id(Action.home)
+                        AnyView(artistSpotlight(width: feedWidth))
                         MusicStoryOrbit()
-                        stories
-                        genres
-                        artists
-                        centralRails.discovery(title: text("DiscoverNext"), subtitle: text("DiscoverNextSubtitle"),
-                                               samples: discoveryRecommended, compact: false)
-                        centralRails.discovery(title: text("ReturnToMood"), subtitle: text("RecentlyPlayed"),
-                                               samples: discoveryRecent, compact: true)
-                            .id(Action.recent)
-                        if !medium { windowsCommunityRail(width: feedWidth) }
-                        if !wide { windowsEditorialRail(width: feedWidth) }
+                        AnyView(stories)
+                        AnyView(genres)
+                        AnyView(artists)
+                        AnyView(centralRails.discovery(title: text("DiscoverNext"), subtitle: text("DiscoverNextSubtitle"),
+                                                      samples: discoveryRecommended, compact: false))
+                        AnyView(centralRails.discovery(title: text("ReturnToMood"), subtitle: text("RecentlyPlayed"),
+                                                      samples: discoveryRecent, compact: true)).id(Action.recent)
+                        if !medium { AnyView(windowsCommunityRail(width: feedWidth)) }
+                        if !wide { AnyView(windowsEditorialRail(width: feedWidth)) }
                         Rectangle().fill(MusicHomeStyle.stroke).frame(height: 1)
                         HStack(alignment: .top, spacing: 12) {
                             Text("MADE FOR YOUR MOMENTS").font(localization.font(9)).tracking(1.44)
@@ -280,7 +324,9 @@ struct MusicHomePage: View {
                 .frame(width: feedWidth)
                 .scrollIndicators(.hidden)
                 .onChange(of: controlFocus) { _, target in
-                    if let target, target != .search, target != .home, target != .recent { reader.scrollTo(target, anchor: .center) }
+                    if let target, target != .search, target != .home, target != .mood, target != .recent {
+                        reader.scrollTo(target, anchor: .center)
+                    }
                 }
                 .onChange(of: scrollHomeRequest) { reader.scrollTo(Action.home, anchor: .top) }
                 .onChange(of: recentScrollRequest) { reader.scrollTo(Action.recent, anchor: .top) }
@@ -308,7 +354,7 @@ struct MusicHomePage: View {
                 heroSurface(item, compact: compact)
                     .frame(height: height)
                     .clipShape(.rect(cornerRadius: 12))
-                    .shadow(color: .black.opacity(0.22), radius: 12, y: 6)
+                    .modifier(MusicHeroLighting(active: canPresentFeature && !fullWindowVideo, palette: heroArtwork?.palette))
             } else if model.loading.contains(.features) {
                 MusicHomeSkeleton(height: 300, label: text("LoadingFeatures"))
             } else {
@@ -334,28 +380,15 @@ struct MusicHomePage: View {
         .onHover { heroHovered = $0 }
         .onScrollVisibilityChange { heroVisible = $0 }
         .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: canPresentFeature, retry: heroMediaRetry)) {
-            previewPlayer?.pause()
-            previewPlayer = nil
-            heroMediaFailed = false
-            heroVideoEnded = false
-            guard canPresentFeature, let item = currentFeature, isVideo(item) else { return }
-            do {
-                let media = try await model.service.media(item.mediaPublicId, session: model.session)
-                let url = try MusicHomeService.storageURL(media.storagePath)
-                try Task.checkCancellation()
-                let player = AVPlayer(url: url)
-                player.isMuted = previewMuted
-                player.volume = Float(previewVolume)
-                previewPlayer = player
-                if !featurePaused && !reduceMotion { player.play() }
-            } catch {
-                if !Task.isCancelled { heroMediaFailed = true }
-            }
+            await presentFeatureVideo()
         }
-        .task(id: FeatureTimer(index: featureIndex, count: model.features.count, canRotate: canRotateFeatures)) {
-            guard canRotateFeatures, model.features.count > 1, let currentFeature, !isVideo(currentFeature) else { return }
+        .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: canPresentFeature, retry: heroMediaRetry)) {
+            await presentFeatureArtwork()
+        }
+        .task(id: FeatureTimer(index: featureIndex, count: model.features.count, canRotate: canRotateImage)) {
+            guard canRotateImage, model.features.count > 1, let currentFeature else { return }
             do {
-                try await Task.sleep(for: .seconds(min(60, max(3, currentFeature.displaySeconds))))
+                try await Task.sleep(for: .seconds(min(120, max(3, currentFeature.displaySeconds))))
                 selectFeature(featureIndex + 1)
             } catch {}
         }
@@ -364,8 +397,70 @@ struct MusicHomePage: View {
             heroVideoEnded = true
             advanceFinishedVideo()
         }
+        .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.failedToPlayToEndTimeNotification)) { event in
+            guard let item = event.object as? AVPlayerItem, item === previewPlayer?.currentItem else { return }
+            previewPlayer?.pause()
+            previewPlayer = nil
+            heroVideoStatus = .failed
+        }
         .onChange(of: canRotateFeatures) { _, canRotate in
             if canRotate { advanceFinishedVideo() }
+        }
+    }
+
+    private func presentFeatureArtwork() async {
+        guard canPresentFeature, let item = currentFeature else { return }
+        if heroArtwork?.id == item.publicId, heroArtworkStatus == .ready { return }
+        heroArtworkStatus = .loading
+        for id in featureArtworkIDs(item) {
+            do {
+                let image = try await model.artwork.image(id, session: model.session)
+                try Task.checkCancellation()
+                let palette = await MusicHeroPalette.extract(from: image)
+                try Task.checkCancellation()
+                let animate = !reduceMotion && !fullWindowVideo
+                outgoingHeroArtwork = animate ? heroArtwork : nil
+                heroArtwork = FeatureArtwork(id: item.publicId, image: image, palette: palette,
+                                             stretch: !isVideo(item), direction: featureDirection,
+                                             revealStart: animate ? Date() : nil)
+                heroArtworkStatus = .ready
+                return
+            } catch {
+                if Task.isCancelled { return }
+            }
+        }
+        heroArtworkStatus = .failed
+    }
+
+    private func presentFeatureVideo() async {
+        previewPlayer?.pause()
+        previewPlayer = nil
+        heroVideoStatus = .waiting
+        heroVideoEnded = false
+        guard canPresentFeature, let item = currentFeature, isVideo(item) else { return }
+        heroVideoStatus = .loading
+        do {
+            let url = try await model.artwork.playableURL(item.mediaPublicId, session: model.session)
+            try Task.checkCancellation()
+            let media = AVPlayerItem(url: url)
+            let player = AVPlayer(playerItem: media)
+            player.isMuted = previewMuted
+            player.volume = Float(previewVolume)
+            previewPlayer = player
+            for await status in media.publisher(for: \.status, options: [.initial, .new]).values {
+                try Task.checkCancellation()
+                if status == .failed { throw media.error ?? CocoaError(.fileReadCorruptFile) }
+                if status == .readyToPlay, heroVideoStatus == .loading {
+                    heroVideoStatus = .ready
+                    if !featurePaused && !reduceMotion { player.play() }
+                }
+            }
+        } catch {
+            if !Task.isCancelled {
+                previewPlayer?.pause()
+                previewPlayer = nil
+                heroVideoStatus = .failed
+            }
         }
     }
 
@@ -385,6 +480,11 @@ struct MusicHomePage: View {
             && !heroHovered && !featureHasFocus && exportRequest == nil
     }
 
+    private var canRotateImage: Bool {
+        guard canRotateFeatures, let item = currentFeature, !isVideo(item) else { return false }
+        return heroArtwork?.id == item.publicId || heroArtworkStatus == .failed
+    }
+
     private var featureHasFocus: Bool {
         switch controlFocus {
         case .featureControls, .previousFeature, .nextFeature, .featureThumbnail, .openFeature, .likeFeature, .retryFeatureMedia: true
@@ -397,14 +497,14 @@ struct MusicHomePage: View {
         return ZStack(alignment: .bottom) {
             musicColor("090C0F")
             Group {
-                if let previewPlayer {
+                if let heroArtwork {
+                    artworkReveal(heroArtwork)
+                }
+                if let previewPlayer, heroVideoStatus == .ready {
                     MusicInlineVideo(player: previewPlayer)
-                } else if let artwork = featureArtwork(item) {
-                    MusicArtwork(mediaID: artwork, model: model, symbol: "", stretch: !isVideo(item))
                 }
             }
-            .id(item.publicId)
-            .transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : CGFloat(featureDirection) * 14)))
+            .allowsHitTesting(false)
             let slate = musicColor("141B24")
             LinearGradient(stops: [
                 .init(color: slate.opacity(112.0 / 255), location: 0),
@@ -440,14 +540,19 @@ struct MusicHomePage: View {
                 .padding(.bottom, inset)
             VStack {
                 heroHeader(item, compact: compact)
-                if heroMediaFailed {
+                if heroMediaFailed || heroMediaLoading(item) {
                     HStack(spacing: 8) {
-                        Text(text("FeatureServiceFailed")).font(localization.font(10))
+                        Text(text(heroMediaFailed ? (isVideo(item) ? "VideoFailed" : "FeatureImageFailed")
+                                                  : (isVideo(item) ? "DownloadingVideo" : "DownloadingImage")))
+                            .font(localization.font(11))
                         Spacer(minLength: 4)
-                        control(.retryFeatureMedia) { Text(text("Retry")).font(localization.font(10, weight: .semibold)) }
-                            .buttonStyle(.plain)
+                        if heroMediaFailed {
+                            control(.retryFeatureMedia) { Text(text("Retry")).font(localization.font(11, weight: .semibold)) }
+                                .buttonStyle(MusicHomeButtonStyle(corner: 6))
+                                .accessibilityLabel(text("RetryMedia"))
+                        }
                     }
-                    .padding(8)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
                     .background(musicColor("1A2635").opacity(0.85), in: .rect(cornerRadius: 8))
                 }
                 Spacer(minLength: 0)
@@ -456,7 +561,56 @@ struct MusicHomePage: View {
             .padding(.top, inset)
         }
         .foregroundStyle(.white)
+        .overlay(alignment: .top) {
+            if isVideo(item), heroVideoStatus == .loading {
+                ProgressView().progressViewStyle(.linear).tint(musicColor("A1E8EE"))
+                    .frame(height: 2).clipped()
+                    .accessibilityLabel(text("DownloadingVideo"))
+                    .allowsHitTesting(false)
+            }
+        }
     }
+
+    private func heroMediaLoading(_ item: MusicFeatureItemResponse) -> Bool {
+        (isVideo(item) ? heroVideoStatus : heroArtworkStatus) == .loading
+    }
+
+    @ViewBuilder
+    private func artworkReveal(_ artwork: FeatureArtwork) -> some View {
+        if let start = artwork.revealStart, !reduceMotion, canPresentFeature, !fullWindowVideo,
+           Date().timeIntervalSince(start) < FeatureArtwork.revealDuration {
+            TimelineView(.animation(minimumInterval: 1.0 / 60)) { timeline in
+                let phase = min(1, max(0, timeline.date.timeIntervalSince(start) / FeatureArtwork.revealDuration))
+                ZStack {
+                    if let outgoingHeroArtwork { artworkImage(outgoingHeroArtwork) }
+                    artworkImage(artwork)
+                        .scaleEffect(1 + 0.055 * (1 - Self.artworkRevealCurve.value(at: phase)),
+                                     anchor: UnitPoint(x: artwork.direction < 0 ? 0.78 : 0.22, y: 0.5))
+                        .opacity(phase < 0.72 ? 0.96 * Self.artworkRevealCurve.value(at: phase / 0.72)
+                                 : 0.96 + 0.04 * Self.artworkRevealCurve.value(at: (phase - 0.72) / 0.28))
+                }
+            }
+            .task(id: start) {
+                do {
+                    try await Task.sleep(for: .seconds(max(0, FeatureArtwork.revealDuration + start.timeIntervalSinceNow)))
+                    guard heroArtwork?.revealStart == start else { return }
+                    heroArtwork?.revealStart = nil
+                    outgoingHeroArtwork = nil
+                } catch {}
+            }
+        } else {
+            artworkImage(artwork)
+        }
+    }
+
+    @ViewBuilder
+    private func artworkImage(_ artwork: FeatureArtwork) -> some View {
+        let image = Image(decorative: artwork.image, scale: 1).resizable()
+        if artwork.stretch { image } else { image.scaledToFit() }
+    }
+
+    private static let artworkRevealCurve = UnitCurve.bezier(startControlPoint: UnitPoint(x: 0.18, y: 0.72),
+                                                            endControlPoint: .bottomTrailing)
 
     private func heroHeader(_ item: MusicFeatureItemResponse, compact: Bool) -> some View {
         let size: CGFloat = compact ? 24 : 30
@@ -482,8 +636,8 @@ struct MusicHomePage: View {
                 ForEach(visibleThumbnailIndices, id: \.self) { index in
                     let preview = model.features[index]
                     control(.featureThumbnail(index)) {
-                        MusicArtwork(mediaID: preview.previewMediaPublicId ?? featureArtwork(preview),
-                                     model: model, symbol: "")
+                        MusicArtwork(mediaID: featureArtworkIDs(preview).first, model: model, symbol: "",
+                                     fallbacks: Array(featureArtworkIDs(preview).dropFirst()))
                             .clipShape(.rect(cornerRadius: 7)).padding(1)
                             .frame(width: size, height: size)
                     }
@@ -674,12 +828,27 @@ struct MusicHomePage: View {
         var retry = 0
     }
 
+    private enum FeatureMediaStatus { case waiting, loading, ready, failed }
+
+    private struct FeatureArtwork {
+        static let revealDuration = 0.430
+        let id: UUID
+        let image: CGImage
+        let palette: MusicHeroPalette?
+        let stretch: Bool
+        let direction: Int
+        var revealStart: Date?
+    }
+
     private func isVideo(_ item: MusicFeatureItemResponse) -> Bool {
         item.contentTypeCode.caseInsensitiveCompare("video") == .orderedSame
     }
 
-    private func featureArtwork(_ item: MusicFeatureItemResponse) -> UUID? {
-        isVideo(item) ? item.previewMediaPublicId ?? item.coverMediaPublicId : item.mediaPublicId
+    private func featureArtworkIDs(_ item: MusicFeatureItemResponse) -> [UUID] {
+        let primary = isVideo(item) ? item.previewMediaPublicId : item.mediaPublicId
+        let empty = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+        return [primary, item.coverMediaPublicId == primary ? nil : item.coverMediaPublicId]
+            .compactMap { $0 }.filter { $0 != empty }
     }
 
     private struct FeatureTimer: Equatable {
@@ -1138,6 +1307,7 @@ struct MusicHomePage: View {
         switch action {
         case .search: searchFocusRequest += 1
         case .home: scrollHomeRequest += 1
+        case .mood: moodPress &+= 1
         case .featureControls: showingPreviewControls = true
         case .featureThumbnail(let index): selectFeature(index)
         case .retryFeatureMedia: heroMediaRetry += 1
@@ -1219,7 +1389,7 @@ struct MusicHomePage: View {
     }
 
     private var controllerTargets: [Action] {
-        var targets: [Action] = [.home, .search]
+        var targets: [Action] = [.home, .search, .mood]
         if let item = currentFeature {
             targets.append(.featureControls)
             if model.features.count > 1 {
@@ -1260,7 +1430,9 @@ struct MusicHomePage: View {
         var armed = false
         while !Task.isCancelled {
             if let pad = GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad,
-               destination == nil, !showingLibrary, !showingAllMusicActivity, article == nil, !showingStoryPreview, !copiedFeatureLink, !model.actionFailed, !showingPreviewControls, !fullWindowVideo, !exportPresented {
+               destination == nil, !showingLibrary, !showingAllMusicActivity, article == nil, !showingStoryPreview,
+               !copiedFeatureLink, !model.actionFailed, !showingPreviewControls, !fullWindowVideo, !exportPresented,
+               !showingMoodPicker, !showingSearch {
                 let horizontal = pad.dpad.xAxis.value
                 let vertical = pad.dpad.yAxis.value
                 let control = pad.buttonA.isPressed ? 1 : pad.buttonB.isPressed ? 2
@@ -1316,6 +1488,7 @@ struct MusicArtwork: View {
     var model: MusicHomeViewModel
     var symbol: String
     var stretch = false
+    var fallbacks: [UUID] = []
     @State private var image: CGImage?
 
     var body: some View {
@@ -1334,12 +1507,16 @@ struct MusicArtwork: View {
             .clipped()
         }
         .accessibilityHidden(true)
-        .task(id: mediaID) {
+        .task(id: [mediaID].compactMap { $0 } + fallbacks) {
             image = nil
-            guard let mediaID else { return }
-            let fetched = try? await model.artwork.image(mediaID, session: model.session)
-            guard !Task.isCancelled else { return }
-            image = fetched
+            for id in [mediaID].compactMap({ $0 }) + fallbacks {
+                let fetched = try? await model.artwork.image(id, session: model.session)
+                guard !Task.isCancelled else { return }
+                if let fetched {
+                    image = fetched
+                    return
+                }
+            }
         }
     }
 }

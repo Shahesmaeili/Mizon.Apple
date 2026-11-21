@@ -189,3 +189,16 @@
 "ShellSelectMood" = "انتخاب حال‌وهوا";
 "ShellClearMood" = "پاک کردن حال‌وهوا";
 "ShellMoreTabs" = "بخش‌های بیشتر";
+"ShellMoodTitle" = "حال‌وهوای تو";
+"ShellMoodSubtitle" = "با یک ایموجی بگو چه حسی داری";
+"ShellMoodSearchHint" = "جستجوی ایموجی…";
+"ShellMoodSearch" = "جستجوی حال‌وهوا";
+"ShellMoodSearchHelp" = "نام فارسی یا انگلیسی یا خود ایموجی را وارد کن.";
+"ShellMoodLoading" = "حال‌وهواها در راه‌اند…";
+"ShellMoodLoadFailed" = "ایموجی‌ها دریافت نشدند؛ دوباره امتحان کن.";
+"ShellMoodEmpty" = "ایموجی‌ای پیدا نشد";
+"ShellMoodSaving" = "ذخیرهٔ حال‌وهوا";
+"ShellMoodSaveFailed" = "حال‌وهوایت ذخیره نشد؛ دوباره امتحان کن.";
+"ShellMoodSaved" = "حال‌وهوایت ذخیره شد";
+"ShellMoodFooter" = "برای پخش افکت، روی ایموجی کنار پروفایل کلیک کن";
+"ShellMoodEffectHint" = "برای پخش افکت کلیک کن. برای انتخاب ایموجی، موس را نگه دار یا کلید پایین را بزن.";
