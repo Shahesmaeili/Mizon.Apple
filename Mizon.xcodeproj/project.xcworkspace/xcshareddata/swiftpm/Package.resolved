@@ -1,6 +1,15 @@
 {
-  "originHash" : "592b9f702a027c28fabb5609152067471f9b11b43e30c01ba96e9a9984e4cd86",
+  "originHash" : "1cc7b0ae7baba5426b2424b31a4e14ce241184340a01b4ec06284308386e7b9c",
   "pins" : [
+    {
+      "identity" : "gltfkit2",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/warrenm/GLTFKit2",
+      "state" : {
+        "revision" : "e69e354c4f31ea07b7816b8cbe2ddb28e897d073",
+        "version" : "0.5.15"
+      }
+    },
     {
       "identity" : "mizon.api.swift",
       "kind" : "remoteSourceControl",

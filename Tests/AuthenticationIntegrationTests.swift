@@ -122,6 +122,29 @@ struct AuthenticationIntegrationTests {
         }
     }
 
+    @Test func musicHomeLoadsTheWindowsHeroThroughTheSharedSDK() async throws {
+        let http = network()
+        defer { http.invalidateAndCancel() }
+        let api = MizonApi(session: http)
+        try await api.setToken("fixture-access")
+        let server = try #require(URL(string: "https://example.com/api"))
+        let session = AuthSession(accessToken: "fixture-access", refreshToken: "fixture-refresh", sessionPublicId: UUID(),
+                                  clientPublicId: UUID(), identifier: "fixture", server: server)
+        AuthProtocol.configure(#"{"content":{"items":[{"publicId":"12345678-1234-1234-1234-123456789abc","title":"Fixture feature","contentTypeCode":"video"}]}}"#)
+        let service = MusicHomeService(api: api)
+        let content = try await service.load(.features, session: session)
+        guard case .features(let items) = content else { Issue.record("Expected the featured widget"); return }
+        #expect(items.first?.title == "Fixture feature")
+        #expect(items.first?.contentTypeCode == "video")
+        let request = try #require(AuthProtocol.capturedRequest())
+        #expect(request.url?.path == "/api/Musics/MusicFeatures")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-access")
+        #expect(request.assumesHTTP3Capable)
+        AuthProtocol.configure(#"{"error":{"code":404,"title":"Unavailable"}}"#, code: 404)
+        await #expect(throws: LoginFailure.invalidResponse) { try await service.load(.library, session: session) }
+    }
+
     @Test func registrationChecksConfirmationAndIdentifierRules() {
         var value = registration()
         value.username = "mizon.user"

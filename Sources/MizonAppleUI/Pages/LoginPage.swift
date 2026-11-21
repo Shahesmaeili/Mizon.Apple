@@ -62,8 +62,8 @@ public struct MizonRootView: View {
         WatchLoginPage(model: model)
         #else
         if let session = model.session, let home, home.sessionID == session.sessionPublicId {
-            GlobalSearchPage(session: session, displayName: home.account?.displayName, avatar: home.avatar,
-                             profileTransition: profileTransition) {
+            MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
+                          avatar: home.avatar, profileTransition: profileTransition) {
                 Task {
                     await model.signOut()
                     if model.session == nil { self.home = nil }

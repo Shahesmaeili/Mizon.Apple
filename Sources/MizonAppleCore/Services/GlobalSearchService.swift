@@ -16,12 +16,13 @@ public struct GlobalSearchResult: Identifiable, Sendable {
 }
 
 public struct GlobalSearchService: Sendable {
-    public init() {}
+    private let api: MizonApi
+
+    public init(api: MizonApi = MizonApi()) { self.api = api }
 
     public func search(_ query: String, session: AuthSession,
                        onResult: @MainActor (GlobalSearchResult) -> Void) async throws {
-        let api = MizonApi()
-        try await api.setToken(session.accessToken)
+        if await api.getToken() != session.accessToken { try await api.setToken(session.accessToken) }
         let operation = GlobalSearchOperation(.init(query: query), endpoints: .init(baseURL: session.server))
         for try await item in await api.sendStreamRequest(operation) {
             try Task.checkCancellation()

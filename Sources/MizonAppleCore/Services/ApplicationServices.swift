@@ -17,6 +17,7 @@ public enum ApplicationServices {
         })
         return LoginViewModel(authentication: MizonAuthenticationService(api: api, installationID: identifier),
             welcomeService: MizonWelcomeService(api: api),
-            serverAddress: defaults.string(forKey: "mizon.serverAddress") ?? BackendConfiguration.defaultAddress)
+            serverAddress: defaults.string(forKey: "mizon.serverAddress") ?? BackendConfiguration.defaultAddress,
+            musicHomeService: MusicHomeService(api: api))
     }
 }

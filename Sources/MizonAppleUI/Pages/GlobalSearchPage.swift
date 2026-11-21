@@ -4,11 +4,10 @@ import MizonAppleCore
 
 struct GlobalSearchPage: View {
     let session: AuthSession
-    let displayName: String?
-    let avatar: CGImage?
-    let profileTransition: Namespace.ID
-    let signOut: () -> Void
+    let service: GlobalSearchService
+    let openTrack: (UUID) -> Void
 
+    @Environment(\.dismiss) private var dismiss
     private var localization = AuthLocalization()
     @State private var query = ""
     @State private var results: [GlobalSearchResult] = []
@@ -21,11 +20,13 @@ struct GlobalSearchPage: View {
     var body: some View {
         NavigationStack {
             List(results) { result in
-                Label {
-                    Text(isPersian ? result.persianTitle.flatMap { $0.isEmpty ? nil : $0 } ?? result.title : result.title)
-                } icon: {
-                    Image(systemName: result.kind == .music ? "music.note" : "person.crop.circle")
-                        .foregroundStyle(MizonPalette.accent)
+                Group {
+                    if result.kind == .music {
+                        Button { openTrack(result.publicID) } label: { label(for: result) }
+                            .buttonStyle(.plain)
+                    } else {
+                        label(for: result)
+                    }
                 }
                 .listRowBackground(AuthAppearance.cardFill)
             }
@@ -46,15 +47,7 @@ struct GlobalSearchPage: View {
             .navigationTitle("Mizon")
             .searchable(text: $query, prompt: Text(text("SearchPrompt")))
             .toolbar {
-                Menu {
-                    if let displayName, !displayName.isEmpty { Text(displayName) }
-                    Button(localization.string("SignOut", table: "Settings"), action: signOut)
-                } label: {
-                    WelcomeProfileBadge(avatar: avatar)
-                        .frame(width: 28, height: 28)
-                        .matchedGeometryEffect(id: "welcome-profile", in: profileTransition)
-                }
-                .accessibilityLabel(displayName.flatMap { $0.isEmpty ? nil : $0 } ?? text("Profile"))
+                Button(localization["AuthDone"]) { dismiss() }
             }
             .task(id: normalizedQuery) {
                 await search(normalizedQuery)
@@ -64,6 +57,15 @@ struct GlobalSearchPage: View {
     }
 
     private func text(_ key: String) -> String { localization.string(key, table: "Search") }
+
+    private func label(for result: GlobalSearchResult) -> some View {
+        Label {
+            Text(isPersian ? result.persianTitle.flatMap { $0.isEmpty ? nil : $0 } ?? result.title : result.title)
+        } icon: {
+            Image(systemName: result.kind == .music ? "music.note" : "person.crop.circle")
+                .foregroundStyle(MizonPalette.accent)
+        }
+    }
 
     private func search(_ term: String) async {
         results = []
@@ -77,7 +79,7 @@ struct GlobalSearchPage: View {
         do {
             try await Task.sleep(for: .milliseconds(250))
             var seen: Set<String> = []
-            try await GlobalSearchService().search(term, session: session) { result in
+            try await service.search(term, session: session) { result in
                 guard !Task.isCancelled, normalizedQuery == term, seen.insert(result.id).inserted else { return }
                 results.append(result)
             }

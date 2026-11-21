@@ -21,20 +21,24 @@ public final class LoginViewModel {
     public private(set) var session: AuthSession?
     @ObservationIgnored private let authentication: any AuthenticationService
     @ObservationIgnored public let welcomeService: any WelcomeService
+    @ObservationIgnored public let musicHomeService: MusicHomeService
     public var canSubmit: Bool {
         !isLoading && !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty
     }
     public convenience init(serverAddress: String = BackendConfiguration.defaultAddress) {
         let api = MizonApi()
         self.init(authentication: MizonAuthenticationService(api: api),
-                  welcomeService: MizonWelcomeService(api: api), serverAddress: serverAddress)
+                  welcomeService: MizonWelcomeService(api: api), serverAddress: serverAddress,
+                  musicHomeService: MusicHomeService(api: api))
     }
 
     public init(authentication: any AuthenticationService, welcomeService: any WelcomeService,
-                serverAddress: String = BackendConfiguration.defaultAddress) {
+                serverAddress: String = BackendConfiguration.defaultAddress,
+                musicHomeService: MusicHomeService = MusicHomeService()) {
         self.authentication = authentication
         self.welcomeService = welcomeService
         self.serverAddress = serverAddress
+        self.musicHomeService = musicHomeService
     }
 
     public func activeOrRestoredSession() async throws -> AuthSession? {
