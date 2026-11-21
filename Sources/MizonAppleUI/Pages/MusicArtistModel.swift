@@ -15,6 +15,7 @@ struct MusicArtistModel: View {
     let model: MusicHomeViewModel
     let rotateHint: String
     let resetLabel: String
+    var showsRotationHint = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -29,7 +30,7 @@ struct MusicArtistModel: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .bottomLeading) {
             if let scene, visible, scenePhase == .active {
                 SceneView(scene: scene.scene, pointOfView: scene.camera, options: [.autoenablesDefaultLighting])
                     .allowsHitTesting(false)
@@ -40,12 +41,25 @@ struct MusicArtistModel: View {
                         scene.pivot.simdOrientation = simd_quatf(angle: angle, axis: SIMD3(0, 1, 0))
                             * scene.pivot.simdOrientation
                     }
-                Button { reset(scene) } label: {
-                    Image(systemName: "arrow.counterclockwise")
+                HStack(spacing: 5) {
+                    Button { reset(scene) } label: {
+                        FluentIcon(symbol: .arrowCounterclockwise, size: 12).frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(MusicHomeButtonStyle(fill: MusicHomeStyle.inset, stroke: MusicHomeStyle.stroke, corner: 8))
+                    .accessibilityLabel(resetLabel)
+                    if showsRotationHint {
+                        Text(rotateHint).font(.system(size: 8)).foregroundStyle(MusicHomeStyle.secondary)
+                            .lineLimit(1).allowsHitTesting(false)
+                    }
                 }
-                .buttonStyle(.glass)
-                .accessibilityLabel(resetLabel)
-                .padding(10)
+                .padding(.leading, 10)
+                .padding(.bottom, 9)
+            } else if visible {
+                MusicArtwork(mediaID: artist.profileMediaPublicId, model: model, symbol: "person.fill")
+                    .frame(width: showsRotationHint ? 118 : 96, height: showsRotationHint ? 118 : 96)
+                    .clipShape(.circle)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
             } else {
                 Color.clear
             }

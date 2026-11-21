@@ -56,6 +56,18 @@ public struct MusicHomeService: Sendable {
         try await request(MusicOperation(.init(musicPublicId: id), endpoints: .init(baseURL: session.server)))
     }
 
+    public func client(_ id: UUID, session: AuthSession) async throws -> ClientProfileResponse {
+        try await request(ClientProfileOperation(.init(clientPublicId: id), endpoints: .init(baseURL: session.server)))
+    }
+
+    public func moodOptions(session: AuthSession) async throws -> [ClientMoodItemResponse] {
+        try await request(ClientMoodTypesOperation(.init(), endpoints: .init(baseURL: session.server))).items
+    }
+
+    public func setMood(_ id: UUID?, session: AuthSession) async throws -> ClientMoodItemResponse? {
+        try await request(ClientMoodOperation(.init(clientMoodTypePublicId: id), endpoints: .init(baseURL: session.server))).currentMood
+    }
+
     public func artist(_ id: UUID, session: AuthSession) async throws -> PersonProfileResponse {
         try await request(PersonProfileOperation(.init(personPublicId: id), endpoints: .init(baseURL: session.server)))
     }

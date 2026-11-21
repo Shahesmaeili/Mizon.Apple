@@ -3,6 +3,48 @@ import AVKit
 import CoreTransferable
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
+#if os(macOS)
+struct MusicInlineVideo: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        let layer = AVPlayerLayer(player: player)
+        layer.videoGravity = .resizeAspect
+        view.wantsLayer = true
+        view.layer = layer
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        (view.layer as? AVPlayerLayer)?.player = player
+    }
+}
+#else
+struct MusicInlineVideo: UIViewRepresentable {
+    final class Surface: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+    }
+
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> Surface {
+        let view = Surface()
+        (view.layer as? AVPlayerLayer)?.videoGravity = .resizeAspect
+        return view
+    }
+
+    func updateUIView(_ view: Surface, context: Context) {
+        (view.layer as? AVPlayerLayer)?.player = player
+    }
+}
+#endif
 
 struct MusicFeatureExport: Transferable {
     let url: URL

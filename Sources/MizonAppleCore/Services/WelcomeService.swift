@@ -12,10 +12,12 @@ public enum WelcomeFailure: Error, Equatable {
 public struct WelcomeAccount: Sendable {
     public let displayName: String
     public let avatarID: UUID?
+    public let mood: ClientMoodItemResponse?
 
-    public init(displayName: String, avatarID: UUID?) {
+    public init(displayName: String, avatarID: UUID?, mood: ClientMoodItemResponse? = nil) {
         self.displayName = displayName
         self.avatarID = avatarID
+        self.mood = mood
     }
 
     init(_ response: MeResponse) {
@@ -24,6 +26,7 @@ public struct WelcomeAccount: Sendable {
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first(where: { !$0.isEmpty }) ?? ""
         avatarID = response.meProfile?.mediaPublicId
+        mood = response.currentMood
     }
 }
 

@@ -12,15 +12,16 @@ import UIKit
 #endif
 
 enum MusicDestination: Hashable, Identifiable {
-    case track(UUID), artist(UUID), playlist(UUID), story(UUID)
+    case track(UUID), artist(UUID), client(UUID), playlist(UUID), story(UUID)
 
     var id: Self { self }
 }
 
 struct MusicHomePage: View {
-    private enum Action: Hashable {
-        case search, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
-        case allGenres, genre(UUID), story(UUID), profile(UUID), follow(UUID), artistTrack(UUID)
+    enum Action: Hashable {
+        case search, home, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
+        case featureControls, featureThumbnail(Int), retryFeatureMedia
+        case allGenres, genre(UUID), story(UUID), profile(UUID), follow(UUID)
         case playlist(UUID), library, activity(String), moreActivity, recent, news(Int), transport
         case rhythmDay(Int), previousNews, nextNews, toggleNews, selectNews(Int), spotlightTrack(UUID)
         case addStory, mutePreview, copyFeatureLink, previousSpotlight, nextSpotlight
@@ -28,17 +29,23 @@ struct MusicHomePage: View {
         case refresh(MusicHomeService.Section)
     }
 
-    @State private var model: MusicHomeViewModel
+    @State var model: MusicHomeViewModel
     @State private var destination: MusicDestination?
-    @State private var showingSearch = false
     @State private var showingLibrary = false
-    @State private var selectedRhythmDay = 5
+    @State private var showingAllMusicActivity = false
+    @State var selectedRhythmDay = 5
     @State private var selectedGenre: UUID?
     @State private var showingStoryPreview = false
     @State private var copiedFeatureLink = false
     @State private var spotlightIndex = 0
+    @State private var spotlightDirection = 0
     @State private var artistRailPosition: UUID?
     @State private var featureIndex = 0
+    @State private var featureDirection = 1
+    @State private var heroHovered = false
+    @State private var heroMediaFailed = false
+    @State private var heroVideoEnded = false
+    @State private var heroMediaRetry = 0
     @State private var featurePaused = false
     @State private var heroVisible = false
     @State private var previewPlayer: AVPlayer?
@@ -50,27 +57,30 @@ struct MusicHomePage: View {
     @State private var exportFile: MusicFeatureExport?
     @State private var exportPresented = false
     @State private var exportStatus: String?
-    @State private var newsIndex = 0
-    @State private var newsPaused = false
-    @State private var newsVisible = false
+    @State var newsIndex = 0
+    @State var newsPaused = false
     @State private var article: Int?
     @State private var recentScrollRequest = 0
+    @State private var scrollHomeRequest = 0
+    @State private var searchFocusRequest = 0
     @FocusState private var controlFocus: Action?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    private var localization = AuthLocalization()
+    var localization = AuthLocalization()
 
     let displayName: String?
     let avatar: CGImage?
     let profileTransition: Namespace.ID
+    let initialMood: ClientMoodItemResponse?
     let signOut: () -> Void
 
     init(session: AuthSession, service: MusicHomeService, displayName: String?, avatar: CGImage?,
-         profileTransition: Namespace.ID, signOut: @escaping () -> Void) {
+         profileTransition: Namespace.ID, initialMood: ClientMoodItemResponse? = nil, signOut: @escaping () -> Void) {
         _model = State(initialValue: MusicHomeViewModel(session: session, service: service))
         self.displayName = displayName
         self.avatar = avatar
         self.profileTransition = profileTransition
+        self.initialMood = initialMood
         self.signOut = signOut
     }
 
@@ -82,7 +92,7 @@ struct MusicHomePage: View {
         model.artists.indices.contains(spotlightIndex) ? model.artists[spotlightIndex] : model.artists.first
     }
 
-    private var discovery: [MusicDiscoverySample] {
+    var discovery: [MusicDiscoverySample] {
         guard let genre = model.genres.first(where: { $0.publicId == selectedGenre }) else { return MusicDiscoverySample.all }
         let name = normalizedGenre(genre.title)
         let persian = normalizedGenre(genre.persianTitle ?? "")
@@ -92,33 +102,43 @@ struct MusicHomePage: View {
         return filtered.isEmpty ? MusicDiscoverySample.all : filtered
     }
 
+    private var discoveryRecommended: [MusicDiscoverySample] { Array(discovery.reversed().prefix(6)) }
+    private var discoveryRecent: [MusicDiscoverySample] { Array((Array(discovery.dropFirst(2)) + discovery.prefix(2)).prefix(6)) }
+
     var body: some View {
         NavigationStack {
-            GeometryReader { geometry in layout(width: geometry.size.width) }
-                .navigationTitle(text("PageName"))
+            GeometryReader { geometry in
+                VStack(spacing: 0) {
+                    header(width: geometry.size.width)
+                    layout(width: geometry.size.width)
+                }
+            }
+                .navigationTitle("")
+                #if os(iOS)
+                .toolbar(.hidden, for: .navigationBar)
+                #endif
                 .navigationDestination(item: $destination) { route in
                     MusicHomeDestinationView(route: route, model: model)
                 }
-                .toolbar { toolbar }
         }
+        .preferredColorScheme(.dark)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if model.playingTrack != nil || model.requestingPlayback { transport }
         }
-        .environment(\.layoutDirection, localization.isPersian ? .rightToLeft : .leftToRight)
         .task { await model.refresh() }
         .task(id: scenePhase) {
             if scenePhase == .active { await observeGamepad() }
-        }
-        .sheet(isPresented: $showingSearch) {
-            GlobalSearchPage(session: model.session, service: model.service.searchService) { id in
-                showingSearch = false
-                destination = .track(id)
-            }
         }
         .sheet(isPresented: $showingLibrary) {
             MusicLibraryBrowser(model: model) { id in
                 showingLibrary = false
                 destination = .playlist(id)
+            }
+        }
+        .sheet(isPresented: $showingAllMusicActivity) {
+            MusicHomeAllActivityPage(model: model) { item in
+                showingAllMusicActivity = false
+                destination = activityDestination(item)
             }
         }
         .sheet(isPresented: Binding(get: { article != nil }, set: { if !$0 { article = nil } })) {
@@ -175,21 +195,43 @@ struct MusicHomePage: View {
         .onDisappear { model.stop() }
     }
 
-    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
-            control(.search) { Image(systemName: "magnifyingglass") }
-                .accessibilityLabel(localization.string("SearchPrompt", table: "Search"))
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Menu {
-                if let displayName, !displayName.isEmpty { Text(displayName) }
-                Button(localization.string("SignOut", table: "Settings"), action: signOut)
-            } label: {
-                WelcomeProfileBadge(avatar: avatar)
-                    .frame(width: 28, height: 28)
-                    .matchedGeometryEffect(id: "welcome-profile", in: profileTransition)
+    private func header(width: CGFloat) -> some View {
+        MusicHomeHeader(width: width, search: MusicHomeSearch(model: model, focusRequest: $searchFocusRequest) { result in
+            destination = result.kind == .music ? .track(result.publicID) : .client(result.publicID)
+        }) {
+            control(.home) {
+                HStack(spacing: 8) {
+                    FluentIcon(symbol: .headphones, size: 18, usesColor: true)
+                    Text(text("ShellMusic")).font(localization.font(14, weight: .semibold)).lineLimit(1)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 36)
+                .overlay(alignment: .bottom) {
+                    Capsule().fill(Color.accentColor).frame(width: 17, height: 3).offset(y: -2)
+                }
             }
-            .accessibilityLabel(displayName ?? text("Profile"))
+            .buttonStyle(MusicHomeButtonStyle(corner: 6))
+            .accessibilityAddTraits(.isSelected)
+            .accessibilityIdentifier("music.home.tab")
+        } account: {
+            HStack(spacing: 0) {
+                MusicHomeMoodButton(model: model, initialMood: initialMood)
+                Menu {
+                    if let displayName, !displayName.isEmpty { Text(displayName) }
+                    Button(text("Profile")) { destination = .client(model.session.clientPublicId) }
+                    Button(localization.string("SignOut", table: "Settings"), action: signOut)
+                } label: {
+                    WelcomeProfileBadge(avatar: avatar)
+                        .frame(width: 32, height: 32)
+                        .matchedGeometryEffect(id: "welcome-profile", in: profileTransition)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel(displayName ?? text("Profile"))
+            }
+            .background(.white.opacity(15.0 / 255), in: UnevenRoundedRectangle(
+                topLeadingRadius: 8, bottomLeadingRadius: 8, bottomTrailingRadius: 16, topTrailingRadius: 16))
         }
     }
 
@@ -199,45 +241,56 @@ struct MusicHomePage: View {
         let margin: CGFloat = medium ? 28 : 14
         let contentWidth = min(2200, max(0, width - margin * 2))
         let rail = min(320, max(220, contentWidth * 0.2))
-        let feedWidth = contentWidth - (wide ? 2 * (rail + 24) : medium ? rail + 20 : 0)
-        return HStack(alignment: .top, spacing: wide ? 24 : 20) {
+        let feedWidth = max(0, contentWidth - (wide ? 2 * rail : medium ? rail : 0))
+        return HStack(alignment: .top, spacing: 0) {
             if wide {
-                ScrollView { editorialRail.padding(.bottom, 48) }
+                ScrollView { windowsEditorialRail(width: rail - 24).padding(.bottom, 48) }
                     .scrollIndicators(.hidden)
-                    .frame(width: rail)
+                    .frame(width: rail - 24)
+                    .padding(.trailing, 24)
             }
             ScrollViewReader { reader in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 28) {
-                        feature(width: feedWidth)
-                        artistSpotlight
+                        feature(width: feedWidth).id(Action.home)
+                        artistSpotlight(width: feedWidth)
                         MusicStoryOrbit()
                         stories
                         genres
                         artists
-                        discoveryRail(text("DiscoverNext"), subtitle: text("DiscoverNextSubtitle"), icon: "sparkle",
-                                      color: musicColor("A9B8FF"), samples: Array(discovery.reversed().prefix(6)), compact: false)
-                        discoveryRail(text("ReturnToMood"), subtitle: text("RecentlyPlayed"), icon: "clock.arrow.circlepath",
-                                      color: musicColor("8BCBE2"), samples: Array((Array(discovery.dropFirst(2)) + discovery.prefix(2)).prefix(6)),
-                                      compact: true)
+                        centralRails.discovery(title: text("DiscoverNext"), subtitle: text("DiscoverNextSubtitle"),
+                                               samples: discoveryRecommended, compact: false)
+                        centralRails.discovery(title: text("ReturnToMood"), subtitle: text("RecentlyPlayed"),
+                                               samples: discoveryRecent, compact: true)
                             .id(Action.recent)
-                        if !medium { communityRail }
-                        if !wide { editorialRail }
-                        Divider()
-                        Text(text("DemoFooter")).font(localization.font(9)).foregroundStyle(.secondary)
+                        if !medium { windowsCommunityRail(width: feedWidth) }
+                        if !wide { windowsEditorialRail(width: feedWidth) }
+                        Rectangle().fill(MusicHomeStyle.stroke).frame(height: 1)
+                        HStack(alignment: .top, spacing: 12) {
+                            Text("MADE FOR YOUR MOMENTS").font(localization.font(9)).tracking(1.44)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(text("DemoFooter")).font(localization.font(9))
+                                .frame(maxWidth: 220, alignment: .trailing)
+                        }
+                        .foregroundStyle(MusicHomeStyle.secondary)
                     }
+                    .frame(width: feedWidth, alignment: .leading)
                     .padding(.bottom, 48)
                 }
+                .frame(width: feedWidth)
                 .scrollIndicators(.hidden)
                 .onChange(of: controlFocus) { _, target in
-                    if let target, target != .search, target != .recent { reader.scrollTo(target, anchor: .center) }
+                    if let target, target != .search, target != .home, target != .recent { reader.scrollTo(target, anchor: .center) }
                 }
+                .onChange(of: scrollHomeRequest) { reader.scrollTo(Action.home, anchor: .top) }
                 .onChange(of: recentScrollRequest) { reader.scrollTo(Action.recent, anchor: .top) }
             }
             if medium {
-                ScrollView { communityRail.padding(.bottom, 48) }
+                let gutter: CGFloat = wide ? 24 : 20
+                ScrollView { windowsCommunityRail(width: rail - gutter).padding(.bottom, 48) }
                     .scrollIndicators(.hidden)
-                    .frame(width: rail)
+                    .frame(width: rail - gutter)
+                    .padding(.leading, gutter)
             }
         }
         .frame(maxWidth: 2200)
@@ -247,90 +300,45 @@ struct MusicHomePage: View {
     }
 
     private func feature(width: CGFloat) -> some View {
-        let height = min(340, max(190, width * 360 / 770))
+        let surface = max(0, width - 16)
+        let compact = surface < 560
+        let height = min(340, max(190, surface * 360 / 770))
         return Group {
             if let item = currentFeature {
-                VStack(spacing: 12) {
-                    ZStack(alignment: .bottomLeading) {
-                        if let previewPlayer {
-                            VideoPlayer(player: previewPlayer).allowsHitTesting(false)
-                        } else {
-                            MusicArtwork(mediaID: featureArtwork(item), model: model, symbol: "music.note")
-                                .frame(height: height).clipped()
-                        }
-                        LinearGradient(colors: [.black.opacity(0.28), .black.opacity(0.15), .black.opacity(0.84)],
-                                       startPoint: .top, endPoint: .bottom)
-                        VStack(alignment: .leading, spacing: 9) {
-                            Text(text("HeroName")).font(localization.font(10, weight: .semibold))
-                                .tracking(2).foregroundStyle(musicColor(item.primaryAccentColor, fallback: .white))
-                            Text(localized(item.title, item.persianTitle)).font(localization.font(width < 560 ? 23 : 30, weight: .semibold))
-                                .lineLimit(2)
-                            Text(item.contributors.map { "\($0.firstName) \($0.lastName)" }.joined(separator: " · "))
-                                .font(localization.font(13)).foregroundStyle(.secondary).lineLimit(1)
-                            HStack(spacing: 8) {
-                                control(.playFeature) { Label(text("PlayInMizon"), systemImage: "play.fill") }
-                                control(.openFeature) { Text(text("ViewTrack")) }
-                                control(.likeFeature) { Image(systemName: item.likedByMe ? "heart.fill" : "heart") }
-                                    .disabled(model.updating.contains(item.musicPublicId))
-                                    .accessibilityLabel(text(item.likedByMe ? "UnlikeTrack" : "LikeTrack"))
-                                if previewPlayer != nil {
-                                    control(.mutePreview) {
-                                        Image(systemName: previewMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                    }
-                                    .accessibilityLabel(text(previewMuted ? "UnmuteVideo" : "MuteVideo"))
-                                }
-                                Button { showingPreviewControls = true } label: {
-                                    Image(systemName: "ellipsis")
-                                }
-                                .accessibilityLabel(text("PlayerControls"))
-                                .popover(isPresented: $showingPreviewControls) { presentationControls(item) }
-                            }
-                            .buttonStyle(.glass)
-                        }
-                        .foregroundStyle(.white)
-                        .padding(22)
-                    }
+                heroSurface(item, compact: compact)
                     .frame(height: height)
                     .clipShape(.rect(cornerRadius: 12))
-                    HStack {
-                        control(.previousFeature) { Image(systemName: "chevron.backward") }
-                            .accessibilityLabel(text("PreviousFeature"))
-                        ScrollView(.horizontal) {
-                            HStack(spacing: 6) {
-                                ForEach(Array(model.features.enumerated()), id: \.element.publicId) { index, preview in
-                                    Button { selectFeature(index) } label: {
-                                        MusicArtwork(mediaID: featureArtwork(preview),
-                                                     model: model, symbol: "music.note")
-                                            .frame(width: 52, height: 32)
-                                            .clipShape(.rect(cornerRadius: 6))
-                                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(
-                                                index == featureIndex ? Color.accentColor : Color.clear, lineWidth: 1))
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel(localized(preview.title, preview.persianTitle))
-                                    .accessibilityAddTraits(index == featureIndex ? .isSelected : [])
-                                }
-                            }
-                        }
-                        .scrollIndicators(.hidden)
-                        control(.rotateFeatures) { Image(systemName: featurePaused ? "play.fill" : "pause.fill") }
-                            .accessibilityLabel(text(featurePaused ? "ResumePresentation" : "PausePresentation"))
-                        control(.nextFeature) { Image(systemName: "chevron.forward") }
-                            .accessibilityLabel(text("NextFeature"))
-                    }
-                    .buttonStyle(.glass)
-                }
+                    .shadow(color: .black.opacity(0.22), radius: 12, y: 6)
+            } else if model.loading.contains(.features) {
+                MusicHomeSkeleton(height: 300, label: text("LoadingFeatures"))
             } else {
-                sectionStatus(.features, empty: "NoFeatures").frame(minHeight: height)
+                VStack(spacing: 12) {
+                    Text(text(model.failures.contains(.features) ? "FeaturesFailed" : "NoFeatures"))
+                        .font(localization.font(11))
+                        .foregroundStyle(MusicHomeStyle.secondary)
+                    control(.refresh(.features)) {
+                        Label(text("Refresh"), systemImage: "arrow.clockwise")
+                            .font(localization.font(10)).padding(.horizontal, 10).frame(height: 28)
+                    }
+                    .buttonStyle(MusicHomeButtonStyle(fill: MusicHomeStyle.inset, stroke: MusicHomeStyle.stroke))
+                    .accessibilityLabel(text("RefreshMizonFeatures"))
+                }
+                .frame(maxWidth: .infinity, minHeight: 190)
+                .background(MusicHomeStyle.secondaryCard, in: .rect(cornerRadius: 12))
             }
         }
+        .padding(.horizontal, 8)
+        .padding(.top, 12)
+        .padding(.bottom, 16)
+        .environment(\.layoutDirection, .leftToRight)
+        .onHover { heroHovered = $0 }
         .onScrollVisibilityChange { heroVisible = $0 }
-        .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: heroVisible && scenePhase == .active
-                                  && !showingSearch && destination == nil && !model.isPlaying && !showingStoryPreview)) {
+        .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: canPresentFeature, retry: heroMediaRetry)) {
             previewPlayer?.pause()
             previewPlayer = nil
-            guard heroVisible, scenePhase == .active, !showingSearch, destination == nil, !model.isPlaying, !showingStoryPreview,
-                  let item = currentFeature, item.contentTypeCode.lowercased() == "video" else { return }
+            heroMediaFailed = false
+            heroVideoEnded = false
+            guard canPresentFeature, let item = currentFeature, isVideo(item) else { return }
             do {
                 let media = try await model.service.media(item.mediaPublicId, session: model.session)
                 let url = try MusicHomeService.storageURL(media.storagePath)
@@ -340,62 +348,338 @@ struct MusicHomePage: View {
                 player.volume = Float(previewVolume)
                 previewPlayer = player
                 if !featurePaused && !reduceMotion { player.play() }
-            } catch {}
+            } catch {
+                if !Task.isCancelled { heroMediaFailed = true }
+            }
         }
-        .task(id: FeatureTimer(index: featureIndex, count: model.features.count,
-                               canRotate: heroVisible && !featurePaused && !reduceMotion && scenePhase == .active
-                               && !showingPreviewControls && !fullWindowVideo)) {
-            guard heroVisible, !featurePaused, !reduceMotion, !showingPreviewControls, !fullWindowVideo, scenePhase == .active,
-                  model.features.count > 1, let currentFeature else { return }
+        .task(id: FeatureTimer(index: featureIndex, count: model.features.count, canRotate: canRotateFeatures)) {
+            guard canRotateFeatures, model.features.count > 1, let currentFeature, !isVideo(currentFeature) else { return }
             do {
                 try await Task.sleep(for: .seconds(min(60, max(3, currentFeature.displaySeconds))))
                 selectFeature(featureIndex + 1)
             } catch {}
         }
+        .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { event in
+            guard let item = event.object as? AVPlayerItem, item === previewPlayer?.currentItem else { return }
+            heroVideoEnded = true
+            advanceFinishedVideo()
+        }
+        .onChange(of: canRotateFeatures) { _, canRotate in
+            if canRotate { advanceFinishedVideo() }
+        }
+    }
+
+    private func advanceFinishedVideo() {
+        guard heroVideoEnded, canRotateFeatures, model.features.count > 1 else { return }
+        heroVideoEnded = false
+        selectFeature(featureIndex + 1)
+    }
+
+    private var canPresentFeature: Bool {
+        heroVisible && scenePhase == .active && !showingLibrary && !showingAllMusicActivity
+            && destination == nil && !model.isPlaying && !showingStoryPreview && article == nil
+    }
+
+    private var canRotateFeatures: Bool {
+        canPresentFeature && !featurePaused && !reduceMotion && !showingPreviewControls && !fullWindowVideo
+            && !heroHovered && !featureHasFocus && exportRequest == nil
+    }
+
+    private var featureHasFocus: Bool {
+        switch controlFocus {
+        case .featureControls, .previousFeature, .nextFeature, .featureThumbnail, .openFeature, .likeFeature, .retryFeatureMedia: true
+        default: false
+        }
+    }
+
+    private func heroSurface(_ item: MusicFeatureItemResponse, compact: Bool) -> some View {
+        let inset: CGFloat = compact ? 12 : 20
+        return ZStack(alignment: .bottom) {
+            musicColor("090C0F")
+            Group {
+                if let previewPlayer {
+                    MusicInlineVideo(player: previewPlayer)
+                } else if let artwork = featureArtwork(item) {
+                    MusicArtwork(mediaID: artwork, model: model, symbol: "", stretch: !isVideo(item))
+                }
+            }
+            .id(item.publicId)
+            .transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : CGFloat(featureDirection) * 14)))
+            let slate = musicColor("141B24")
+            LinearGradient(stops: [
+                .init(color: slate.opacity(112.0 / 255), location: 0),
+                .init(color: slate.opacity(72.0 / 255), location: 0.28),
+                .init(color: slate.opacity(56.0 / 255), location: 0.5),
+                .init(color: musicColor("10161E").opacity(120.0 / 255), location: 0.78),
+                .init(color: musicColor("090C0F").opacity(176.0 / 255), location: 1)
+            ], startPoint: .top, endPoint: .bottom)
+            Button { activate(.openFeature) } label: {
+                Color.clear.contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHidden(true)
+            .authHandPointer(enabled: true)
+            heroInformation(item, compact: compact)
+                .padding(.horizontal, inset)
+                .padding(.bottom, compact ? 66 : 91)
+                .allowsHitTesting(false)
+            GeometryReader { geometry in
+                HStack(spacing: 0) {
+                    musicColor("12BA70").frame(width: geometry.size.width * 0.46)
+                    musicColor("3B4147").frame(width: geometry.size.width * 0.22)
+                    musicColor("0697EA")
+                }
+            }
+            .frame(height: 3)
+            .clipShape(.capsule)
+            .padding(.horizontal, inset)
+            .padding(.bottom, compact ? 53 : 70)
+            .allowsHitTesting(false)
+            heroActions(item, compact: compact)
+                .padding(.horizontal, inset)
+                .padding(.bottom, inset)
+            VStack {
+                heroHeader(item, compact: compact)
+                if heroMediaFailed {
+                    HStack(spacing: 8) {
+                        Text(text("FeatureServiceFailed")).font(localization.font(10))
+                        Spacer(minLength: 4)
+                        control(.retryFeatureMedia) { Text(text("Retry")).font(localization.font(10, weight: .semibold)) }
+                            .buttonStyle(.plain)
+                    }
+                    .padding(8)
+                    .background(musicColor("1A2635").opacity(0.85), in: .rect(cornerRadius: 8))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, inset)
+            .padding(.top, inset)
+        }
+        .foregroundStyle(.white)
+    }
+
+    private func heroHeader(_ item: MusicFeatureItemResponse, compact: Bool) -> some View {
+        let size: CGFloat = compact ? 24 : 30
+        return HStack(spacing: 8) {
+            control(.featureControls) {
+                FluentIcon(symbol: .headphones, size: 14).frame(width: 30, height: 30)
+            }
+            .buttonStyle(MusicHomeButtonStyle(fill: musicColor("202428")))
+            .accessibilityLabel(text("PlayerControls"))
+            .help(text("PlayerControlsHelp"))
+            .popover(isPresented: $showingPreviewControls, arrowEdge: .top) { presentationControls(item) }
+
+            VStack(alignment: .leading, spacing: 2) {
+                if !compact {
+                    Text("MIZON SELECT").font(localization.font(8)).foregroundStyle(musicColor("B6C0CC"))
+                }
+                Text(MusicHomeStyle.duration(seconds: item.durationSeconds))
+                    .font(localization.font(11, weight: .semibold)).monospacedDigit()
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: compact ? 5 : 8) {
+                heroArrow(.previousFeature, icon: .chevronLeft, label: "PreviousFeature")
+                ForEach(visibleThumbnailIndices, id: \.self) { index in
+                    let preview = model.features[index]
+                    control(.featureThumbnail(index)) {
+                        MusicArtwork(mediaID: preview.previewMediaPublicId ?? featureArtwork(preview),
+                                     model: model, symbol: "")
+                            .clipShape(.rect(cornerRadius: 7)).padding(1)
+                            .frame(width: size, height: size)
+                    }
+                    .buttonStyle(MusicHomeButtonStyle(stroke: index == featureIndex ? musicColor("0697EA") : musicColor("4E555D").opacity(80.0 / 255),
+                                                      corner: 8))
+                    .accessibilityLabel(localized(preview.title, preview.persianTitle))
+                    .accessibilityAddTraits(index == featureIndex ? .isSelected : [])
+                    .help(localized(preview.title, preview.persianTitle))
+                }
+                heroArrow(.nextFeature, icon: .chevronRight, label: "NextFeature")
+            }
+        }
+    }
+
+    private var visibleThumbnailIndices: Range<Int> {
+        let count = min(3, model.features.count)
+        let start = min(max(0, featureIndex - 1), max(0, model.features.count - count))
+        return start..<(start + count)
+    }
+
+    private func heroArrow(_ action: Action, icon: FluentSymbol, label: String) -> some View {
+        control(action) { FluentIcon(symbol: icon, size: 12).frame(width: 22, height: 28) }
+            .buttonStyle(MusicHomeButtonStyle(corner: 6))
+            .accessibilityLabel(text(label))
+            .help(text(label))
+            .disabled(model.features.count < 2)
+    }
+
+    private func heroInformation(_ item: MusicFeatureItemResponse, compact: Bool) -> some View {
+        let badge: CGFloat = compact ? 28 : 40
+        let person = item.contributors.first
+        let byline = item.contributors.map { [$0.firstName, $0.lastName].filter { !$0.isEmpty }.joined(separator: " ") }
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+        let genre = item.genres.first.map { localized($0.title, $0.persianTitle).uppercased() } ?? ""
+        return HStack(alignment: .bottom, spacing: 10) {
+            VStack(alignment: .leading, spacing: 7) {
+                heroBadge(item.coverMediaPublicId, size: badge, imageSize: 21, symbol: "music.note")
+                Text(genre).font(localization.font(9)).tracking(0.58).foregroundStyle(musicColor("B6C0CC")).lineLimit(1)
+                Text(item.title).font(localization.font(compact ? 16 : 22, weight: .semibold)).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if !compact {
+                VStack(spacing: 3) {
+                    if let translation = item.persianTitle, !translation.isEmpty {
+                        Text(translation).font(WindowsTypography.iranSans(10)).foregroundStyle(musicColor("B6C0CC"))
+                            .lineLimit(1).frame(maxWidth: 165)
+                    }
+                    Text(MusicHomeStyle.duration(seconds: item.durationSeconds))
+                        .font(localization.font(15, weight: .semibold)).monospacedDigit()
+                }
+                .frame(maxWidth: .infinity)
+            }
+            VStack(alignment: .trailing, spacing: 7) {
+                heroBadge(person?.profileMediaPublicId, size: badge, imageSize: 26, symbol: "person.fill")
+                    .padding(.bottom, 3)
+                Text(text("ArtistLabel")).font(localization.font(9)).tracking(0.58).foregroundStyle(musicColor("B6C0CC"))
+                Text(byline).font(localization.font(compact ? 15 : 21, weight: .light)).lineLimit(1)
+                    .foregroundStyle(musicColor("E1E3E6"))
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    private func heroBadge(_ mediaID: UUID?, size: CGFloat, imageSize: CGFloat, symbol: String) -> some View {
+        MusicArtwork(mediaID: mediaID, model: model, symbol: symbol)
+            .frame(width: imageSize, height: imageSize)
+            .clipShape(.circle)
+            .frame(width: size, height: size)
+            .background(musicColor("15171D"), in: .circle)
+            .overlay { Circle().strokeBorder(musicColor("303137")) }
+    }
+
+    private func heroActions(_ item: MusicFeatureItemResponse, compact: Bool) -> some View {
+        let border = musicColor("2D3034")
+        let fill = musicColor("0C1013").opacity(149.0 / 255)
+        return HStack(spacing: 8) {
+            HStack(spacing: 8) {
+                HStack(spacing: -5) {
+                    heroAudienceAvatar("friend-amir")
+                    heroAudienceAvatar("friend-sara")
+                    if !compact {
+                        heroAudienceAvatar("friend-amir")
+                        Text("+8").font(localization.font(7)).frame(width: 22, height: 22)
+                            .background(musicColor("27313B"), in: .circle)
+                            .overlay { Circle().strokeBorder(musicColor("161B20")) }
+                    }
+                }
+                if !compact {
+                    Text(text("WithYou")).font(localization.font(9)).foregroundStyle(musicColor("B6C0CC"))
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(fill, in: .capsule)
+            .overlay { Capsule().strokeBorder(border) }
+            .accessibilityHidden(true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            control(.openFeature) {
+                HStack(spacing: 7) {
+                    if !compact { FluentIcon(symbol: .musicNote1, size: 13) }
+                    Text(text("DiscoverTrack")).font(localization.font(compact ? 9 : 10)).lineLimit(1)
+                    if !compact {
+                        Text(String(format: "%02d / %02d", featureIndex + 1, model.features.count))
+                            .font(localization.font(9)).foregroundStyle(musicColor("B6C0CC")).monospacedDigit()
+                    }
+                }
+                .padding(.horizontal, compact ? 8 : 15)
+                .frame(height: 32)
+            }
+            .buttonStyle(MusicHomeButtonStyle(fill: musicColor("090C0F"), stroke: border, corner: 16))
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
+            .accessibilityLabel(text("ViewTrack"))
+            control(.likeFeature) {
+                HStack(spacing: 7) {
+                    FluentIcon(symbol: .heart, size: 12, filled: item.likedByMe)
+                        .foregroundStyle(item.likedByMe ? musicColor("FF9BBE") : Color.white)
+                    Text(item.likesCount, format: .number).font(localization.font(10))
+                    if !compact {
+                        HStack(spacing: -5) {
+                            heroAudienceAvatar("friend-sara")
+                            heroAudienceAvatar("friend-amir")
+                        }
+                    }
+                }
+                .padding(.horizontal, compact ? 8 : 10)
+                .frame(height: 32)
+            }
+            .buttonStyle(MusicHomeButtonStyle(fill: fill, stroke: border, corner: 16))
+            .accessibilityLabel(text(item.likedByMe ? "UnlikeTrack" : "LikeTrack"))
+            .accessibilityAddTraits(item.likedByMe ? .isSelected : [])
+            .disabled(model.updating.contains(item.musicPublicId))
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    private func heroAudienceAvatar(_ asset: String) -> some View {
+        MusicLocalArtwork(asset, maximumPixelSize: 96).scaledToFill().frame(width: 22, height: 22)
+            .clipShape(.circle)
+            .overlay { Circle().strokeBorder(musicColor("161B20")) }
     }
 
     private func presentationControls(_ item: MusicFeatureItemResponse) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button(text(featurePaused ? "ResumePresentation" : "PausePresentation")) { activate(.rotateFeatures) }
-            if let previewPlayer {
-                Slider(value: $previewVolume) { Text(text("VideoVolume")) }
-                    .onChange(of: previewVolume) { _, value in previewPlayer.volume = Float(value) }
-                MusicFeatureScrubber(player: previewPlayer, title: text("PresentationPosition"))
-                Button(text("VideoFullWindow")) {
-                    showingPreviewControls = false
-                    fullWindowVideo = true
+        VStack(alignment: .leading, spacing: 12) {
+            Text(text("DisplayControls")).font(localization.font(13, weight: .semibold))
+            HStack(spacing: 8) {
+                Button { activate(.rotateFeatures) } label: {
+                    FluentIcon(symbol: featurePaused ? .play : .pause, size: 16).frame(width: 32, height: 32)
+                }
+                .accessibilityLabel(text(featurePaused ? "ResumePresentation" : "PausePresentation"))
+                if previewPlayer != nil {
+                    Button { activate(.mutePreview) } label: {
+                        FluentIcon(symbol: previewMuted ? .speakerMute : .speaker2, size: 16).frame(width: 32, height: 32)
+                    }
+                    .accessibilityLabel(text(previewMuted ? "UnmuteVideo" : "MuteVideo"))
+                    Slider(value: $previewVolume) { Text(text("VideoVolume")) }
+                        .onChange(of: previewVolume) { _, value in previewPlayer?.volume = Float(value) }
                 }
             }
-            Button(text("PlayInMizon")) {
-                showingPreviewControls = false
-                activate(.playFeature)
+            if let previewPlayer {
+                MusicFeatureScrubber(player: previewPlayer, title: text("PresentationPosition"))
             }
-            Button(text("SaveMedia")) {
-                showingPreviewControls = false
-                exportRequest = item
+            heroMenuButton("PlayInMizon") { activate(.playFeature) }
+            if previewPlayer != nil {
+                heroMenuButton("VideoFullWindow") { fullWindowVideo = true }
             }
-            .disabled(exportRequest != nil)
-            Button(text("CopyMusicLink")) {
-                showingPreviewControls = false
-                activate(.copyFeatureLink)
-            }
-            Button(text("RefreshFeatures")) {
-                showingPreviewControls = false
-                activate(.refresh(.features))
-            }
+            heroMenuButton("SaveMedia") { exportRequest = item }.disabled(exportRequest != nil)
+            heroMenuButton("CopyMusicLink") { activate(.copyFeatureLink) }
+            heroMenuButton("RefreshFeatures") { activate(.refresh(.features)) }
         }
-        .buttonStyle(.glass)
-        .padding(16)
-        .frame(minWidth: 240)
+        .buttonStyle(MusicHomeButtonStyle(fill: MusicHomeStyle.inset, stroke: MusicHomeStyle.stroke, corner: 8))
+        .frame(width: 260)
+        .padding(12)
+    }
+
+    private func heroMenuButton(_ label: String, action: @escaping () -> Void) -> some View {
+        Button {
+            showingPreviewControls = false
+            action()
+        } label: {
+            Text(text(label)).font(localization.font(11)).frame(maxWidth: .infinity, minHeight: 32)
+        }
     }
 
     private struct PreviewIdentity: Equatable {
         let id: UUID?
         let visible: Bool
+        var retry = 0
+    }
+
+    private func isVideo(_ item: MusicFeatureItemResponse) -> Bool {
+        item.contentTypeCode.caseInsensitiveCompare("video") == .orderedSame
     }
 
     private func featureArtwork(_ item: MusicFeatureItemResponse) -> UUID? {
-        item.contentTypeCode.lowercased() == "video" ? item.previewMediaPublicId ?? item.coverMediaPublicId : item.mediaPublicId
+        isVideo(item) ? item.previewMediaPublicId ?? item.coverMediaPublicId : item.mediaPublicId
     }
 
     private struct FeatureTimer: Equatable {
@@ -404,536 +688,375 @@ struct MusicHomePage: View {
         let canRotate: Bool
     }
 
-    private var artistSpotlight: some View {
-        Group {
+    private func artistSpotlight(width: CGFloat) -> some View {
+        let compact = width < 640
+        return Group {
             if let artist = currentArtist {
-                ZStack(alignment: .bottomLeading) {
-                    MusicArtwork(mediaID: artist.coverMediaPublicId ?? artist.profileMediaPublicId,
-                                 model: model, symbol: "person.fill.viewfinder")
-                    LinearGradient(colors: [.clear, .black.opacity(0.76)], startPoint: .top, endPoint: .bottom)
-                        .allowsHitTesting(false)
-                    if artist.modelMediaPublicId != nil {
-                        MusicArtistModel(artist: artist, model: model, rotateHint: text("RotateHint"),
-                                         resetLabel: text("ResetModel"))
-                            .id(artist.personPublicId)
-                            .frame(maxWidth: 320)
-                            .padding(.trailing, 12)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(text("ArtistLabel")).font(localization.font(11, weight: .semibold))
-                        Text(artistName(artist)).font(localization.font(25, weight: .semibold)).lineLimit(1)
-                        let genre = localized(artist.genreTitle ?? "", artist.persianGenreTitle)
-                        if !genre.isEmpty { Text(genre).font(localization.font(11)).foregroundStyle(.white.opacity(0.7)) }
-                        if !artist.latestMusics.isEmpty {
-                            ScrollView(.horizontal) {
-                                HStack(spacing: 7) {
-                                    ForEach(artist.latestMusics.prefix(5), id: \.publicId) { track in
-                                        control(.spotlightTrack(track.publicId)) {
-                                            HStack(spacing: 5) {
-                                                MusicArtwork(mediaID: track.coverMediaPublicId, model: model, symbol: "music.note")
-                                                    .frame(width: 24, height: 24).clipShape(.rect(cornerRadius: 4))
-                                                Text(localized(track.title, track.persianTitle)).font(localization.font(10))
-                                                    .lineLimit(1)
-                                            }
-                                        }
-                                    }
-                                }
+                let accent = musicColor(artist.accentColor, fallback: musicColor("A6C8FF"))
+                let portraitWidth = width * (compact ? 0.325 : 0.25)
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        spotlightStage(artist, accent: accent, compact: compact)
+                            .frame(width: portraitWidth)
+                        if !compact {
+                            ZStack {
+                                spotlightTracks(artist, accent: accent, horizontal: false)
+                                    .id(artist.personPublicId)
+                                    .transition(spotlightReveal(x: 12, y: 4))
                             }
-                            .buttonStyle(.glass)
-                            .scrollIndicators(.hidden)
+                            .animation(spotlightAnimation(0.36), value: artist.personPublicId)
+                            .frame(width: width / 3)
                         }
-                        HStack {
-                            control(.spotlightProfile(artist.personPublicId)) { Text(text("ViewProfile")) }
-                            if artist.canFollow { followButton(artist, inSpotlight: true) }
-                        }
-                        .buttonStyle(.glass)
+                        spotlightInformation(artist, accent: accent, compact: compact)
+                            .frame(maxWidth: .infinity)
                     }
-                    .foregroundStyle(.white)
-                    .padding(18)
-                    if model.artists.count > 1 {
-                        HStack(spacing: 8) {
-                            control(.previousSpotlight) { Image(systemName: "chevron.backward") }
-                                .accessibilityLabel(text("PreviousArtist"))
-                            Text(String(format: "%02d / %02d", spotlightIndex + 1, model.artists.count))
-                                .font(.caption.monospacedDigit())
-                            control(.nextSpotlight) { Image(systemName: "chevron.forward") }
-                                .accessibilityLabel(text("NextArtist"))
+                    .frame(height: compact ? 168 : 220)
+                    if compact {
+                        ZStack {
+                            spotlightTracks(artist, accent: accent, horizontal: true)
+                                .id(artist.personPublicId).transition(spotlightReveal(x: 12, y: 4))
                         }
-                        .buttonStyle(.glass)
-                        .foregroundStyle(.white)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .animation(spotlightAnimation(0.36), value: artist.personPublicId)
+                        .frame(height: 76)
                     }
                 }
-                .frame(height: 212)
-                .clipShape(.rect(cornerRadius: 12))
+                .background(MusicHomeStyle.secondaryCard, in: .rect(cornerRadius: 18))
+                .clipShape(.rect(cornerRadius: 18))
+                .environment(\.layoutDirection, .leftToRight)
+            } else if model.loading.contains(.artists) {
+                MusicHomeSkeleton(height: 212, label: text("LoadingArtists"))
             } else {
-                sectionStatus(.artists, empty: "FeaturedArtistsEmpty").frame(minHeight: 120)
+                sectionStatus(.artists, empty: "FeaturedArtistsEmpty")
             }
         }
     }
 
-    private var stories: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            heading(text("Stories"), icon: "circle.dashed", color: musicColor("EAA1C8"))
-            if model.loading.contains(.stories) || model.failures.contains(.stories) {
-                sectionStatus(.stories, empty: "NoStories")
-            }
-            ScrollView(.horizontal) {
-                LazyHStack(spacing: 10) {
-                    control(.addStory) { addStoryCard }
-                        .buttonStyle(MusicHoverStyle())
-                        .accessibilityLabel(text("AddStory"))
-                    ForEach(model.stories, id: \.publicId) { story in
-                        control(.story(story.publicId)) { storyCard(story) }
-                            .buttonStyle(MusicHoverStyle())
-                            .accessibilityHint(text("OpenStoryHelp"))
-                    }
-                    if model.stories.isEmpty, !model.loading.contains(.stories), !model.failures.contains(.stories) {
-                        Text(text("NoStories")).font(localization.font(10)).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true).frame(width: 150, alignment: .leading)
-                    }
+    private func spotlightReveal(x: CGFloat, y: CGFloat) -> AnyTransition {
+        guard !reduceMotion, spotlightDirection != 0 else { return .identity }
+        return .asymmetric(insertion: .opacity.combined(with: .offset(x: CGFloat(spotlightDirection) * x, y: y)),
+                           removal: .identity)
+    }
+
+    private func spotlightAnimation(_ duration: Double) -> Animation? {
+        reduceMotion || spotlightDirection == 0 ? nil : .timingCurve(0.16, 0.85, 1, 1, duration: duration)
+    }
+
+    private func spotlightStage(_ artist: FeaturedPersonItem, accent: Color, compact: Bool) -> some View {
+        let orbit: CGFloat = compact ? 118 : 174
+        return GeometryReader { geometry in
+            ZStack {
+                Ellipse()
+                    .fill(.radialGradient(colors: [accent.opacity(0.24), accent.opacity(0.03), .clear],
+                                          center: .center, startRadius: 8, endRadius: 96))
+                    .frame(height: 100)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, 8)
+                    .allowsHitTesting(false)
+                ZStack(alignment: .trailing) {
+                    Circle().fill(accent.opacity(0.055))
+                    Circle().strokeBorder(accent.opacity(0.22))
+                    Circle().strokeBorder(accent.opacity(0.10), style: StrokeStyle(lineWidth: 1, dash: [1, 8]))
+                        .padding(17)
+                    Circle().strokeBorder(accent.opacity(0.12), lineWidth: 0.5).padding(38)
+                    Circle().fill(accent).frame(width: 5, height: 5).offset(x: 2)
                 }
-                .padding(.vertical, 7)
-            }
-            .scrollIndicators(.hidden)
-        }
-    }
-
-    private var addStoryCard: some View {
-        VStack(spacing: 12) {
-            Text(text("YourStory")).font(localization.font(9)).foregroundStyle(.secondary)
-            Spacer(minLength: 0)
-            Image(systemName: "person.crop.circle.badge.plus")
-                .font(.system(size: 19)).frame(width: 38, height: 38)
-                .background(Color.accentColor.opacity(0.1), in: .rect(cornerRadius: 8))
-                .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 0.5) }
-            Text(text("AddStory")).font(localization.font(11))
-            Spacer(minLength: 0)
-            Image(systemName: "plus").font(.system(size: 12)).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-        }
-        .padding(12)
-        .frame(width: 112, height: 216)
-        .musicPanel(cornerRadius: 10)
-    }
-
-    private func storyCard(_ story: StoryListItemResponse) -> some View {
-        let name = "\(story.creatorFirstName) \(story.creatorLastName)"
-        let corners = UnevenRoundedRectangle(topLeadingRadius: 9, topTrailingRadius: 9)
-        return VStack(spacing: 0) {
-            ZStack(alignment: .topLeading) {
-                MusicArtwork(mediaID: story.previewMediaPublicId, model: model, symbol: "photo")
-                LinearGradient(colors: [.black.opacity(0.43), .clear, .black.opacity(0.7)],
-                               startPoint: .top, endPoint: .bottom)
-                Text(text(story.viewedByMe ? "Viewed" : "New"))
-                    .font(localization.font(8)).foregroundStyle(.white)
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(.black.opacity(0.8), in: .rect(cornerRadius: 5))
-                    .padding(8)
-                if let title = story.title, !title.isEmpty {
-                    Text(title).font(localization.font(9)).lineLimit(1).foregroundStyle(.white)
-                        .padding(.horizontal, 7).padding(.vertical, 4)
-                        .background(.black.opacity(0.8), in: .rect(cornerRadius: 5))
-                        .padding(.bottom, 24).padding(.horizontal, 8)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                }
-            }
-            .frame(height: 162)
-            .clipShape(corners)
-            VStack(spacing: 4) {
-                Text(name).font(localization.font(9)).lineLimit(1)
-                Capsule().fill(Color.accentColor).frame(width: 18, height: 2)
-            }
-            .padding(.top, 25)
-            .frame(maxWidth: .infinity)
-            .overlay(alignment: .top) {
-                let initials = [story.creatorFirstName, story.creatorLastName].compactMap(\.first)
-                Text(String(initials)).font(localization.font(10, weight: .medium))
-                    .frame(width: 40, height: 40)
-                    .background(.thickMaterial, in: .rect(cornerRadius: 13))
-                    .overlay { RoundedRectangle(cornerRadius: 13).strokeBorder(Color.accentColor) }
-                    .offset(y: -20)
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(width: 132, height: 216)
-        .musicPanel(cornerRadius: 10)
-        .accessibilityLabel(story.title ?? name)
-    }
-
-    private var genres: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                heading(text("MusicGenres"), icon: "music.quarternote.3", color: musicColor("8BCBE2"))
-                Spacer(minLength: 8)
-                if !model.genres.isEmpty {
-                    control(.allGenres) { Label(text("AllGenres"), systemImage: "arrow.backward") }
-                        .font(localization.font(10)).buttonStyle(.glass)
-                }
-            }
-            Text(text("GenreHeading")).font(localization.font(11)).foregroundStyle(.secondary)
-            if model.genres.isEmpty { sectionStatus(.genres, empty: "NoGenres") }
-            if !model.genres.isEmpty {
-                ScrollView(.horizontal) {
-                    LazyHStack(spacing: 10) {
-                        ForEach(model.genres, id: \.publicId) { genre in
-                            control(.genre(genre.publicId)) { genreCard(genre) }
-                                .buttonStyle(MusicHoverStyle())
+                .frame(width: orbit, height: orbit)
+                .allowsHitTesting(false)
+                ZStack {
+                    Group {
+                        if artist.modelMediaPublicId != nil {
+                            MusicArtistModel(artist: artist, model: model, rotateHint: text("RotateHint"),
+                                             resetLabel: text("ResetModel"), showsRotationHint: !compact)
+                        } else {
+                            spotlightPortrait(artist, size: min(118, orbit * 0.82))
                         }
                     }
-                    .padding(.vertical, 6)
+                    .id(artist.personPublicId)
+                    .transition(spotlightReveal(x: 24, y: 0))
+                }
+                .animation(spotlightAnimation(0.42), value: artist.personPublicId)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !compact {
+                        Text(text("ArtistLabel")).font(localization.font(8)).tracking(1.84)
+                            .foregroundStyle(MusicHomeStyle.secondary)
+                    }
+                    Text(String(format: "%02d / %02d", spotlightIndex + 1, model.artists.count))
+                        .font(localization.font(11, weight: .semibold)).monospacedDigit().foregroundStyle(accent)
+                }
+                .padding(compact ? 10 : 14)
+                .allowsHitTesting(false)
+            }
+            .clipped()
+        }
+    }
+
+    private func spotlightPortrait(_ artist: FeaturedPersonItem, size: CGFloat) -> some View {
+        MusicArtwork(mediaID: artist.profileMediaPublicId, model: model, symbol: "person.fill")
+            .frame(width: size, height: size)
+            .background(MusicHomeStyle.inset)
+            .clipShape(.circle)
+    }
+
+    private func spotlightInformation(_ artist: FeaturedPersonItem, accent: Color, compact: Bool) -> some View {
+        VStack(spacing: compact ? 8 : 10) {
+            ZStack {
+                spotlightMetrics(artist, accent: accent, compact: compact)
+                    .id(artist.personPublicId)
+                    .transition(spotlightReveal(x: 10, y: 8))
+            }
+            .animation(spotlightAnimation(0.33), value: artist.personPublicId)
+            .frame(maxHeight: .infinity)
+            spotlightActions(artist, compact: compact, accent: accent)
+        }
+        .padding(.leading, compact ? 4 : 12)
+        .padding(.trailing, compact ? 10 : 16)
+        .padding(.vertical, compact ? 8 : 14)
+    }
+
+    private func spotlightMetrics(_ artist: FeaturedPersonItem, accent: Color, compact: Bool) -> some View {
+        VStack(spacing: compact ? 3 : 4) {
+            HStack(spacing: 9) {
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(artistName(artist)).font(localization.font(compact ? 19 : 24, weight: .bold)).lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                    let genre = localized(artist.genreTitle ?? "", artist.persianGenreTitle)
+                    if !genre.isEmpty {
+                        HStack(spacing: 5) {
+                            FluentIcon(symbol: .musicNote1, size: 9)
+                            Text(genre).font(localization.font(9)).lineLimit(1)
+                        }
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(MusicHomeStyle.inset, in: .rect(cornerRadius: 5))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                Button { activate(.spotlightProfile(artist.personPublicId)) } label: {
+                    spotlightPortrait(artist, size: 40).frame(width: 44, height: 44)
+                }
+                .buttonStyle(MusicHomeButtonStyle(corner: 22))
+                .accessibilityLabel(text("ViewProfile"))
+                Capsule().fill(accent.opacity(0.75)).frame(width: 3, height: 39)
+            }
+            HStack(spacing: 5) {
+                spotlightMetric("WeeklyArtistPlays", value: artist.dailyPlays.reduce(0, +), icon: .star,
+                                accent: MusicHomeStyle.gold, compact: compact, numberColor: MusicHomeStyle.gold)
+                spotlightMetric("Followers", value: artist.followersCount, icon: .people, accent: accent, compact: compact)
+                spotlightMetric("Track", value: artist.musicsCount, icon: .musicNote1, accent: accent, compact: compact)
+            }
+            .frame(height: compact ? 49 : 54)
+            if !compact {
+                HStack(spacing: 6) {
+                    spotlightChart(plays: artist.dailyPlays, color: accent)
+                        .frame(width: 48, height: 16)
+                        .accessibilityHidden(true)
+                    Text(artist.monthlyListenersCount.formatted() + " " + text("MonthlyListeners"))
+                        .foregroundStyle(MusicHomeStyle.secondary).font(localization.font(8)).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    FluentIcon(symbol: .headphones, size: 11).foregroundStyle(accent)
+                }
+                .padding(.horizontal, 6).frame(height: 25)
+                .background(MusicHomeStyle.inset, in: .rect(cornerRadius: 7))
+            }
+        }
+    }
+
+    private func spotlightMetric(_ name: String, value: Int, icon: FluentSymbol, accent: Color,
+                                 compact: Bool, numberColor: Color = .white) -> some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            HStack(spacing: 3) {
+                FluentIcon(symbol: icon, size: 9).foregroundStyle(accent)
+                Text(text(name)).font(localization.font(8)).foregroundStyle(MusicHomeStyle.secondary).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .frame(height: 12)
+            Text(value, format: .number.notation(.compactName))
+                .font(localization.font(compact ? 16 : 18, weight: .semibold)).foregroundStyle(numberColor)
+                .lineLimit(1).minimumScaleFactor(0.72)
+        }
+        .padding(.horizontal, compact ? 5 : 8).padding(.vertical, 6)
+        .frame(maxHeight: .infinity)
+        .background(MusicHomeStyle.inset, in: .rect(cornerRadius: 11))
+        .overlay { RoundedRectangle(cornerRadius: 11).strokeBorder(MusicHomeStyle.stroke) }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func spotlightChart(plays: [Int], color: Color) -> some View {
+        Canvas { context, size in
+            let values = Array(plays.suffix(7))
+            guard values.count > 1, let peak = values.max(), peak > 0 else { return }
+            let shape = Path { path in
+                for (i, value) in values.enumerated() {
+                    let point = CGPoint(x: size.width * CGFloat(i) / CGFloat(values.count - 1),
+                                        y: 1 + (size.height - 2) * (1 - CGFloat(max(0, value)) / CGFloat(peak)))
+                    if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                }
+            }
+            context.stroke(shape, with: .color(color.opacity(0.6)),
+                           style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+        }
+    }
+
+    private func spotlightActions(_ artist: FeaturedPersonItem, compact: Bool, accent: Color) -> some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 0) {
+                spotlightArrow(.previousSpotlight, direction: .chevronLeft, label: "PreviousArtist")
+                Rectangle().fill(.white.opacity(0.095)).frame(width: 1, height: 16)
+                spotlightArrow(.nextSpotlight, direction: .chevronRight, label: "NextArtist")
+            }
+            .frame(width: 58, height: 32)
+            .background(MusicHomeStyle.inset, in: .rect(cornerRadius: 10))
+            .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(MusicHomeStyle.stroke) }
+            control(.spotlightProfile(artist.personPublicId)) {
+                HStack(spacing: 5) {
+                    FluentIcon(symbol: .person, size: 12)
+                    if !compact { Text(text("Profile")).font(localization.font(10)).lineLimit(1) }
+                }
+                .frame(maxWidth: .infinity, minHeight: 32)
+            }
+            .buttonStyle(MusicHomeButtonStyle(fill: MusicHomeStyle.inset, stroke: MusicHomeStyle.stroke, corner: 10))
+            .accessibilityLabel(text("ViewProfile"))
+            control(.spotlightFollow(artist.personPublicId)) {
+                Text(text(artist.isFollowing ? "Following" : "Follow"))
+                    .font(localization.font(10, weight: .semibold)).foregroundStyle(musicColor("111924"))
+                    .frame(width: compact ? 70 : 84, height: 32)
+                    .lineLimit(1)
+            }
+            .buttonStyle(MusicHomeButtonStyle(fill: accent, corner: 10))
+            .disabled(!artist.canFollow || model.updating.contains(artist.personPublicId))
+        }
+    }
+
+    private func spotlightArrow(_ action: Action, direction: FluentSymbol, label: String) -> some View {
+        control(action) { FluentIcon(symbol: direction, size: 11).frame(width: 27, height: 30) }
+            .buttonStyle(MusicHomeButtonStyle(corner: 8))
+            .accessibilityLabel(text(label))
+            .disabled(model.artists.count < 2)
+    }
+
+    private func spotlightTracks(_ artist: FeaturedPersonItem, accent: Color, horizontal: Bool) -> some View {
+        VStack(alignment: .trailing, spacing: horizontal ? 2 : 8) {
+            HStack {
+                FluentIcon(symbol: .musicNote1, size: 10).foregroundStyle(accent)
+                Spacer(minLength: 2)
+                Text(text("LatestTracks")).font(localization.font(11)).foregroundStyle(MusicHomeStyle.secondary)
+            }
+            if artist.latestMusics.isEmpty {
+                Text(text("NoFeaturedArtistTracks")).font(localization.font(11)).foregroundStyle(MusicHomeStyle.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.top, 8)
+            } else {
+                ScrollView(horizontal ? .horizontal : .vertical) {
+                    if horizontal {
+                        LazyHStack(spacing: 6) { spotlightTrackButtons(artist, accent: accent, horizontal: true) }
+                    } else {
+                        LazyVStack(spacing: 6) { spotlightTrackButtons(artist, accent: accent, horizontal: false) }
+                    }
                 }
                 .scrollIndicators(.hidden)
             }
         }
+        .padding(.horizontal, horizontal ? 12 : 10)
+        .padding(.top, horizontal ? 0 : 16)
+        .padding(.bottom, horizontal ? 6 : 16)
     }
 
-    private func genreCard(_ genre: MusicGenreTypeItemResponse) -> some View {
-        let color = musicColor(genre.accentColorHex)
-        let isSelected = selectedGenre == genre.publicId
-        let title = genre.title.isEmpty ? localized(genre.title, genre.persianTitle) : genre.title
-        let waveform = Image(systemName: "waveform")
-        return ZStack(alignment: .bottomTrailing) {
-            LinearGradient(colors: [color.opacity(0.24), color.opacity(0.01)],
-                           startPoint: .topTrailing, endPoint: .bottomLeading)
-            waveform.font(.system(size: 66, weight: .light))
-                .foregroundStyle(color.opacity(0.12)).offset(x: 4, y: 10)
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .top, spacing: 6) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(title).font(localization.font(19, weight: .semibold)).lineLimit(1)
-                        if let persian = genre.persianTitle, !persian.isEmpty {
-                            Text(persian).font(WindowsTypography.iranSans(11)).foregroundStyle(.secondary).lineLimit(1)
+    private func spotlightTrackButtons(_ artist: FeaturedPersonItem, accent: Color, horizontal: Bool) -> some View {
+        ForEach(artist.latestMusics.prefix(5), id: \.publicId) { track in
+            let title = localized(track.title, track.persianTitle)
+            control(.spotlightTrack(track.publicId)) {
+                HStack(spacing: 6) {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(title).font(localization.font(10)).lineLimit(1)
+                        HStack {
+                            Text(MusicHomeStyle.duration(seconds: track.duration?.totalSeconds)).font(localization.font(8))
+                                .foregroundStyle(MusicHomeStyle.secondary).monospacedDigit()
+                            Spacer(minLength: 3)
+                            FluentIcon(symbol: .heart, size: 9).foregroundStyle(accent.opacity(0.75))
+                            Text(track.likesCount, format: .number).font(localization.font(8)).foregroundStyle(MusicHomeStyle.secondary)
                         }
                     }
-                    Spacer(minLength: 0)
-                    Image(systemName: genreSymbol(genre.iconSymbol))
-                        .font(.system(size: 20)).foregroundStyle(.secondary)
-                        .frame(width: 38, height: 38)
-                        .background(color.opacity(0.1), in: .rect(cornerRadius: 8))
-                        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(color, lineWidth: 0.5) }
+                    MusicArtwork(mediaID: track.coverMediaPublicId, model: model, symbol: "music.note")
+                        .frame(width: 32, height: 32).clipShape(.rect(cornerRadius: 7))
                 }
-                Spacer(minLength: 6)
-                HStack(spacing: 5) {
-                    HStack(spacing: 5) {
-                        Text(genre.musicsCount, format: .number).font(localization.font(12, weight: .semibold))
-                        Text(text("Track")).font(localization.font(10)).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(.white.opacity(0.08), in: .rect(cornerRadius: 6))
-                    Spacer()
-                    Image(systemName: "arrow.up.right").font(.system(size: 13)).foregroundStyle(.secondary)
-                }
+                .padding(.horizontal, 7).frame(height: 44)
+                .frame(minWidth: horizontal ? 156 : 0, maxWidth: horizontal ? 180 : .infinity)
             }
-            .padding(14)
+            .buttonStyle(MusicHomeButtonStyle(fill: MusicHomeStyle.inset, stroke: MusicHomeStyle.stroke, corner: 8))
+            .accessibilityLabel(title)
+            .help(title)
         }
-        .frame(width: 194, height: 138)
-        .clipShape(.rect(cornerRadius: 8))
-        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(color.opacity(isSelected ? 0.88 : 0.28)) }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(localized(genre.title, genre.persianTitle))
-        .accessibilityValue("\(genre.musicsCount.formatted()) \(text("Track"))")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func genreSymbol(_ symbol: String) -> String {
-        switch symbol.lowercased() {
-        case "headphones": "headphones"
-        case "drum", "drumkit": "drum"
-        case "guitar": "guitars"
-        case "piano": "pianokeys"
-        case "microphone", "mic": "mic"
-        case "soundwave", "waveform", "pulse": "waveform"
-        default: "music.note"
+    private var centralRails: MusicHomeRails { MusicHomeRails(model: model, localization: localization) }
+
+    private var stories: some View {
+        centralRails.stories {
+            control(.addStory) { centralRails.addStoryCard }
+                .buttonStyle(MusicReferenceStoryStyle(restingOpacity: 0.8))
+                .accessibilityLabel(text("AddStory"))
+        } story: { item in
+            control(.story(item.publicId)) { centralRails.storyCard(item) }
+                .buttonStyle(MusicReferenceStoryStyle())
+                .accessibilityHint(text("OpenStoryHelp"))
+        } retry: {
+            railRetry(.stories, label: "RefreshStories")
+        }
+    }
+
+    private var genres: some View {
+        centralRails.genres {
+            control(.allGenres) { centralRails.clearGenresLabel }
+                .buttonStyle(MusicReferenceRailActionStyle())
+        } genre: { item in
+            control(.genre(item.publicId)) { centralRails.genreCard(item, isSelected: selectedGenre == item.publicId) }
+                .buttonStyle(MusicReferenceGenreStyle(accent: musicColor(item.accentColorHex)))
+        } retry: {
+            railRetry(.genres, label: "RefreshGenres")
         }
     }
 
     private var artists: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ViewThatFits(in: .horizontal) {
-                HStack {
-                    heading(text("TopArtists"), icon: "headphones", color: musicColor("F1C27D"))
-                    Spacer(minLength: 8)
-                    artistRailControls
-                }
-                VStack(alignment: .leading, spacing: 9) {
-                    heading(text("TopArtists"), icon: "headphones", color: musicColor("F1C27D"))
-                    artistRailControls
-                }
-            }
-            if model.artists.isEmpty { sectionStatus(.artists, empty: "FeaturedArtistsEmpty") }
-            ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 12) {
-                    ForEach(model.artists, id: \.personPublicId) { artist in
-                        VStack(alignment: .leading, spacing: 10) {
-                            control(.profile(artist.personPublicId)) {
-                                MusicArtwork(mediaID: artist.coverMediaPublicId ?? artist.profileMediaPublicId,
-                                             model: model, symbol: "person.crop.circle")
-                                    .frame(width: 200, height: 128).clipShape(.rect(cornerRadius: 10))
-                            }
-                            .buttonStyle(.plain)
-                            Text(artistName(artist)).font(localization.font(16, weight: .semibold)).lineLimit(1)
-                            Text(localized(artist.genreTitle ?? "", artist.persianGenreTitle))
-                                .font(localization.font(11)).foregroundStyle(.secondary).lineLimit(1)
-                            HStack(spacing: 8) {
-                                if artist.canFollow { followButton(artist) }
-                                if let track = artist.latestMusics.first {
-                                    control(.artistTrack(track.publicId)) { Image(systemName: "play.fill") }
-                                        .accessibilityLabel(localized(track.title, track.persianTitle))
-                                }
-                            }
-                            .buttonStyle(.glass)
-                        }
-                        .padding(12)
-                        .frame(width: 224)
-                        .musicPanel(cornerRadius: 16)
-                        .id(artist.personPublicId)
-                    }
-                }
-                .scrollTargetLayout()
-                .padding(.vertical, 6)
-            }
-            .scrollPosition(id: $artistRailPosition)
-            .scrollIndicators(.hidden)
+        centralRails.artists(position: $artistRailPosition) {
+            artistRailControls
+        } profile: { artist in
+            control(.profile(artist.personPublicId)) { centralRails.artistProfile(artist) }
+                .buttonStyle(.plain)
+        } follow: { artist in
+            control(.follow(artist.personPublicId)) { centralRails.artistFollow(artist) }
+                .buttonStyle(MusicReferenceRailActionStyle())
+                .disabled(!artist.canFollow || model.updating.contains(artist.personPublicId))
+        } retry: {
+            railRetry(.artists, label: "FeaturedArtistsRetry")
         }
+    }
+
+    private func railRetry(_ section: MusicHomeService.Section, label: String) -> some View {
+        control(.refresh(section)) {
+            Text(text("Retry")).font(localization.font(10, weight: .semibold))
+                .padding(.horizontal, 10).frame(height: 28)
+        }
+        .buttonStyle(MusicReferenceRailActionStyle())
+        .accessibilityLabel(text(label))
     }
 
     private var artistRailControls: some View {
         HStack(spacing: 6) {
-            control(.previousArtistRail) { Image(systemName: "chevron.backward") }
+            control(.previousArtistRail) { FluentIcon(symbol: .chevronLeft, size: 12).frame(width: 30, height: 30) }
+                .buttonStyle(MusicReferenceRailActionStyle(square: true))
                 .accessibilityLabel(text("PreviousArtists")).disabled(model.artists.count < 2)
             Text(model.artists.count, format: .number)
-                .font(localization.font(11)).frame(width: 32)
+                .font(localization.font(11, weight: .semibold)).frame(width: 32, height: 24)
+                .background(MusicHomeStyle.inset, in: .rect(cornerRadius: 6))
                 .accessibilityLabel(text("ArtistCountHelp"))
                 .accessibilityValue(model.artists.count.formatted())
-            control(.nextArtistRail) { Image(systemName: "chevron.forward") }
+            control(.nextArtistRail) { FluentIcon(symbol: .chevronRight, size: 12).frame(width: 30, height: 30) }
+                .buttonStyle(MusicReferenceRailActionStyle(square: true))
                 .accessibilityLabel(text("NextArtists")).disabled(model.artists.count < 2)
         }
-        .buttonStyle(.glass)
-    }
-
-    private func followButton(_ artist: FeaturedPersonItem, inSpotlight: Bool = false) -> some View {
-        control(inSpotlight ? .spotlightFollow(artist.personPublicId) : .follow(artist.personPublicId)) {
-            Text(text(artist.isFollowing ? "Following" : "Follow"))
-        }
-        .disabled(model.updating.contains(artist.personPublicId))
-    }
-
-    private var editorialRail: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            library
-            weeklyRhythm
-            latestNews
-        }
-    }
-
-    private var communityRail: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            trending
-            activities
-        }
-    }
-
-    private var library: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            heading(widget("LibraryTitle"), icon: "music.note.list", color: musicColor("C7A0F6"))
-            Text(widget("LibrarySubtitle")).font(localization.font(11)).foregroundStyle(.secondary)
-            if let library = model.library {
-                Text(library.totalPlaylistsCount, format: .number)
-                    .font(localization.font(35, weight: .light)).foregroundStyle(musicColor("C7A0F6"))
-                Text(widget("LibraryPersonal")).font(localization.font(10)).foregroundStyle(.secondary)
-                ForEach(library.playlists, id: \.publicId) { playlist in
-                    control(.playlist(playlist.publicId)) {
-                        HStack(spacing: 8) {
-                            MusicArtwork(mediaID: playlist.lastMusicCoverMediaPublicId, model: model, symbol: "music.note.list")
-                                .frame(width: 36, height: 36).clipShape(.rect(cornerRadius: 6))
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(playlist.title).font(localization.font(12, weight: .semibold)).lineLimit(1)
-                                Text(playlist.lastUpdatedAt, format: .dateTime.month().day())
-                                    .font(localization.font(10)).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 4)
-                            Text(playlist.musicsCount, format: .number).foregroundStyle(.secondary)
-                        }
-                    }
-                    .buttonStyle(MusicHoverStyle())
-                }
-                if library.playlists.isEmpty { Text(widget("LibraryEmpty")).font(localization.font(11)).foregroundStyle(.secondary) }
-                if library.totalPlaylistsCount > 0 {
-                    control(.library) {
-                        Text(widget("LibraryMore").replacingOccurrences(of: "{0:N0}",
-                                                                         with: library.totalPlaylistsCount.formatted()))
-                    }
-                    .buttonStyle(.glass)
-                }
-            } else {
-                sectionStatus(.library, empty: "LibraryError")
-            }
-            control(.recent) { Label(widget("LibraryRecent"), systemImage: "clock.arrow.circlepath") }
-                .buttonStyle(.glass)
-        }
-        .musicWidget()
-    }
-
-    private var weeklyRhythm: some View {
-        let days = [(38, 10), (54, 18), (46, 10), (66, 26), (52, 16), (72, 32), (62, 20)]
-        return VStack(alignment: .leading, spacing: 12) {
-            heading(widget("RhythmTitle"), icon: "chart.bar", color: musicColor("8BCBE2"))
-            Text(widget("RhythmSubtitle")).font(localization.font(11)).foregroundStyle(.secondary)
-            let total = days.reduce(0) { $0 + $1.0 + $1.1 }
-            HStack(alignment: .firstTextBaseline) {
-                Text(String(format: "%02d:%02d", total / 60, total % 60)).font(localization.font(29, weight: .light))
-                    .accessibilityLabel(widget("RhythmHours"))
-                Spacer()
-                Text("+\(Int((Double(total - 442) / 442 * 100).rounded()))%")
-                    .font(localization.font(10, weight: .semibold)).foregroundStyle(musicColor("93D9C0"))
-                    .accessibilityHint(widget("RhythmComparison"))
-            }
-            HStack(alignment: .bottom, spacing: 5) {
-                ForEach(Array(days.enumerated()), id: \.offset) { day, minutes in
-                    control(.rhythmDay(day)) {
-                        VStack(spacing: 5) {
-                            VStack(spacing: 2) {
-                                Capsule().fill(musicColor("C7A0F6")).frame(width: 12, height: CGFloat(minutes.1) * 0.5)
-                                Capsule().fill(musicColor("8BCBE2")).frame(width: 12, height: CGFloat(minutes.0) * 0.5)
-                            }
-                            Text(widget("Day\(day)Short")).font(localization.font(9)).lineLimit(1)
-                        }
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.accentColor.opacity(selectedRhythmDay == day ? 0.17 : 0), in: .rect(cornerRadius: 5))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(widget("Day\(day)"))
-                    .accessibilityValue(rhythmDuration(minutes.0 + minutes.1))
-                    .accessibilityAddTraits(selectedRhythmDay == day ? .isSelected : [])
-                }
-            }
-            let day = days[selectedRhythmDay]
-            HStack(spacing: 6) {
-                Text(widget("Day\(selectedRhythmDay)"))
-                Spacer()
-                Text(rhythmDuration(day.0 + day.1)).monospacedDigit()
-            }
-            .font(localization.font(11, weight: .medium))
-            Text(widget("RhythmDemo")).font(localization.font(10)).foregroundStyle(.secondary)
-        }
-        .musicWidget()
-    }
-
-    private func rhythmDuration(_ minutes: Int) -> String {
-        String(format: "%d:%02d", minutes / 60, minutes % 60)
-    }
-
-    private var latestNews: some View {
-        let covers = ["slow-motion", "artist-stage-02", "city-lights", "quiet-room"]
-        return VStack(alignment: .leading, spacing: 12) {
-            heading(widget("NewsTitle"), icon: "newspaper", color: musicColor("F1C27D"))
-            Text(widget("NewsSubtitle")).font(localization.font(11)).foregroundStyle(.secondary)
-            control(.news(newsIndex)) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Image(covers[newsIndex], bundle: .module).resizable().scaledToFill()
-                        .frame(height: 98).clipped().clipShape(.rect(cornerRadius: 8))
-                    Text(widget("News\(newsIndex)Title")).font(localization.font(14, weight: .semibold))
-                    Text(widget("News\(newsIndex)Summary")).font(localization.font(11)).foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(MusicHoverStyle())
-            HStack(spacing: 4) {
-                ForEach(covers.indices, id: \.self) { index in
-                    control(.selectNews(index)) {
-                        Capsule().fill(index == newsIndex ? musicColor("F1C27D") : Color.secondary.opacity(0.34))
-                            .frame(height: 3)
-                            .padding(.vertical, 8).contentShape(.rect)
-                    }
-                    .accessibilityLabel(widget("News\(index)Title"))
-                    .accessibilityAddTraits(index == newsIndex ? .isSelected : [])
-                }
-            }
-            .buttonStyle(.plain)
-            HStack {
-                control(.previousNews) { Image(systemName: "chevron.backward") }
-                    .accessibilityLabel(widget("NewsPrevious"))
-                Spacer()
-                control(.toggleNews) { Image(systemName: newsPaused ? "play.fill" : "pause.fill") }
-                    .accessibilityLabel(widget(newsPaused ? "NewsResume" : "NewsPause"))
-                Spacer()
-                control(.nextNews) { Image(systemName: "chevron.forward") }
-                    .accessibilityLabel(widget("NewsNext"))
-            }
-            .buttonStyle(.glass)
-            Text(widget("NewsFooter")).font(localization.font(9)).foregroundStyle(.secondary)
-        }
-        .musicWidget()
-        .onScrollVisibilityChange { newsVisible = $0 }
-        .task(id: FeatureTimer(index: newsIndex, count: 4,
-                              canRotate: newsVisible && !newsPaused && !reduceMotion && scenePhase == .active)) {
-            guard newsVisible, !newsPaused, !reduceMotion, scenePhase == .active else { return }
-            do {
-                try await Task.sleep(for: .seconds(8))
-                newsIndex = (newsIndex + 1) % 4
-            } catch {}
-        }
-    }
-
-    private var trending: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            heading(widget("TrendingTitle"), icon: "chart.line.uptrend.xyaxis", color: musicColor("F1C27D"))
-            Text(widget("TrendingSubtitle")).font(localization.font(11)).foregroundStyle(.secondary)
-            ForEach(Array(discovery.sorted { $0.likes > $1.likes }.prefix(6).enumerated()), id: \.element.id) { rank, sample in
-                HStack(spacing: 7) {
-                    Text(rank + 1, format: .number).font(localization.font(10)).foregroundStyle(.secondary)
-                        .frame(width: 17)
-                    Image(sample.image, bundle: .module).resizable().scaledToFill()
-                        .frame(width: 37, height: 37).clipped().clipShape(.rect(cornerRadius: 6))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(localized(sample.title, sample.persianTitle)).font(localization.font(12, weight: .semibold)).lineLimit(1)
-                        Text(sample.artist).font(localization.font(10)).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-        }
-        .musicWidget()
-    }
-
-    private var activities: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            heading(widget("FollowingTitle"), icon: "person.2", color: musicColor("93D9C0"))
-            Text(widget("FollowingSubtitle")).font(localization.font(11)).foregroundStyle(.secondary)
-            if let activity = model.activity {
-                if activity.activities.isEmpty {
-                    Text(widget(activity.hasFollowings ? "FollowingEmptyMusicDescription" : "FollowingNoFriendsDescription"))
-                        .font(localization.font(11)).foregroundStyle(.secondary)
-                }
-                ForEach(activity.activities, id: \.activityId) { item in
-                    control(.activity(item.activityId)) {
-                        HStack(alignment: .top, spacing: 8) {
-                            MusicArtwork(mediaID: item.profileMediaPublicId, model: model, symbol: "person.crop.circle.fill")
-                                .frame(width: 34, height: 34).clipShape(.circle)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.nickName ?? [item.firstName, item.lastName].compactMap { $0 }.joined(separator: " "))
-                                    .font(localization.font(12, weight: .semibold)).lineLimit(1)
-                                Text(localized(item.title, item.persianTitle)).font(localization.font(11)).foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                    }
-                    .buttonStyle(MusicHoverStyle())
-                    .disabled(activityDestination(item) == nil)
-                }
-                if activity.hasMore {
-                    control(.moreActivity) { Text(widget("FollowingMore")) }
-                        .buttonStyle(.glass).disabled(model.loading.contains(.activity))
-                }
-            } else {
-                sectionStatus(.activity, empty: "FollowingError")
-            }
-        }
-        .musicWidget()
     }
 
     private var transport: some View {
@@ -972,50 +1095,6 @@ struct MusicHomePage: View {
         #endif
     }
 
-    private func discoveryRail(_ title: String, subtitle: String, icon: String, color: Color,
-                               samples: [MusicDiscoverySample], compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            heading(title, icon: icon, color: color)
-            Text(subtitle).font(localization.font(10)).foregroundStyle(.secondary)
-            ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 12) {
-                    ForEach(samples) { sample in
-                        sampleCard(sample, compact: compact)
-                    }
-                }
-                .padding(.vertical, 6)
-            }
-            .scrollIndicators(.hidden)
-        }
-    }
-
-    private func sampleCard(_ sample: MusicDiscoverySample, compact: Bool) -> some View {
-        let label = VStack(alignment: .leading, spacing: 4) {
-            Text(localized(sample.title, sample.persianTitle)).font(localization.font(14, weight: .semibold)).lineLimit(1)
-            Text(sample.artist).font(localization.font(11)).foregroundStyle(.secondary).lineLimit(1)
-            Text(localized(sample.genre, sample.persianGenre)).font(localization.font(10)).foregroundStyle(.secondary)
-        }
-        let artwork = Image(sample.image, bundle: .module).resizable().scaledToFill()
-            .frame(width: compact ? 88 : 200, height: compact ? 88 : 156)
-            .clipped().clipShape(.rect(cornerRadius: 10))
-        return Group {
-            if compact {
-                HStack(spacing: 12) { label; Spacer(minLength: 0); artwork }
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    artwork
-                    label
-                    Divider()
-                    Label(sample.likes.formatted(), systemImage: "heart")
-                        .font(localization.font(11)).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(12)
-        .frame(width: compact ? 300 : 224, alignment: .leading)
-        .musicPanel(cornerRadius: 16)
-    }
-
     private func sectionStatus(_ section: MusicHomeService.Section, empty: String) -> some View {
         HStack(spacing: 10) {
             if model.loading.contains(section) {
@@ -1042,16 +1121,7 @@ struct MusicHomePage: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func heading(_ title: String, icon: String, color: Color) -> some View {
-        Label {
-            Text(title).font(localization.font(18, weight: .semibold)).foregroundStyle(.primary)
-        } icon: {
-            Image(systemName: icon).font(.system(size: 15, weight: .medium)).foregroundStyle(color)
-        }
-        .accessibilityAddTraits(.isHeader)
-    }
-
-    private func control<Label: View>(_ action: Action, @ViewBuilder label: () -> Label) -> some View {
+    func control<Label: View>(_ action: Action, @ViewBuilder label: () -> Label) -> some View {
         Button { activate(action) } label: { label() }
             .focusable()
             .focused($controlFocus, equals: action)
@@ -1066,7 +1136,11 @@ struct MusicHomePage: View {
 
     private func activate(_ action: Action) {
         switch action {
-        case .search: showingSearch = true
+        case .search: searchFocusRequest += 1
+        case .home: scrollHomeRequest += 1
+        case .featureControls: showingPreviewControls = true
+        case .featureThumbnail(let index): selectFeature(index)
+        case .retryFeatureMedia: heroMediaRetry += 1
         case .previousFeature: selectFeature(featureIndex - 1)
         case .nextFeature: selectFeature(featureIndex + 1)
         case .rotateFeatures:
@@ -1096,10 +1170,9 @@ struct MusicHomePage: View {
             #endif
         case .previousSpotlight, .nextSpotlight:
             guard model.artists.count > 1 else { return }
-            let next = spotlightIndex + (action == .nextSpotlight ? 1 : -1)
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
-                spotlightIndex = (next % model.artists.count + model.artists.count) % model.artists.count
-            }
+            spotlightDirection = action == .nextSpotlight ? 1 : -1
+            let next = spotlightIndex + spotlightDirection
+            spotlightIndex = (next % model.artists.count + model.artists.count) % model.artists.count
         case .previousArtistRail, .nextArtistRail:
             guard model.artists.count > 1 else { return }
             let index = model.artists.firstIndex { $0.personPublicId == artistRailPosition } ?? 0
@@ -1114,12 +1187,12 @@ struct MusicHomePage: View {
         case .profile(let id), .spotlightProfile(let id): destination = .artist(id)
         case .follow(let id), .spotlightFollow(let id):
             if let item = model.artists.first(where: { $0.personPublicId == id }) { Task { await model.toggleFollow(item) } }
-        case .artistTrack(let id), .spotlightTrack(let id): destination = .track(id)
+        case .spotlightTrack(let id): destination = .track(id)
         case .playlist(let id): destination = .playlist(id)
         case .library: showingLibrary = true
         case .activity(let id):
             if let item = model.activity?.activities.first(where: { $0.activityId == id }) { destination = activityDestination(item) }
-        case .moreActivity: Task { await model.loadMoreActivity() }
+        case .moreActivity: showingAllMusicActivity = true
         case .recent: recentScrollRequest += 1
         case .news(let index): article = index
         case .rhythmDay(let index): selectedRhythmDay = index
@@ -1132,19 +1205,30 @@ struct MusicHomePage: View {
         }
     }
 
-    private func activityDestination(_ item: FollowingActivityItemResponse) -> MusicDestination? {
+    func activityDestination(_ item: FollowingActivityItemResponse) -> MusicDestination? {
         if let id = item.storyPublicId { return .story(id) }
         if let id = item.musicPlaylistPublicId { return .playlist(id) }
         return item.musicPublicId.map(MusicDestination.track)
     }
 
+    var newsWidgetHasFocus: Bool {
+        switch controlFocus {
+        case .news, .previousNews, .nextNews, .toggleNews, .selectNews: true
+        default: false
+        }
+    }
+
     private var controllerTargets: [Action] {
-        var targets: [Action] = [.search]
+        var targets: [Action] = [.home, .search]
         if let item = currentFeature {
-            targets += [.previousFeature, .playFeature, .openFeature, .nextFeature, .rotateFeatures]
+            targets.append(.featureControls)
+            if model.features.count > 1 {
+                targets += [.previousFeature] + visibleThumbnailIndices.map(Action.featureThumbnail) + [.nextFeature]
+            }
+            targets.append(.openFeature)
+            if heroMediaFailed { targets.append(.retryFeatureMedia) }
             if !model.updating.contains(item.musicPublicId) { targets.append(.likeFeature) }
         }
-        if previewPlayer != nil { targets.append(.mutePreview) }
         if let artist = currentArtist {
             if model.artists.count > 1 { targets += [.previousSpotlight, .nextSpotlight] }
             targets.append(.spotlightProfile(artist.personPublicId))
@@ -1160,10 +1244,9 @@ struct MusicHomePage: View {
         if model.artists.count > 1 { targets += [.previousArtistRail, .nextArtistRail] }
         targets += model.artists.map { .profile($0.personPublicId) }
         targets += model.artists.filter { $0.canFollow && !model.updating.contains($0.personPublicId) }.map { .follow($0.personPublicId) }
-        targets += model.artists.compactMap { $0.latestMusics.first.map { .artistTrack($0.publicId) } }
         targets += model.library?.playlists.map { .playlist($0.publicId) } ?? []
-        targets += model.activity?.activities.filter { activityDestination($0) != nil }.map { .activity($0.activityId) } ?? []
-        if model.activity?.hasMore == true, !model.loading.contains(.activity) { targets.append(.moreActivity) }
+        targets += model.activity?.activities.prefix(4).filter { activityDestination($0) != nil }.map { .activity($0.activityId) } ?? []
+        if let activity = model.activity, activity.hasMore || activity.activities.count > 4 { targets.append(.moreActivity) }
         if (model.library?.totalPlaylistsCount ?? 0) > 0 { targets.append(.library) }
         targets += [.recent] + (0..<7).map(Action.rhythmDay)
         targets += [.news(newsIndex), .previousNews, .toggleNews, .nextNews] + (0..<4).map(Action.selectNews)
@@ -1177,7 +1260,7 @@ struct MusicHomePage: View {
         var armed = false
         while !Task.isCancelled {
             if let pad = GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad,
-               destination == nil, !showingSearch, !showingLibrary, article == nil, !showingStoryPreview, !copiedFeatureLink, !model.actionFailed, !showingPreviewControls, !fullWindowVideo, !exportPresented {
+               destination == nil, !showingLibrary, !showingAllMusicActivity, article == nil, !showingStoryPreview, !copiedFeatureLink, !model.actionFailed, !showingPreviewControls, !fullWindowVideo, !exportPresented {
                 let horizontal = pad.dpad.xAxis.value
                 let vertical = pad.dpad.yAxis.value
                 let control = pad.buttonA.isPressed ? 1 : pad.buttonB.isPressed ? 2
@@ -1207,8 +1290,9 @@ struct MusicHomePage: View {
 
     private func selectFeature(_ index: Int) {
         guard !model.features.isEmpty else { return }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
-            featureIndex = (index + model.features.count) % model.features.count
+        featureDirection = index >= featureIndex ? 1 : -1
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.43)) {
+            featureIndex = (index % model.features.count + model.features.count) % model.features.count
         }
     }
 
@@ -1219,18 +1303,19 @@ struct MusicHomePage: View {
     }
 
     private func artistName(_ artist: FeaturedPersonItem) -> String { "\(artist.firstName) \(artist.lastName)" }
-    private func localized(_ title: String, _ persian: String?) -> String {
+    func localized(_ title: String, _ persian: String?) -> String {
         if localization.isPersian, let persian, !persian.isEmpty { return persian }
         return title
     }
-    private func text(_ key: String) -> String { localization.string(key, table: "MusicHome") }
-    private func widget(_ key: String) -> String { localization.string(key, table: "MusicWidgets") }
+    func text(_ key: String) -> String { localization.string(key, table: "MusicHome") }
+    func widget(_ key: String) -> String { localization.string(key, table: "MusicWidgets") }
 }
 
 struct MusicArtwork: View {
     var mediaID: UUID?
     var model: MusicHomeViewModel
     var symbol: String
+    var stretch = false
     @State private var image: CGImage?
 
     var body: some View {
@@ -1238,8 +1323,9 @@ struct MusicArtwork: View {
             ZStack {
                 Rectangle().fill(.white.opacity(0.05))
                 if let image {
-                    Image(decorative: image, scale: 1).resizable().scaledToFill()
-                } else {
+                    if stretch { Image(decorative: image, scale: 1).resizable() }
+                    else { Image(decorative: image, scale: 1).resizable().scaledToFill() }
+                } else if !symbol.isEmpty {
                     Image(systemName: symbol).font(.system(size: min(30, geometry.size.height * 0.45)))
                         .foregroundStyle(.secondary)
                 }
