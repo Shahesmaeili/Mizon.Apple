@@ -44,6 +44,24 @@ final class AuthInputFormatter: Formatter {
     }
 }
 
+final class AuthTextField: NSTextField {
+    var onFocus: (() -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        guard super.becomeFirstResponder() else { return false }
+        onFocus?()
+        return true
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { isEnabled && isEditable }
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        // A click can enter the shared field editor without starting a text edit.
+        if currentEditor() != nil { onFocus?() }
+    }
+}
+
 struct FilteredAuthField: NSViewRepresentable {
     @Binding var text: String
     @Binding var isFocused: Bool
@@ -59,8 +77,9 @@ struct FilteredAuthField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField()
+        let field = AuthTextField()
         field.delegate = context.coordinator
+        field.onFocus = { [weak coordinator = context.coordinator] in coordinator?.reportFocus() }
         field.formatter = AuthInputFormatter(accepts: accepts)
         field.isBordered = false
         field.drawsBackground = false
@@ -109,9 +128,11 @@ struct FilteredAuthField: NSViewRepresentable {
 
         init(_ parent: FilteredAuthField) { self.parent = parent }
 
-        func controlTextDidBeginEditing(_ notification: Notification) {
+        func reportFocus() {
             if !parent.isFocused { parent.isFocused = true }
         }
+
+        func controlTextDidBeginEditing(_ notification: Notification) { reportFocus() }
 
         func controlTextDidEndEditing(_ notification: Notification) {
             if parent.isFocused { parent.isFocused = false }
