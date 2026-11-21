@@ -563,8 +563,16 @@ private struct AuthenticationPage: View {
             .padding(.trailing, hasAction ? 6 : 12)
             .environment(\.layoutDirection, isPersian && localizedRow ? .rightToLeft : .leftToRight)
             .frame(minHeight: 44)
-            .background(AuthAppearance.inputFill(focused: focus == field, hovered: hoveredField == field, disabled: model.isLoading),
-                        in: .rect(cornerRadius: 10))
+            .background {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(AuthAppearance.inputFill(focused: focus == field, hovered: hoveredField == field, disabled: model.isLoading))
+                    .contentShape(.rect)
+                    .onTapGesture {
+                        guard !model.isLoading, focus != field else { return }
+                        focus = field
+                    }
+                    .accessibilityHidden(true)
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
                     .strokeBorder(AuthAppearance.inputBorder(focused: focus == field, hovered: hoveredField == field, disabled: model.isLoading))
