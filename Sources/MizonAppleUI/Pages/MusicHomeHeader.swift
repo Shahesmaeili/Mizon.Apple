@@ -3,6 +3,12 @@ import MizonAPIClient
 import MizonAppleCore
 import SwiftUI
 
+enum MusicHomeChrome {
+    static let controlFill = MizonPalette.ink.opacity(0.07)
+    static let hairline = MizonPalette.ink.opacity(0.14)
+    static let hint = MizonPalette.ink.opacity(0.62)
+}
+
 struct MusicHomeHeader<Search: View, HomeTab: View, Account: View>: View {
     let width: CGFloat
     @ViewBuilder let search: () -> Search
@@ -33,7 +39,9 @@ struct MusicHomeHeader<Search: View, HomeTab: View, Account: View>: View {
                     if !showsApps { overflowItem("ShellApps", icon: .apps) }
                     if !showsVPN { overflowItem("ShellVPN", icon: .shield) }
                 } label: {
-                    FluentIcon(symbol: .moreHorizontal, size: 16).frame(width: 30, height: 36)
+                    FluentIcon(symbol: .moreHorizontal, size: 16)
+                        .foregroundStyle(MizonPalette.ink)
+                        .frame(width: 30, height: 36)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -58,7 +66,7 @@ struct MusicHomeHeader<Search: View, HomeTab: View, Account: View>: View {
         let label = localization.string(key, table: "MusicHome")
         return HStack(spacing: 8) {
             FluentIcon(symbol: icon, size: 18, usesColor: true)
-            Text(label).font(localization.font(14)).foregroundStyle(MusicHomeStyle.secondary).lineLimit(1)
+            Text(label).font(localization.font(14)).foregroundStyle(MizonPalette.secondaryText).lineLimit(1)
         }
         .padding(.horizontal, 10).frame(height: 36)
         .accessibilityElement(children: .ignore)
@@ -81,27 +89,28 @@ struct MusicHomeSearch: View {
     @State private var loading = false
     @State private var failed = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private var localization = AuthLocalization()
 
     private var normalized: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var searchCyan: Color { musicColor("A1E8EE") }
 
     var body: some View {
         Button { showingSearch = true } label: {
             HStack(spacing: 6) {
                 if !compact {
                     Text(searchText("ShellSearchPlaceholder"))
-                        .font(localization.font(12)).foregroundStyle(MusicHomeStyle.secondary).lineLimit(1)
+                        .font(localization.font(12)).foregroundStyle(MizonPalette.secondaryText).lineLimit(1)
                     Spacer(minLength: 0)
                     #if os(macOS)
-                    Text("⌘ K").font(.system(size: 10)).foregroundStyle(MusicHomeStyle.tertiary)
+                    Text("⌘ K").font(.system(size: 10)).foregroundStyle(MusicHomeChrome.hint)
                     #endif
                 }
-                FluentIcon(symbol: .search, size: 16).foregroundStyle(searchCyan)
+                FluentIcon(symbol: .search, size: 16).foregroundStyle(MizonPalette.accent)
             }
             .padding(.horizontal, 10)
             .frame(height: 32)
-            .background(MusicHomeStyle.secondaryCard, in: .rect(cornerRadius: 9))
+            .background(MusicHomeChrome.controlFill, in: .rect(cornerRadius: 9))
+            .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }
         }
         .buttonStyle(.plain)
         .authHandPointer(enabled: true)
@@ -115,6 +124,9 @@ struct MusicHomeSearch: View {
             }
             .padding(10)
             .frame(width: min(420, max(240, viewportWidth - 42)))
+            .foregroundStyle(MizonPalette.ink)
+            .tint(MizonPalette.accent)
+            .background { MizonPalette.surface.opacity(reduceTransparency ? 1 : 0.70).ignoresSafeArea() }
             .presentationCompactAdaptation(.popover)
             .task {
                 focused = true
@@ -127,13 +139,14 @@ struct MusicHomeSearch: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 4) {
+        let placeholder = searchText("ShellSearchPlaceholder")
+        return HStack(spacing: 4) {
             FluentIcon(symbol: .mic, size: 16)
-                .foregroundStyle(MusicHomeStyle.secondary)
+                .foregroundStyle(MizonPalette.secondaryText)
                 .frame(width: 28, height: 28)
-                .background(.white.opacity(0.042), in: .rect(cornerRadius: 8))
+                .background(MusicHomeChrome.controlFill, in: .rect(cornerRadius: 8))
                 .accessibilityHidden(true)
-            TextField(searchText("ShellSearchPlaceholder"), text: $query)
+            TextField(placeholder, text: $query, prompt: Text(placeholder).foregroundStyle(MizonPalette.secondaryText))
                 .textFieldStyle(.plain)
                 .font(localization.font(12))
                 .focused($focused)
@@ -154,17 +167,17 @@ struct MusicHomeSearch: View {
                     showingSearch = false
                     return .handled
                 }
-            FluentIcon(symbol: .search, size: 16).foregroundStyle(searchCyan)
+            FluentIcon(symbol: .search, size: 16).foregroundStyle(MizonPalette.accent)
                 .frame(width: 28, height: 28)
-                .background(searchCyan.opacity(24.0 / 255), in: .rect(cornerRadius: 8))
+                .background(MizonPalette.accent.opacity(24.0 / 255), in: .rect(cornerRadius: 8))
                 .opacity(focused ? 1 : 0.65)
                 .accessibilityHidden(true)
         }
         .padding(.horizontal, 5).frame(height: 40)
-        .background(MusicHomeStyle.secondaryCard, in: .rect(cornerRadius: 12))
+        .background(MusicHomeChrome.controlFill, in: .rect(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(focused ? searchCyan.opacity(0.5) : MusicHomeStyle.stroke)
+                .strokeBorder(focused ? MizonPalette.accent.opacity(0.5) : MusicHomeChrome.hairline)
                 .allowsHitTesting(false)
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focused)
@@ -173,16 +186,16 @@ struct MusicHomeSearch: View {
     private var searchSuggestions: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
-                FluentIcon(symbol: .search, size: 16).foregroundStyle(searchCyan)
+                FluentIcon(symbol: .search, size: 16).foregroundStyle(MizonPalette.accent)
                 Text(searchText("ShellSearchResults")).font(localization.font(13, weight: .semibold))
                 Spacer()
                 if loading { ProgressView().controlSize(.small) }
             }
             .padding(8)
-            Rectangle().fill(searchCyan.opacity(0.35)).frame(height: 2)
+            Rectangle().fill(MizonPalette.accent.opacity(0.35)).frame(height: 2)
             if results.isEmpty && !loading {
                 Text(localization.string(failed ? "SearchFailed" : "SearchEmpty", table: "Search"))
-                    .font(localization.font(11)).foregroundStyle(MusicHomeStyle.secondary)
+                    .font(localization.font(11)).foregroundStyle(MizonPalette.secondaryText)
                     .frame(maxWidth: .infinity, minHeight: 56)
             } else {
                 ScrollViewReader { reader in
@@ -192,17 +205,17 @@ struct MusicHomeSearch: View {
                                 Button { choose(result) } label: {
                                     HStack(spacing: 9) {
                                         FluentIcon(symbol: result.kind == .music ? .musicNote1 : .person, size: 16)
-                                            .foregroundStyle(searchCyan)
+                                            .foregroundStyle(MizonPalette.accent)
                                             .frame(width: 32, height: 32)
-                                            .background(searchCyan.opacity(0.10), in: .rect(cornerRadius: 7))
+                                            .background(MizonPalette.accent.opacity(0.10), in: .rect(cornerRadius: 7))
                                         Text(localization.isPersian ? result.persianTitle ?? result.title : result.title)
                                             .font(localization.font(12)).lineLimit(1)
                                         Spacer()
-                                        FluentIcon(symbol: .arrowUpRight, size: 11).foregroundStyle(MusicHomeStyle.secondary)
+                                        FluentIcon(symbol: .arrowUpRight, size: 11).foregroundStyle(MizonPalette.secondaryText)
                                     }
                                     .padding(.horizontal, 6).padding(.vertical, 4)
                                 }
-                                .buttonStyle(MusicHomeButtonStyle(fill: selected == result.id ? searchCyan.opacity(0.13) : .clear))
+                                .buttonStyle(MusicHomeButtonStyle(fill: selected == result.id ? MizonPalette.accent.opacity(0.13) : .clear))
                                 .id(result.id)
                             }
                         }
@@ -216,9 +229,9 @@ struct MusicHomeSearch: View {
             }
         }
         .padding(8)
+        .background(MizonPalette.surface.opacity(reduceTransparency ? 1 : 0.58), in: .rect(cornerRadius: 20))
         .background(.regularMaterial, in: .rect(cornerRadius: 20))
-        .background(musicColor("1F2230").opacity(0.92), in: .rect(cornerRadius: 20))
-        .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.12)).allowsHitTesting(false) }
+        .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }
         .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
     }
 

@@ -109,6 +109,7 @@ struct MusicHomePage: View {
     @State private var headerViewport = CGSize(width: 960, height: 700)
     #else
     @State private var phoneHeaderHasScrolled = false
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     #endif
     @State private var showingSearch = false
     @State private var showingMoodPicker = false
@@ -177,9 +178,11 @@ struct MusicHomePage: View {
                 let topBar = AnyView(header(viewport: geometry.size, width: geometry.size.width))
                 if usesPhoneHeader {
                     feed.safeAreaBar(edge: .top, spacing: 0) {
-                        topBar.background {
-                            MusicHomePhoneHeaderGlass(isRevealed: phoneHeaderHasScrolled)
-                        }
+                        topBar
+                            .padding(.top, verticalSizeClass == .compact ? 8 : 0)
+                            .background {
+                                MusicHomePhoneHeaderGlass(isRevealed: phoneHeaderHasScrolled)
+                            }
                     }
                     .scrollEdgeEffectHidden(true, for: .top)
                 } else {
@@ -296,7 +299,9 @@ struct MusicHomePage: View {
     }
 
     private func header(viewport: CGSize, width: CGFloat) -> some View {
-        MusicHomeHeader(width: width) {
+        let accountShape = UnevenRoundedRectangle(
+            topLeadingRadius: 8, bottomLeadingRadius: 8, bottomTrailingRadius: 16, topTrailingRadius: 16)
+        return MusicHomeHeader(width: width) {
             MusicHomeSearch(model: model, viewportWidth: viewport.width, compact: width < 440,
                             focusRequest: $searchFocusRequest, showingSearch: $showingSearch) { result in
                 destination = result.kind == .music ? .track(result.publicID) : .client(result.publicID)
@@ -313,11 +318,13 @@ struct MusicHomePage: View {
                 }
                 .padding(.horizontal, 10)
                 .frame(height: 36)
+                .foregroundStyle(MizonPalette.ink)
                 .overlay(alignment: .bottom) {
-                    Capsule().fill(Color.accentColor).frame(width: 17, height: 3).offset(y: -2)
+                    Capsule().fill(MizonPalette.accent).frame(width: 17, height: 3).offset(y: -2)
                 }
             }
-            .buttonStyle(MusicHomeButtonStyle(corner: 6))
+            .buttonStyle(MusicHomeButtonStyle(fill: MizonPalette.accent.opacity(0.10),
+                                             stroke: MizonPalette.accent.opacity(0.20), corner: 6))
             .accessibilityLabel(text("ShellMusic"))
             .accessibilityAddTraits(.isSelected)
             .accessibilityIdentifier("music.home.tab")
@@ -330,7 +337,7 @@ struct MusicHomePage: View {
                     .focused($controlFocus, equals: .mood)
                     .overlay {
                         if controlFocus == .mood {
-                            RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2)
+                            RoundedRectangle(cornerRadius: 8).strokeBorder(MizonPalette.accent, lineWidth: 2)
                                 .allowsHitTesting(false)
                         }
                     }
@@ -349,8 +356,8 @@ struct MusicHomePage: View {
                 .accessibilityLabel(displayName ?? text("Profile"))
                 .accessibilityIdentifier("music.home.profile")
             }
-            .background(.white.opacity(15.0 / 255), in: UnevenRoundedRectangle(
-                topLeadingRadius: 8, bottomLeadingRadius: 8, bottomTrailingRadius: 16, topTrailingRadius: 16))
+            .background(MusicHomeChrome.controlFill, in: accountShape)
+            .overlay { accountShape.strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }
         }
     }
 
@@ -362,7 +369,7 @@ struct MusicHomePage: View {
             .focused($controlFocus, equals: .nearby)
             .overlay {
                 if controlFocus == .nearby {
-                    RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2)
+                    RoundedRectangle(cornerRadius: 8).strokeBorder(MizonPalette.accent, lineWidth: 2)
                         .allowsHitTesting(false)
                 }
             }
@@ -413,14 +420,14 @@ struct MusicHomePage: View {
                                                       samples: discoveryRecent, compact: true)).id(Action.recent)
                         if !medium { AnyView(windowsCommunityRail(width: feedWidth)) }
                         if !wide { AnyView(windowsEditorialRail(width: feedWidth)) }
-                        Rectangle().fill(MusicHomeStyle.stroke).frame(height: 1)
+                        Rectangle().fill(MusicHomeChrome.hairline).frame(height: 1)
                         HStack(alignment: .top, spacing: 12) {
                             Text("MADE FOR YOUR MOMENTS").font(localization.font(9)).tracking(1.44)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             Text(text("DemoFooter")).font(localization.font(9))
                                 .frame(maxWidth: 220, alignment: .trailing)
                         }
-                        .foregroundStyle(MusicHomeStyle.secondary)
+                        .foregroundStyle(MizonPalette.secondaryText)
                     }
                     .frame(width: feedWidth, alignment: .leading)
                     .padding(.bottom, 48)
@@ -1344,8 +1351,10 @@ struct MusicHomePage: View {
     }
 
     private var transport: some View {
-        HStack(spacing: 14) {
+        let shape = RoundedRectangle(cornerRadius: 14)
+        return HStack(spacing: 14) {
             Image(systemName: "music.note")
+                .foregroundStyle(MizonPalette.accent)
             Text(model.playbackTitle).font(localization.font(13, weight: .semibold)).lineLimit(1)
             Spacer()
             if model.requestingPlayback { ProgressView().controlSize(.small) }
@@ -1353,10 +1362,14 @@ struct MusicHomePage: View {
                 control(.transport) { Image(systemName: model.isPlaying ? "pause.fill" : "play.fill") }
                     .accessibilityLabel(text(model.isPlaying ? "PausePresentation" : "ResumePresentation"))
                     .buttonStyle(.glass)
+                    .foregroundStyle(MizonPalette.accent)
             }
         }
+        .foregroundStyle(MizonPalette.ink)
+        .tint(MizonPalette.accent)
         .padding(12)
-        .glassEffect(.regular, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular.tint(MizonPalette.surface.opacity(0.55)), in: shape)
+        .overlay { shape.strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
     }
@@ -1393,14 +1406,15 @@ struct MusicHomePage: View {
                     case .library: widget("LibraryError")
                     case .activity: widget("FollowingError")
                     }
-                    Text(message).foregroundStyle(.secondary)
+                    Text(message).foregroundStyle(MizonPalette.secondaryText)
                     control(.refresh(section)) { Text(text("Retry")) }.buttonStyle(.glass)
                 } else {
-                    Text(text(empty)).foregroundStyle(.secondary)
+                    Text(text(empty)).foregroundStyle(MizonPalette.secondaryText)
                 }
             }
         }
         .font(localization.font(12))
+        .tint(MizonPalette.accent)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1413,7 +1427,8 @@ struct MusicHomePage: View {
             .authHandPointer(enabled: true)
             .overlay {
                 if controlFocus == action {
-                    RoundedRectangle(cornerRadius: 9).strokeBorder(Color.accentColor, lineWidth: 2).allowsHitTesting(false)
+                    let focusColor = action == .home || action == .transport ? MizonPalette.accent : Color.accentColor
+                    RoundedRectangle(cornerRadius: 9).strokeBorder(focusColor, lineWidth: 2).allowsHitTesting(false)
                 }
             }
     }
