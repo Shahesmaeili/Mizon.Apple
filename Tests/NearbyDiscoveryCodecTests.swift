@@ -26,6 +26,21 @@ struct NearbyDiscoveryCodecTests {
         #expect(publicRecord.getEntry(for: "display") == nil)
     }
 
+    @Test func publishesTheMediaPinAndKeepsPresenceWhenAnOptionalPinIsMalformed() throws {
+        let pin = String(repeating: "a1", count: 32)
+        let presence = NearbyPresenceAdvertisement(id: id, platform: .macOS, appVersion: "1",
+                                                  deviceName: "Fixture Mac", mediaCertificateSHA256: pin)
+        let name = NearbyAdvertisementCodec.serviceName(for: id)
+        let record = try #require(NearbyAdvertisementCodec.encode(presence))
+        #expect(NearbyAdvertisementCodec.decode(NWTXTRecord(record).data, serviceName: name) == presence)
+
+        let broken = packet(["v=1", "id=052a451b-cbe1-455d-8007-4f67d4f9bc36", "platform=macos", "app=1",
+                             "device=Fixture Mac", "media=1", "cert=\(pin.uppercased())"])
+        let recovered = try #require(NearbyAdvertisementCodec.decode(broken, serviceName: name))
+        #expect(recovered.id == id)
+        #expect(recovered.mediaCertificateSHA256 == nil)
+    }
+
     @Test func rejectsMalformedAndUnrecognizedAnnouncements() {
         let prefix = ["v=1", "id=\(id.uuidString.lowercased())", "platform=windows", "app=2.1"]
         let serviceName = NearbyAdvertisementCodec.serviceName(for: id)

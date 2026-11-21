@@ -89,7 +89,7 @@ struct MusicHomePage: View {
 
     init(session: AuthSession, service: MusicHomeService, displayName: String?, nearby: NearbyDiscoveryModel, avatar: CGImage?,
          profileTransition: Namespace.ID, initialMood: ClientMoodItemResponse? = nil, signOut: @escaping () -> Void) {
-        _model = State(initialValue: MusicHomeViewModel(session: session, service: service))
+        _model = State(initialValue: MusicHomeViewModel(session: session, service: service, peerNetwork: nearby.peerNetwork))
         self.displayName = displayName
         self.nearby = nearby
         self.avatar = avatar
@@ -212,7 +212,7 @@ struct MusicHomePage: View {
             defer { if !Task.isCancelled { exportRequest = nil } }
             do {
                 let url = try await model.artwork.file(item.mediaPublicId, session: model.session,
-                                                       maximumBytes: 128 * 1024 * 1024)
+                                                       maximumBytes: PeerMediaTransfer.maximumFileSize)
                 try Task.checkCancellation()
                 exportFile = MusicFeatureExport(url: url)
                 exportPresented = true
