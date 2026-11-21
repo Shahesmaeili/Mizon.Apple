@@ -89,6 +89,9 @@
 				"WATCHOS_DEPLOYMENT_TARGET" = "26.0";
 				"SDKROOT" = "auto";
 				"SUPPORTED_PLATFORMS" = "macosx iphoneos iphonesimulator";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "$(inherited) @executable_path/../Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=iphoneos*]" = "$(inherited) @executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(inherited) @executable_path/Frameworks";
 				"TARGETED_DEVICE_FAMILY" = "1,2";
 				"PRODUCT_BUNDLE_IDENTIFIER" = "com.shahesmaeili.Mizon.Apple";
 				"SUPPORTS_MACCATALYST" = "NO";
@@ -128,6 +131,9 @@
 				"WATCHOS_DEPLOYMENT_TARGET" = "26.0";
 				"SDKROOT" = "auto";
 				"SUPPORTED_PLATFORMS" = "macosx iphoneos iphonesimulator";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "$(inherited) @executable_path/../Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=iphoneos*]" = "$(inherited) @executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(inherited) @executable_path/Frameworks";
 				"TARGETED_DEVICE_FAMILY" = "1,2";
 				"PRODUCT_BUNDLE_IDENTIFIER" = "com.shahesmaeili.Mizon.Apple";
 				"SUPPORTS_MACCATALYST" = "NO";
