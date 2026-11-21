@@ -26,13 +26,15 @@ final class NearbyDiscoveryModel {
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var generation: UInt = 0
 
+    var peerNetwork: NearbyDiscoveryService? { service as? NearbyDiscoveryService }
+
     init(service: any NearbyDiscovering = NearbyDiscoveryService(), defaults: UserDefaults = .standard) {
         self.service = service
         self.defaults = defaults
         enabled = defaults.object(forKey: Self.preferenceKey) as? Bool ?? true
     }
 
-    func discover(inForeground: Bool, publicUsername: String?, displayName: String?) async {
+    func discover(inForeground: Bool, publicUsername: String?, displayName: String?, mediaAccess: NearbyMediaAccess? = nil) async {
         guard !Task.isCancelled else { return }
         generation &+= 1
         let currentGeneration = generation
@@ -40,7 +42,12 @@ final class NearbyDiscoveryModel {
         status = enabled && inForeground ? .searching : .off
         guard enabled, inForeground else { return }
         let identity = Self.advertisement(publicUsername: publicUsername, displayName: displayName)
-        let events = await service.start(advertising: identity)
+        let events: AsyncStream<NearbyDiscoveryEvent>
+        if let peerNetwork, let mediaAccess {
+            events = await peerNetwork.start(advertising: identity, mediaAccess: mediaAccess)
+        } else {
+            events = await service.start(advertising: identity)
+        }
         for await event in events {
             guard !Task.isCancelled, generation == currentGeneration else { return }
             switch event {

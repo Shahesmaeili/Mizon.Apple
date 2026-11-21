@@ -29,10 +29,10 @@ public final class MusicHomeViewModel {
     @ObservationIgnored private var sectionRequests: [Section: UUID] = [:]
     @ObservationIgnored private var playbackRequest: Task<Void, Never>?
 
-    public init(session: AuthSession, service: MusicHomeService) {
+    public init(session: AuthSession, service: MusicHomeService, peerNetwork: NearbyDiscoveryService? = nil) {
         self.session = session
         self.service = service
-        artwork = MusicArtworkStore(service: service, session: session)
+        artwork = MusicArtworkStore(service: service, session: session, peerNetwork: peerNetwork)
     }
 
     public func moodAnimationURL(_ mediaID: UUID) async throws -> URL {
@@ -154,7 +154,7 @@ public final class MusicHomeViewModel {
             defer { if !Task.isCancelled { requestingPlayback = false } }
             do {
                 let file = try await service.trackFile(id, session: session)
-                let url = try MusicHomeService.storageURL(file.storagePath)
+                let url = try await artwork.playableTrack(file, session: session)
                 try Task.checkCancellation()
                 #if os(iOS)
                 let audioSession = AVAudioSession.sharedInstance()

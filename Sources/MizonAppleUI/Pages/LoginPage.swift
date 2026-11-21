@@ -63,8 +63,15 @@ public struct MizonRootView: View {
             #endif
             #if os(macOS) || os(iOS)
             .task(id: discoverableIdentity) { [identity = discoverableIdentity] in
+                let mediaAccess: NearbyMediaAccess?
+                if let identity, let session = model.session, identity.sessionID == session.sessionPublicId {
+                    mediaAccess = model.musicHomeService.nearbyMediaAccess(session: session)
+                } else {
+                    mediaAccess = nil
+                }
                 await nearby.discover(inForeground: identity != nil,
-                                      publicUsername: identity?.username, displayName: identity?.displayName)
+                                      publicUsername: identity?.username, displayName: identity?.displayName,
+                                      mediaAccess: mediaAccess)
             }
             #endif
             #if os(macOS)

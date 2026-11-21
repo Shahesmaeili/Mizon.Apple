@@ -16,15 +16,22 @@ public struct NearbyPresenceAdvertisement: Equatable, Sendable {
     public let deviceName: String
     public let account: String?
     public let displayName: String?
+    public let mediaCertificateSHA256: String?
 
     public init(id: UUID, platform: NearbyPeerPlatform, appVersion: String, deviceName: String,
-                account: String? = nil, displayName: String? = nil) {
+                account: String? = nil, displayName: String? = nil, mediaCertificateSHA256: String? = nil) {
         self.id = id
         self.platform = platform
         self.appVersion = appVersion
         self.deviceName = deviceName
         self.account = account
         self.displayName = displayName
+        self.mediaCertificateSHA256 = mediaCertificateSHA256
+    }
+
+    func advertisingMedia(certificateSHA256: String?) -> Self {
+        Self(id: id, platform: platform, appVersion: appVersion, deviceName: deviceName, account: account,
+             displayName: displayName, mediaCertificateSHA256: certificateSHA256)
     }
 
     public static func local(id: UUID, platform: NearbyPeerPlatform, appVersion: String, deviceName: String,
@@ -66,7 +73,7 @@ enum NearbyAdvertisementCodec {
     static let maximumDeviceNameBytes = 96
     static let maximumAccountBytes = 64
     static let maximumDisplayNameBytes = 96
-    private static let maximumRecordBytes = 400
+    private static let maximumRecordBytes = 480
     private static let emptyID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
     static func serviceName(for id: UUID) -> String {
@@ -82,6 +89,10 @@ enum NearbyAdvertisementCodec {
         ]
         if let account = advertisement.account { fields.append(("account", account)) }
         if let displayName = advertisement.displayName { fields.append(("display", displayName)) }
+        if let pin = advertisement.mediaCertificateSHA256, isFingerprint(pin) {
+            fields.append(("media", "1"))
+            fields.append(("cert", pin))
+        }
 
         var record = Data()
         for (key, value) in fields {
@@ -105,7 +116,7 @@ enum NearbyAdvertisementCodec {
                   let equal = entry.firstIndex(of: "=") else { return nil }
             let key = String(entry[..<equal]).lowercased()
             switch key {
-            case "v", "id", "platform", "app", "device", "account", "display": break
+            case "v", "id", "platform", "app", "device", "account", "display", "media", "cert": break
             default: return nil
             }
             guard fields[key] == nil else { return nil }
@@ -118,9 +129,15 @@ enum NearbyAdvertisementCodec {
               serviceName.lowercased() == Self.serviceName(for: id).lowercased(),
               let platform = fields["platform"].flatMap(NearbyPeerPlatform.init(rawValue:)),
               let appVersion = fields["app"], let deviceName = fields["device"] else { return nil }
+        let fingerprint = fields["cert"].flatMap { fields["media"] == "1" && isFingerprint($0) ? $0 : nil }
         let advertisement = NearbyPresenceAdvertisement(id: id, platform: platform, appVersion: appVersion,
-            deviceName: deviceName, account: fields["account"], displayName: fields["display"])
+            deviceName: deviceName, account: fields["account"], displayName: fields["display"],
+            mediaCertificateSHA256: fingerprint)
         return isValid(advertisement) ? advertisement : nil
+    }
+
+    private static func isFingerprint(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 
     private static func isValid(_ advertisement: NearbyPresenceAdvertisement) -> Bool {

@@ -2,7 +2,7 @@
 "Subtitle" = "Mizon on your local network";
 "Close" = "Close";
 "Discoverability" = "Find devices and be visible";
-"Disclosure" = "Discovery is on by default. When on, Mizon looks for nearby devices on this local network. Other Mizon users here can see your device name, platform, app version, public profile name and username.";
+"Disclosure" = "Discovery is on by default. Nearby Mizon users can see your device and public profile details and download verified pieces of public media approved by the server. Turn discovery off to stop sharing.";
 "DiscoveredDevices" = "Discovered devices";
 "Off" = "Discovery is off";
 "OffDetail" = "With discovery off, Mizon stops looking for nearby devices and hides this device from their Nearby Devices list.";
