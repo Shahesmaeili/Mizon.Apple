@@ -147,6 +147,8 @@ struct MusicHomePage: View {
                 }
                 #else
                 .toolbar(.hidden, for: .navigationBar)
+                .scrollContentBackground(.hidden)
+                .containerBackground(for: .navigation) { WindowGlass() }
                 #endif
                 .navigationDestination(item: $destination) { route in
                     MusicHomeDestinationView(route: route, model: model)
