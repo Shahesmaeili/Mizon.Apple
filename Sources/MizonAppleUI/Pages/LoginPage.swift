@@ -59,6 +59,7 @@ public struct MizonRootView: View {
         #else
         if let session = model.session, let home, home.sessionID == session.sessionPublicId {
             MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
+                          publicUsername: home.account?.publicUsername,
                           avatar: home.avatar, profileTransition: profileTransition, initialMood: home.account?.mood) {
                 Task {
                     await model.signOut()

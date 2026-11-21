@@ -4,5 +4,11 @@
 <dict>
     <key>LSMultipleInstancesProhibited</key>
     <true/>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_mizon-peer._tcp</string>
+    </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Mizon uses your local network to connect to your configured server and, when Nearby Devices is on, to find and be found by other Mizon devices.</string>
 </dict>
 </plist>

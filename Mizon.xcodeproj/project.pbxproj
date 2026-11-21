@@ -57,10 +57,34 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "20E338624CEE29D0EFFEAD85";
 		};
+		"2B9FC89C1326484D834D3D9A" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text.plist.strings";
+			"name" = "en";
+			"path" = "App/en.lproj/InfoPlist.strings";
+			"sourceTree" = "<group>";
+		};
+		"F370B582C57A422F8E0A9E12" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text.plist.strings";
+			"name" = "fa";
+			"path" = "App/fa.lproj/InfoPlist.strings";
+			"sourceTree" = "<group>";
+		};
+		"576A36CBE2B349D9A16426E5" = {
+			"isa" = "PBXVariantGroup";
+			"children" = ("2B9FC89C1326484D834D3D9A", "F370B582C57A422F8E0A9E12");
+			"name" = "InfoPlist.strings";
+			"sourceTree" = "<group>";
+		};
+		"FBDD8846BF9044CB91AE2675" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "576A36CBE2B349D9A16426E5";
+		};
 		"72070141A789D777B48D1B68" = {
 			"isa" = "PBXResourcesBuildPhase";
 			"buildActionMask" = "2147483647";
-			"files" = ("70F3A5EBA2BB4B66BA827B2C");
+			"files" = ("70F3A5EBA2BB4B66BA827B2C", "FBDD8846BF9044CB91AE2675");
 			"runOnlyForDeploymentPostprocessing" = "0";
 		};
 		"A7A535A56CCC774B2129850E" = {
@@ -97,14 +121,15 @@
 				"SUPPORTS_MACCATALYST" = "NO";
 				"SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD" = "NO";
 				"INFOPLIST_KEY_LSApplicationCategoryType" = "public.app-category.music";
+				"INFOPLIST_FILE" = "App/iOSInfo.plist";
 				"INFOPLIST_FILE[sdk=macosx*]" = "App/MacInfo.plist";
-				"INFOPLIST_KEY_NSLocalNetworkUsageDescription" = "Mizon connects to the Mizon server you configure on your local network.";
 				"INFOPLIST_KEY_UILaunchScreen_Generation" = "YES";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation" = "YES";
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents" = "YES";
 				"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad" = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone" = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				"ENABLE_APP_SANDBOX" = "YES";
+				"ENABLE_INCOMING_NETWORK_CONNECTIONS[sdk=macosx*]" = "YES";
 				"ENABLE_OUTGOING_NETWORK_CONNECTIONS" = "YES";
 				"ENABLE_HARDENED_RUNTIME" = "YES";
 				"ONLY_ACTIVE_ARCH" = "YES";
@@ -139,14 +164,15 @@
 				"SUPPORTS_MACCATALYST" = "NO";
 				"SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD" = "NO";
 				"INFOPLIST_KEY_LSApplicationCategoryType" = "public.app-category.music";
+				"INFOPLIST_FILE" = "App/iOSInfo.plist";
 				"INFOPLIST_FILE[sdk=macosx*]" = "App/MacInfo.plist";
-				"INFOPLIST_KEY_NSLocalNetworkUsageDescription" = "Mizon connects to the Mizon server you configure on your local network.";
 				"INFOPLIST_KEY_UILaunchScreen_Generation" = "YES";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation" = "YES";
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents" = "YES";
 				"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad" = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				"INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone" = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				"ENABLE_APP_SANDBOX" = "YES";
+				"ENABLE_INCOMING_NETWORK_CONNECTIONS[sdk=macosx*]" = "YES";
 				"ENABLE_OUTGOING_NETWORK_CONNECTIONS" = "YES";
 				"ENABLE_HARDENED_RUNTIME" = "YES";
 				"ONLY_ACTIVE_ARCH" = "NO";
@@ -311,7 +337,7 @@
 		};
 		"870B3294C0CBD48AF6BBCC1B" = {
 			"isa" = "PBXGroup";
-			"children" = ("3054F05EEC88C1D09FADBDBF", "3C29716A5B261B1E0223E73D", "20E338624CEE29D0EFFEAD85", "FBDC4F23F93125BBEEAE800C");
+			"children" = ("3054F05EEC88C1D09FADBDBF", "3C29716A5B261B1E0223E73D", "20E338624CEE29D0EFFEAD85", "576A36CBE2B349D9A16426E5", "FBDC4F23F93125BBEEAE800C");
 			"sourceTree" = "<group>";
 		};
 		"89E1FD6268CC0F221A2BE178" = {

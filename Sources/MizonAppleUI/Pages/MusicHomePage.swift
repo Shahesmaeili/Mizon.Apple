@@ -19,7 +19,7 @@ enum MusicDestination: Hashable, Identifiable {
 
 struct MusicHomePage: View {
     enum Action: Hashable {
-        case search, home, mood, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
+        case search, home, nearby, mood, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
         case featureControls, featureThumbnail(Int), retryFeatureMedia
         case allGenres, genre(UUID), story(UUID), profile(UUID), follow(UUID)
         case playlist(UUID), library, activity(String), moreActivity, recent, news(Int), transport
@@ -72,21 +72,26 @@ struct MusicHomePage: View {
     @State private var showingSearch = false
     @State private var showingMoodPicker = false
     @State private var moodPress: UInt = 0
+    @State private var nearby = NearbyDiscoveryModel()
+    @State private var showingNearby = false
+    @State private var nearbyPress: UInt = 0
     @FocusState private var controlFocus: Action?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     var localization = AuthLocalization()
 
     let displayName: String?
+    let publicUsername: String?
     let avatar: CGImage?
     let profileTransition: Namespace.ID
     let initialMood: ClientMoodItemResponse?
     let signOut: () -> Void
 
-    init(session: AuthSession, service: MusicHomeService, displayName: String?, avatar: CGImage?,
+    init(session: AuthSession, service: MusicHomeService, displayName: String?, publicUsername: String? = nil, avatar: CGImage?,
          profileTransition: Namespace.ID, initialMood: ClientMoodItemResponse? = nil, signOut: @escaping () -> Void) {
         _model = State(initialValue: MusicHomeViewModel(session: session, service: service))
         self.displayName = displayName
+        self.publicUsername = publicUsername
         self.avatar = avatar
         self.profileTransition = profileTransition
         self.initialMood = initialMood
@@ -152,6 +157,10 @@ struct MusicHomePage: View {
             if model.playingTrack != nil || model.requestingPlayback { transport }
         }
         .task { await model.refresh() }
+        .task(id: nearby.enabled && scenePhase != .background) {
+            await nearby.discover(inForeground: scenePhase != .background,
+                                  publicUsername: publicUsername, displayName: displayName)
+        }
         .task(id: scenePhase) {
             if scenePhase == .active { await observeGamepad() }
         }
@@ -249,6 +258,7 @@ struct MusicHomePage: View {
             .accessibilityIdentifier("music.home.tab")
         } account: {
             HStack(spacing: 0) {
+                nearbyControl(viewport: viewport)
                 MusicHomeMoodButton(model: model, initialMood: initialMood, viewport: viewport,
                                     controllerPress: moodPress) { showingMoodPicker = $0 }
                     .focusable()
@@ -277,6 +287,20 @@ struct MusicHomePage: View {
             .background(.white.opacity(15.0 / 255), in: UnevenRoundedRectangle(
                 topLeadingRadius: 8, bottomLeadingRadius: 8, bottomTrailingRadius: 16, topTrailingRadius: 16))
         }
+    }
+
+    private func nearbyControl(viewport: CGSize) -> some View {
+        @Bindable var model = nearby
+        return NearbyDevicesControl(peers: model.peers, enabled: $model.enabled, status: model.status,
+                                    viewport: viewport, controllerPress: nearbyPress) { showingNearby = $0 }
+            .focusable()
+            .focused($controlFocus, equals: .nearby)
+            .overlay {
+                if controlFocus == .nearby {
+                    RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2)
+                        .allowsHitTesting(false)
+                }
+            }
     }
 
     private func layout(width: CGFloat) -> some View {
@@ -324,7 +348,7 @@ struct MusicHomePage: View {
                 .frame(width: feedWidth)
                 .scrollIndicators(.hidden)
                 .onChange(of: controlFocus) { _, target in
-                    if let target, target != .search, target != .home, target != .mood, target != .recent {
+                    if let target, target != .search, target != .home, target != .nearby, target != .mood, target != .recent {
                         reader.scrollTo(target, anchor: .center)
                     }
                 }
@@ -1307,6 +1331,7 @@ struct MusicHomePage: View {
         switch action {
         case .search: searchFocusRequest += 1
         case .home: scrollHomeRequest += 1
+        case .nearby: nearbyPress &+= 1
         case .mood: moodPress &+= 1
         case .featureControls: showingPreviewControls = true
         case .featureThumbnail(let index): selectFeature(index)
@@ -1389,7 +1414,7 @@ struct MusicHomePage: View {
     }
 
     private var controllerTargets: [Action] {
-        var targets: [Action] = [.home, .search, .mood]
+        var targets: [Action] = [.home, .search, .nearby, .mood]
         if let item = currentFeature {
             targets.append(.featureControls)
             if model.features.count > 1 {
@@ -1432,7 +1457,7 @@ struct MusicHomePage: View {
             if let pad = GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad,
                destination == nil, !showingLibrary, !showingAllMusicActivity, article == nil, !showingStoryPreview,
                !copiedFeatureLink, !model.actionFailed, !showingPreviewControls, !fullWindowVideo, !exportPresented,
-               !showingMoodPicker, !showingSearch {
+               !showingNearby, !showingMoodPicker, !showingSearch {
                 let horizontal = pad.dpad.xAxis.value
                 let vertical = pad.dpad.yAxis.value
                 let control = pad.buttonA.isPressed ? 1 : pad.buttonB.isPressed ? 2
