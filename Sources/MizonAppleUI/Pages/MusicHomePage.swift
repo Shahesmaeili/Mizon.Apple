@@ -43,7 +43,7 @@ private struct MusicHomePhoneHeaderGlass: View {
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isRevealed)
             }
         }
-        .ignoresSafeArea(edges: .top)
+        .ignoresSafeArea(.container, edges: [.top, .horizontal])
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
@@ -201,7 +201,13 @@ struct MusicHomePage: View {
                 #else
                 .toolbar(.hidden, for: .navigationBar)
                 .scrollContentBackground(.hidden)
-                .containerBackground(for: .navigation) { WindowGlass() }
+                .containerBackground(for: .navigation) {
+                    if usesPhoneHeader {
+                        WindowGlass().ignoresSafeArea(.container, edges: .horizontal)
+                    } else {
+                        WindowGlass()
+                    }
+                }
                 #endif
                 .navigationDestination(item: $destination) { route in
                     MusicHomeDestinationView(route: route, model: model)
