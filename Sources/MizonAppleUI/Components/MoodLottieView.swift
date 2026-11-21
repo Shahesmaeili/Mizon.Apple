@@ -8,11 +8,28 @@ import AppKit
 import UIKit
 #endif
 
+enum MoodLottiePlayback: Equatable {
+    case loop
+    case once(MoodLottieEffectPlayback)
+}
+
+final class MoodLottieEffectPlayback: Equatable {
+    @MainActor private var hasStarted = false
+
+    // The tap owns this state so rebuilding a native view cannot replay its effect.
+    @MainActor func begin() -> Bool {
+        guard !hasStarted else { return false }
+        hasStarted = true
+        return true
+    }
+
+    static func == (lhs: MoodLottieEffectPlayback, rhs: MoodLottieEffectPlayback) -> Bool { lhs === rhs }
+}
+
 struct MoodLottieView: View {
     let file: URL
-    let looping: Bool
+    let playback: MoodLottiePlayback
     let playing: Bool
-    var restartID: UUID? = nil
     var onReady: (() -> Void)? = nil
     var onCompletion: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -26,8 +43,8 @@ struct MoodLottieView: View {
     var body: some View {
         Group {
             if let loaded, loaded.file == file {
-                MoodLottieSurface(animation: loaded.animation, looping: looping, playing: playing && !reduceMotion,
-                                  restartID: restartID, completion: onCompletion)
+                MoodLottieSurface(animation: loaded.animation, playback: playback, playing: playing && !reduceMotion,
+                                  completion: onCompletion)
             } else {
                 Color.clear
             }
@@ -44,7 +61,7 @@ struct MoodLottieView: View {
                 if !Task.isCancelled {
                     loaded = nil
                     // A failed one-shot must clear its overlay just as a completed effect does.
-                    if !looping { onCompletion?() }
+                    if case .once = playback { onCompletion?() }
                 }
             }
         }
@@ -77,9 +94,8 @@ private typealias MoodNativeRepresentable = UIViewRepresentable
 
 private struct MoodLottieSurface: MoodNativeRepresentable {
     let animation: LottieAnimation
-    let looping: Bool
+    let playback: MoodLottiePlayback
     let playing: Bool
-    let restartID: UUID?
     let completion: (() -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -87,7 +103,7 @@ private struct MoodLottieSurface: MoodNativeRepresentable {
     private func make() -> LottieAnimationView {
         let view = LottieAnimationView()
         view.contentMode = .scaleAspectFit
-        view.backgroundBehavior = .pauseAndRestore
+        view.backgroundBehavior = playback == .loop ? .pauseAndRestore : .stop
         view.maskAnimationToBounds = true
         return view
     }
@@ -105,36 +121,41 @@ private struct MoodLottieSurface: MoodNativeRepresentable {
     @MainActor
     final class Coordinator {
         private var playing = false
-        private var restartID: UUID?
-        private var isLooping = false
-        private var completed = false
+        private var playback: MoodLottiePlayback?
+        private var finishEffect: (() -> Void)?
         private var revision = 0
 
         func update(_ view: LottieAnimationView, from desired: MoodLottieSurface) {
-            let changed = view.animation !== desired.animation || restartID != desired.restartID || isLooping != desired.looping
+            let changed = view.animation !== desired.animation || playback != desired.playback
             if changed {
                 revision += 1
+                finishEffect = nil
+                view.isHidden = false
                 if view.animation !== desired.animation { view.animation = desired.animation }
                 view.currentProgress = 0
-                completed = false
             }
-            restartID = desired.restartID
-            isLooping = desired.looping
+            playback = desired.playback
             guard changed || playing != desired.playing else { return }
             playing = desired.playing
 
             if !playing {
                 view.pause()
-            } else if !completed {
-                if desired.looping {
-                    view.play(fromProgress: 0, toProgress: 1, loopMode: .loop)
+                return
+            }
+
+            switch desired.playback {
+            case .loop:
+                view.play(fromProgress: 0, toProgress: 1, loopMode: .loop)
+            case .once(let effect):
+                guard effect.begin() else {
+                    view.isHidden = true
                     return
                 }
+                finishEffect = desired.completion
                 let playbackRevision = revision
-                view.play(toProgress: 1, loopMode: .playOnce) { [weak self] finished in
-                    guard let self, finished, self.revision == playbackRevision else { return }
-                    self.completed = true
-                    desired.completion?()
+                view.play(toProgress: 1, loopMode: .playOnce) { [weak self] _ in
+                    guard let self, self.revision == playbackRevision else { return }
+                    self.completeEffect()
                 }
             }
         }
@@ -142,6 +163,13 @@ private struct MoodLottieSurface: MoodNativeRepresentable {
         func clear(_ view: LottieAnimationView) {
             revision += 1
             view.stop()
+            completeEffect()
+        }
+
+        private func completeEffect() {
+            guard let finishEffect else { return }
+            self.finishEffect = nil
+            Task { @MainActor in finishEffect() }
         }
     }
 }

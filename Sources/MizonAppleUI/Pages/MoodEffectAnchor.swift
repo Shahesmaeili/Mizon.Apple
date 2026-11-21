@@ -9,6 +9,7 @@ import UIKit
 struct MoodEffectPresentation: Equatable {
     let id: UUID
     let file: URL
+    let playback = MoodLottieEffectPlayback()
 }
 
 private let moodEffectSize: CGFloat = 208
@@ -18,7 +19,7 @@ private struct MoodEffectSurface: View {
     let onCompletion: (UUID) -> Void
 
     var body: some View {
-        MoodLottieView(file: effect.file, looping: false, playing: true, restartID: effect.id,
+        MoodLottieView(file: effect.file, playback: .once(effect.playback), playing: true,
                        onCompletion: { onCompletion(effect.id) })
             .frame(width: moodEffectSize, height: moodEffectSize)
             .allowsHitTesting(false)

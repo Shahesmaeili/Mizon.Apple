@@ -198,7 +198,7 @@ struct MusicHomeMoodButton: View {
                 Text("🤢").font(.system(size: 20))
             }
             if let loop, loop.media == mood?.animationMediaPublicId {
-                MoodLottieView(file: loop.file, looping: true, playing: canPlay, onReady: {
+                MoodLottieView(file: loop.file, playback: .loop, playing: canPlay, onReady: {
                     if mood?.animationMediaPublicId == loop.media { readyLoop = loop.media }
                 })
                 .id(loop.media)
@@ -403,8 +403,9 @@ struct MusicHomeMoodButton: View {
     }
 
     private func resetEffectChoice() {
-        effectChoice = mood.map {
-            EffectChoice(mood: $0.publicId, media: $0.effectMediaPublicIds.randomElement() ?? $0.animationMediaPublicId)
+        effectChoice = mood.flatMap { mood in
+            let media = mood.effectMediaPublicIds.filter { $0 != .zeroMoodID }.randomElement() ?? mood.animationMediaPublicId
+            return media == .zeroMoodID ? nil : EffectChoice(mood: mood.publicId, media: media)
         }
         effectAsset = nil
         effectRequest = nil
