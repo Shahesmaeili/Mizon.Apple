@@ -124,14 +124,29 @@ struct MusicHomePage: View {
     private var discoveryRecommended: [MusicDiscoverySample] { Array(discovery.reversed().prefix(6)) }
     private var discoveryRecent: [MusicDiscoverySample] { Array((Array(discovery.dropFirst(2)) + discovery.prefix(2)).prefix(6)) }
 
+    #if os(iOS)
+    private var usesPhoneHeader: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+    #endif
+
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
                 #if os(iOS)
-                AnyView(layout(width: geometry.size.width))
-                    .safeAreaInset(edge: .top, spacing: 0) {
-                        AnyView(header(viewport: geometry.size, width: geometry.size.width))
+                let feed = AnyView(layout(width: geometry.size.width))
+                let topBar = AnyView(header(viewport: geometry.size, width: geometry.size.width))
+                if usesPhoneHeader {
+                    feed.safeAreaBar(edge: .top, spacing: 0) {
+                        topBar.background {
+                            WindowGlass(tintOpacity: 0.30)
+                                .ignoresSafeArea(edges: .top)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
                     }
+                    .scrollEdgeEffectStyle(.soft, for: .top)
+                } else {
+                    feed.safeAreaInset(edge: .top, spacing: 0) { topBar }
+                }
                 #else
                 layout(width: geometry.size.width)
                 #endif
@@ -318,12 +333,22 @@ struct MusicHomePage: View {
         let wide = width >= 1440
         let medium = width >= 1040
         let margin: CGFloat = medium ? 28 : 14
+        let topMargin: CGFloat = medium ? 16 : 12
+        #if os(iOS)
+        let scrollTopMargin: CGFloat? = usesPhoneHeader ? topMargin : nil
+        let outerTopMargin = usesPhoneHeader ? 0 : topMargin
+        #else
+        let outerTopMargin = topMargin
+        #endif
         let contentWidth = min(2200, max(0, width - margin * 2))
         let rail = min(320, max(220, contentWidth * 0.2))
         let feedWidth = max(0, contentWidth - (wide ? 2 * rail : medium ? rail : 0))
         return HStack(alignment: .top, spacing: 0) {
             if wide {
                 ScrollView { windowsEditorialRail(width: rail - 24).padding(.bottom, 48) }
+                    #if os(iOS)
+                    .contentMargins(.top, scrollTopMargin, for: .scrollContent)
+                    #endif
                     .scrollIndicators(.hidden)
                     .frame(width: rail - 24)
                     .padding(.trailing, 24)
@@ -356,6 +381,9 @@ struct MusicHomePage: View {
                     .frame(width: feedWidth, alignment: .leading)
                     .padding(.bottom, 48)
                 }
+                #if os(iOS)
+                .contentMargins(.top, scrollTopMargin, for: .scrollContent)
+                #endif
                 .frame(width: feedWidth)
                 .scrollIndicators(.hidden)
                 .onChange(of: controlFocus) { _, target in
@@ -369,6 +397,9 @@ struct MusicHomePage: View {
             if medium {
                 let gutter: CGFloat = wide ? 24 : 20
                 ScrollView { windowsCommunityRail(width: rail - gutter).padding(.bottom, 48) }
+                    #if os(iOS)
+                    .contentMargins(.top, scrollTopMargin, for: .scrollContent)
+                    #endif
                     .scrollIndicators(.hidden)
                     .frame(width: rail - gutter)
                     .padding(.leading, gutter)
@@ -376,7 +407,7 @@ struct MusicHomePage: View {
         }
         .frame(maxWidth: 2200)
         .padding(.horizontal, margin)
-        .padding(.top, medium ? 16 : 12)
+        .padding(.top, outerTopMargin)
         .frame(maxWidth: .infinity)
     }
 

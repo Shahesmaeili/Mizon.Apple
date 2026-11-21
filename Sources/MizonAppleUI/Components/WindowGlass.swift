@@ -5,6 +5,9 @@ import AppKit
 
 struct WindowGlass: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    #if os(iOS)
+    var tintOpacity = 0.86
+    #endif
 
     var body: some View {
         #if os(macOS)
@@ -19,7 +22,7 @@ struct WindowGlass: View {
             MizonPalette.surface
         } else {
             Rectangle().fill(.ultraThinMaterial)
-                .overlay(MizonPalette.surface.opacity(0.86))
+                .overlay(MizonPalette.surface.opacity(tintOpacity))
         }
         #else
         MizonPalette.surface
