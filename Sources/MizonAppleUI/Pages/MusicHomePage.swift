@@ -11,6 +11,45 @@ import AppKit
 import UIKit
 #endif
 
+#if os(iOS)
+private struct MusicHomePhoneHeaderGlass: View {
+    let isRevealed: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    private let fadeDepth: CGFloat = 26
+
+    var body: some View {
+        Group {
+            if reduceTransparency {
+                MizonPalette.surface
+            } else {
+                WindowGlass(tintOpacity: 0.40)
+                    .mask {
+                        VStack(spacing: 0) {
+                            Color.white
+                            LinearGradient(stops: [
+                                .init(color: .white, location: 0),
+                                .init(color: .white.opacity(0.86), location: 0.25),
+                                .init(color: .white.opacity(0.45), location: 0.55),
+                                .init(color: .white.opacity(0.12), location: 0.8),
+                                .init(color: .clear, location: 1)
+                            ], startPoint: .top, endPoint: .bottom)
+                            .frame(height: fadeDepth)
+                        }
+                    }
+                    .padding(.bottom, -fadeDepth)
+                    .opacity(isRevealed ? 1 : 0)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isRevealed)
+            }
+        }
+        .ignoresSafeArea(edges: .top)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+#endif
+
 enum MusicDestination: Hashable, Identifiable {
     case track(UUID), artist(UUID), client(UUID), playlist(UUID), story(UUID)
 
@@ -68,6 +107,8 @@ struct MusicHomePage: View {
     @State private var searchFocusRequest = 0
     #if os(macOS)
     @State private var headerViewport = CGSize(width: 960, height: 700)
+    #else
+    @State private var phoneHeaderHasScrolled = false
     #endif
     @State private var showingSearch = false
     @State private var showingMoodPicker = false
@@ -137,13 +178,10 @@ struct MusicHomePage: View {
                 if usesPhoneHeader {
                     feed.safeAreaBar(edge: .top, spacing: 0) {
                         topBar.background {
-                            WindowGlass(tintOpacity: 0.30)
-                                .ignoresSafeArea(edges: .top)
-                                .allowsHitTesting(false)
-                                .accessibilityHidden(true)
+                            MusicHomePhoneHeaderGlass(isRevealed: phoneHeaderHasScrolled)
                         }
                     }
-                    .scrollEdgeEffectStyle(.soft, for: .top)
+                    .scrollEdgeEffectHidden(true, for: .top)
                 } else {
                     feed.safeAreaInset(edge: .top, spacing: 0) { topBar }
                 }
@@ -383,6 +421,11 @@ struct MusicHomePage: View {
                 }
                 #if os(iOS)
                 .contentMargins(.top, scrollTopMargin, for: .scrollContent)
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    usesPhoneHeader && geometry.contentOffset.y + geometry.contentInsets.top > 1
+                } action: { _, hasScrolled in
+                    phoneHeaderHasScrolled = hasScrolled
+                }
                 #endif
                 .frame(width: feedWidth)
                 .scrollIndicators(.hidden)
