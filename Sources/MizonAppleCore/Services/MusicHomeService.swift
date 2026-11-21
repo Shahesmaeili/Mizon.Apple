@@ -175,14 +175,22 @@ public struct MusicHomeService: Sendable {
 }
 
 public actor MusicArtworkStore {
+    private final class CachedArtwork: Sendable {
+        let contents: (image: CGImage, source: URL)
+
+        init(image: CGImage, source: URL) {
+            contents = (image, source)
+        }
+    }
+
     private let downloader: MediaDownloader
     private let service: MusicHomeService
     private let accountID: UUID
     private let server: URL
     private let peerNetwork: NearbyDiscoveryService?
-    private let cache = NSCache<NSUUID, CGImage>()
+    private let cache = NSCache<NSUUID, CachedArtwork>()
     private let profileThumbnails = NSCache<NSUUID, CGImage>()
-    private var requests: [UUID: Task<CGImage, Error>] = [:]
+    private var requests: [UUID: Task<CachedArtwork, Error>] = [:]
 
     public init(service: MusicHomeService, session: AuthSession, cacheRoot: URL? = nil,
                 peerNetwork: NearbyDiscoveryService? = nil) {
@@ -201,9 +209,15 @@ public actor MusicArtworkStore {
     }
 
     public func image(_ id: UUID, session: AuthSession) async throws -> CGImage {
+        try await imageWithSource(id, session: session).image
+    }
+
+    public func imageWithSource(_ id: UUID, session: AuthSession) async throws -> (image: CGImage, source: URL) {
+        try Task.checkCancellation()
+        guard session.clientPublicId == accountID, session.server == server else { throw CancellationError() }
         let key = id as NSUUID
-        if let image = cache.object(forKey: key) { return image }
-        if let request = requests[id] { return try await request.value }
+        if let artwork = cache.object(forKey: key) { return artwork.contents }
+        if let request = requests[id] { return try await request.value.contents }
         let request = Task { [service, downloader] in
             let media = try await service.media(id, session: session)
             let path = try await service.cacheMedia(media, session: session, downloader: downloader,
@@ -215,13 +229,14 @@ public actor MusicArtworkStore {
                     kCGImageSourceCreateThumbnailWithTransform: true,
                     kCGImageSourceThumbnailMaxPixelSize: 960
                   ] as CFDictionary) else { throw LoginFailure.invalidResponse }
-            return image
+            return CachedArtwork(image: image, source: path)
         }
         requests[id] = request
         defer { requests[id] = nil }
-        let image = try await request.value
-        cache.setObject(image, forKey: key, cost: image.bytesPerRow * image.height)
-        return image
+        let artwork = try await request.value
+        let image = artwork.contents.image
+        cache.setObject(artwork, forKey: key, cost: image.bytesPerRow * image.height)
+        return artwork.contents
     }
 
     func profileImage(_ id: UUID, session: AuthSession) async throws -> CGImage {

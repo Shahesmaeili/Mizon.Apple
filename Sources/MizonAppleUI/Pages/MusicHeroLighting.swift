@@ -129,6 +129,7 @@ struct MusicHeroLighting: ViewModifier {
     @State private var paletteBlend: PaletteBlend?
     @State private var settledThrough = Date.distantPast
     #if os(iOS)
+    @Environment(MusicHomePointer.self) private var pagePointer
     @State private var inputSize = CGSize.zero
     #endif
 
@@ -207,6 +208,17 @@ struct MusicHeroLighting: ViewModifier {
         }
         #else
         content
+            .background {
+                GeometryReader { geometry in
+                    let sample = MusicPointerSample(active ? pagePointer.location : nil,
+                        in: geometry.frame(in: .named(MusicHomePointer.coordinateSpace)))
+                    Color.clear.onChange(of: sample, initial: true) { _, value in
+                        movePointer(value.point, in: value.size)
+                    }
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
             .onGeometryChange(for: CGSize.self, of: \.size) { inputSize = $0 }
             .gesture(HeroTouchObserver(isEnabled: motion, onPress: { point in
                 guard CGRect(origin: .zero, size: inputSize).contains(point) else { return }
@@ -317,10 +329,18 @@ struct MusicHeroLighting: ViewModifier {
             var exterior = Path(CGRect(origin: .zero, size: size))
             exterior.addPath(Path(roundedRect: bounds, cornerRadius: Self.corner))
             halo.clip(to: exterior, style: FillStyle(eoFill: true))
+            var gain = ColorMatrix()
+            gain.r1 = 3
+            gain.g2 = 3
+            gain.b3 = 3
+            gain.a4 = 3
             halo.drawLayer { layer in
-                layer.addFilter(.blur(radius: 5.5))
-                // A threefold stroke width preserves the reference blur's threefold gain.
-                layer.stroke(stroke, with: gradient, lineWidth: Self.stroke * 3)
+                // Amplify the blurred premultiplied stroke without widening its source.
+                layer.addFilter(.colorMatrix(gain, isPremultiplied: true))
+                layer.drawLayer { source in
+                    source.addFilter(.blur(radius: 5.5))
+                    source.stroke(stroke, with: gradient, lineWidth: Self.stroke)
+                }
             }
             context.stroke(stroke, with: gradient, lineWidth: Self.stroke)
         }

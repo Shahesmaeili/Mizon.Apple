@@ -1,6 +1,7 @@
 #if os(macOS) || os(iOS)
 import AVKit
 import GameController
+import ImageIO
 import MizonAPIClient
 import MizonAppleCore
 import SwiftUI
@@ -105,6 +106,7 @@ struct MusicHomePage: View {
     @State private var recentScrollRequest = 0
     @State private var scrollHomeRequest = 0
     @State private var searchFocusRequest = 0
+    @State private var pointer = MusicHomePointer()
     #if os(macOS)
     @State private var headerViewport = CGSize(width: 960, height: 700)
     #else
@@ -192,6 +194,18 @@ struct MusicHomePage: View {
                 layout(width: geometry.size.width)
                 #endif
             }
+                .coordinateSpace(.named(MusicHomePointer.coordinateSpace))
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let location) where scenePhase == .active: pointer.location = location
+                    default: pointer.location = nil
+                    }
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase != .active { pointer.location = nil }
+                }
+                .onDisappear { pointer.location = nil }
+                .environment(pointer)
                 .navigationTitle("")
                 #if os(macOS)
                 .onGeometryChange(for: CGSize.self, of: \.size) { headerViewport = $0 }
@@ -432,6 +446,7 @@ struct MusicHomePage: View {
                     .frame(width: feedWidth, alignment: .leading)
                     .padding(.bottom, 48)
                 }
+                .scrollClipDisabled()
                 #if os(iOS)
                 .contentMargins(.top, scrollTopMargin, for: .scrollContent)
                 .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -463,6 +478,9 @@ struct MusicHomePage: View {
         }
         .frame(maxWidth: 2200)
         .padding(.horizontal, margin)
+        #if os(macOS)
+        .clipped()
+        #endif
         .padding(.top, outerTopMargin)
         .frame(maxWidth: .infinity)
     }
@@ -476,6 +494,16 @@ struct MusicHomePage: View {
                 heroSurface(item, compact: compact)
                     .frame(height: height)
                     .clipShape(.rect(cornerRadius: 12))
+                    .background {
+                        if let heroArtwork {
+                            let shadowColor = heroArtwork.edgeColor?.color ?? .black
+                            RoundedRectangle(cornerRadius: 12, style: .circular)
+                                .fill(shadowColor)
+                                .shadow(color: shadowColor, radius: 80, x: 0, y: 0)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    }
                     .modifier(MusicHeroLighting(active: canPresentFeature && !fullWindowVideo, palette: heroArtwork?.palette))
             } else if model.loading.contains(.features) {
                 MusicHomeSkeleton(height: 300, label: text("LoadingFeatures"))
@@ -536,13 +564,16 @@ struct MusicHomePage: View {
         heroArtworkStatus = .loading
         for id in featureArtworkIDs(item) {
             do {
-                let image = try await model.artwork.image(id, session: model.session)
+                let artwork = try await model.artwork.imageWithSource(id, session: model.session)
+                let image = artwork.image
                 try Task.checkCancellation()
-                let palette = await MusicHeroPalette.extract(from: image)
+                async let palette = MusicHeroPalette.extract(from: image)
+                let edgeColor = await Self.featureArtworkEdgeColor(at: artwork.source)
+                let colors = await palette
                 try Task.checkCancellation()
                 let animate = !reduceMotion && !fullWindowVideo
                 outgoingHeroArtwork = animate ? heroArtwork : nil
-                heroArtwork = FeatureArtwork(id: item.publicId, image: image, palette: palette,
+                heroArtwork = FeatureArtwork(id: item.publicId, image: image, palette: colors, edgeColor: edgeColor,
                                              stretch: !isVideo(item), direction: featureDirection,
                                              revealStart: animate ? Date() : nil)
                 heroArtworkStatus = .ready
@@ -552,6 +583,17 @@ struct MusicHomePage: View {
             }
         }
         heroArtworkStatus = .failed
+    }
+
+    @concurrent
+    private static func featureArtworkEdgeColor(at url: URL) async -> MusicArtworkEdgeColor? {
+        guard !Task.isCancelled, let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let dimensions = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let width = dimensions[kCGImagePropertyPixelWidth as String] as? Int,
+              let height = dimensions[kCGImagePropertyPixelHeight as String] as? Int,
+              width > 0, height > 0, width <= 16_777_216 / height,
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        return await MusicArtworkEdgeColor.extract(from: image)
     }
 
     private func presentFeatureVideo() async {
@@ -957,6 +999,7 @@ struct MusicHomePage: View {
         let id: UUID
         let image: CGImage
         let palette: MusicHeroPalette?
+        let edgeColor: MusicArtworkEdgeColor?
         let stretch: Bool
         let direction: Int
         var revealStart: Date?

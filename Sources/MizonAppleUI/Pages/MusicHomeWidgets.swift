@@ -29,7 +29,7 @@ extension MusicHomePage {
 
     private func windowsLibrary(width: CGFloat) -> some View {
         let accent = MusicWidgetTint.library
-        return railSurface {
+        return railSurface(tint: accent, showsPointerGlow: !model.loading.contains(.library) || model.library != nil) {
             railHeader("LibraryTitle", subtitle: "LibrarySubtitle", symbol: .music, tint: accent)
             if model.loading.contains(.library), model.library == nil {
                 railSkeleton(height: 360, label: text("LoadingLibrary"))
@@ -154,7 +154,7 @@ extension MusicHomePage {
 
     private func windowsRhythm(width: CGFloat) -> some View {
         let accent = MusicWidgetTint.rhythm
-        return railSurface {
+        return railSurface(tint: accent) {
             railHeader("RhythmTitle", subtitle: "RhythmSubtitle", symbol: .trendingArrow, tint: accent)
             if width >= 560 {
                 HStack(alignment: .top, spacing: 20) {
@@ -291,7 +291,7 @@ extension MusicHomePage {
         let accent = MusicWidgetTint.news
         let slideDistance = min(48, max(20, (width - 24) * 0.14))
         let artwork = ["slow-motion", "artist-stage-02", "city-lights", "quiet-room"]
-        return railSurface {
+        return railSurface(tint: accent) {
             railHeader("NewsTitle", subtitle: "NewsSubtitle", symbol: .news, tint: accent, badge: widget("Demo"))
             MusicNewsAutoAdvance(index: $newsIndex, paused: newsPaused || newsWidgetHasFocus,
                                  count: artwork.count, isPersian: localization.isPersian) { index, direction in
@@ -406,7 +406,7 @@ extension MusicHomePage {
     private func windowsTrending(width: CGFloat) -> some View {
         let accent = MusicWidgetTint.trending
         let samples = Array(discovery.sorted { $0.likes > $1.likes }.prefix(6))
-        return railSurface {
+        return railSurface(tint: accent) {
             railHeader("TrendingTitle", subtitle: "TrendingSubtitle", symbol: .fire, tint: accent,
                        badge: String(format: "%02d", samples.count))
             if let leading = samples.first {
@@ -516,7 +516,7 @@ extension MusicHomePage {
         let accent = MusicWidgetTint.friends
         let activity = model.activity
         let items = Array((activity?.activities ?? []).prefix(4))
-        return railSurface {
+        return railSurface(tint: accent, showsPointerGlow: !model.loading.contains(.activity) || activity != nil) {
             railHeader("FollowingTitle", subtitle: "FollowingSubtitle", symbol: .people, tint: accent,
                        badge: String(format: "%02d", items.count))
             if model.loading.contains(.activity), activity == nil {
@@ -567,11 +567,13 @@ extension MusicHomePage {
         .overlay { RoundedRectangle(cornerRadius: 11).strokeBorder(MusicWidgetTint.friends.color.opacity(0.094)) }
     }
 
-    private func railSurface<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    private func railSurface<Content: View>(tint: MusicWidgetTint, showsPointerGlow: Bool = true,
+                                            @ViewBuilder content: () -> Content) -> some View {
         VStack(spacing: 12, content: content)
             .frame(maxWidth: .infinity)
             .padding(12)
             .musicPanel(cornerRadius: 16)
+            .overlay { MusicWidgetPointerGlow(accent: tint.color, enabled: showsPointerGlow) }
     }
 
     private func railHeader(_ title: String, subtitle: String, symbol: MusicWidgetSymbol,
