@@ -22,4 +22,6 @@ macOS uses its computer name. iOS uses the device name available to standard app
 
 ## Verification
 
-On macOS, two Network.framework service instances with synthetic Mac and Windows metadata discovered one another without returning their own advertisement. The Swift suite passed 40 tests, including the Windows wire fixture, validation limits, opt-in and permission state. The optimized macOS and iOS builds declare the same service. The Apple app has no live MCP host or Nearby consent scope. Physical Mac-to-Windows and iPhone discovery remain to be verified.
+On macOS, two Network.framework service instances with synthetic Mac and Windows metadata discovered one another without returning their own advertisement. The Swift suite passed 40 tests, including the Windows wire fixture, validation limits, opt-in and permission state. The optimized macOS and iOS builds declare the same service. The iPhone simulator verified that the header opens the disclosure with visibility off and that the panel closes from its own button.
+
+Build 16 was installed and launched on the physical iPhone 16 Pro Max. The signed-in Music Home and its header remained visible. The Swift Network.framework transport on macOS discovered the physical iPhone's live iOS announcement. The native Windows DNS-SD probe reported the actual Mac and iPhone and passed a check for the separate synthetic Mac advertisement. The Apple-to-Windows browse path still needs a Windows advertisement that remains active for the reverse check. The Apple app has no live MCP host or Nearby consent scope.
