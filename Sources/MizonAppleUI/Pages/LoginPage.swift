@@ -1,5 +1,8 @@
 import SwiftUI
 import MizonAppleCore
+#if os(iOS)
+import UIKit
+#endif
 #if !os(watchOS)
 import GameController
 #if os(macOS)
@@ -143,19 +146,26 @@ private struct AuthenticationPage: View {
     @FocusState private var swiftUIFocus: Field?
     #if os(macOS)
     @State private var nativeFocus: Field?
+    #elseif os(iOS)
+    @State private var passwordFocused = false
     #endif
     private var focus: Field? {
         get {
             #if os(macOS)
             nativeFocus ?? swiftUIFocus
+            #elseif os(iOS)
+            passwordFocused ? .loginPassword : swiftUIFocus
             #else
             swiftUIFocus
             #endif
         }
         nonmutating set {
             #if os(macOS)
-            nativeFocus = newValue.flatMap { usesNativeIdentifier($0) ? $0 : nil }
+            nativeFocus = newValue.flatMap { usesNativeInput($0) ? $0 : nil }
             swiftUIFocus = nativeFocus == nil ? newValue : nil
+            #elseif os(iOS)
+            passwordFocused = newValue == .loginPassword
+            if !passwordFocused { swiftUIFocus = newValue }
             #else
             swiftUIFocus = newValue
             #endif
@@ -182,7 +192,9 @@ private struct AuthenticationPage: View {
     @State private var entranceVisible = false
     @FocusState private var showcaseFocused: AuthScene?
     #if os(iOS)
+    private enum TapSpace { case authentication }
     @State private var showsSettings = false
+    @State private var inputFrames: [Field: CGRect] = [:]
     #endif
 
     private var isPersian: Bool { localization.isPersian }
@@ -257,6 +269,17 @@ private struct AuthenticationPage: View {
         }
         #endif
         #if os(iOS)
+        .contentShape(.rect)
+        .coordinateSpace(.named(TapSpace.authentication))
+        .simultaneousGesture(
+            SpatialTapGesture(coordinateSpace: .named(TapSpace.authentication))
+                .onEnded { tap in
+                    guard let focus, inputFrames[focus] != nil,
+                          !fieldOrder.contains(where: { inputFrames[$0]?.contains(tap.location) == true }) else { return }
+                    self.focus = nil
+                },
+            isEnabled: focus != nil
+        )
         .sheet(isPresented: $showsSettings) {
             NavigationStack {
                 ServerSettingsView(model: model)
@@ -304,6 +327,7 @@ private struct AuthenticationPage: View {
             AuthLanguagePicker()
             Spacer()
             Button {
+                focus = nil
                 showsSettings = true
             } label: {
                 Image(systemName: "gearshape")
@@ -475,7 +499,7 @@ private struct AuthenticationPage: View {
             HStack(spacing: 4) {
                 let showPeek = scenePhase == .active && field != .loginPassword
                     && (peeking == field || gamepadRevealedField == field)
-                if usesNativeIdentifier(field) {
+                if usesNativeInput(field) {
                     #if os(macOS)
                     FilteredAuthField(text: value,
                                       isFocused: Binding(get: { nativeFocus == field }, set: {
@@ -487,6 +511,12 @@ private struct AuthenticationPage: View {
                                       font: nativeInputFont, accepts: field.accepts, submit: submit)
                         .frame(height: 24)
                         .accessibilityIdentifier(field.rawValue)
+                    #elseif os(iOS)
+                    LoginPasswordField(text: editable, isFocused: $passwordFocused,
+                                       dismissesFocus: focus == nil, isSecure: !revealPassword,
+                                       label: text(label), help: text(field.helpKey), identifier: field.rawValue,
+                                       font: passwordInputFont, textColor: UIColor(MizonPalette.ink), submit: submit)
+                        .frame(height: 24)
                     #endif
                 } else {
                     Group {
@@ -563,6 +593,13 @@ private struct AuthenticationPage: View {
             .padding(.trailing, hasAction ? 6 : 12)
             .environment(\.layoutDirection, isPersian && localizedRow ? .rightToLeft : .leftToRight)
             .frame(minHeight: 44)
+            #if os(iOS)
+            .onGeometryChange(for: CGRect.self) { geometry in
+                geometry.frame(in: .named(TapSpace.authentication))
+            } action: { frame in
+                inputFrames[field] = frame
+            }
+            #endif
             .background {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(AuthAppearance.inputFill(focused: focus == field, hovered: hoveredField == field, disabled: model.isLoading))
@@ -587,9 +624,11 @@ private struct AuthenticationPage: View {
         .disabled(model.isLoading)
     }
 
-    private func usesNativeIdentifier(_ field: Field) -> Bool {
+    private func usesNativeInput(_ field: Field) -> Bool {
         #if os(macOS)
         field == .identifier || field == .username || field == .email
+        #elseif os(iOS)
+        field == .loginPassword
         #else
         false
         #endif
@@ -600,6 +639,12 @@ private struct AuthenticationPage: View {
         _ = WindowsTypography.registered
         let fontName = isPersian ? "IRANSans" : "Segoe UI Variable"
         return NSFont(name: fontName, size: 14) ?? .systemFont(ofSize: 14)
+    }
+    #elseif os(iOS)
+    private var passwordInputFont: UIFont {
+        _ = WindowsTypography.registered
+        let fontName = isPersian ? "IRANSans" : "Segoe UI Variable"
+        return UIFont(name: fontName, size: 14) ?? .systemFont(ofSize: 14)
     }
     #endif
 
