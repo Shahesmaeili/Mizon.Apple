@@ -2,6 +2,7 @@ import Testing
 import CoreText
 import SwiftUI
 #if os(macOS)
+import AppKit
 import Foundation
 import MizonAppleCore
 #endif
@@ -61,6 +62,23 @@ struct WindowsPresentationTests {
     }
 
     #if os(macOS)
+    @Test @MainActor func macFieldReportsFocusBeforeTyping() {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 80),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let field = AuthTextField(frame: NSRect(x: 12, y: 12, width: 216, height: 24))
+        var didFocus = false
+        field.onFocus = { didFocus = true }
+        window.contentView?.addSubview(field)
+
+        #expect(window.makeFirstResponder(field))
+        #expect(field.currentEditor() != nil)
+        #expect(didFocus)
+        #expect(field.stringValue.isEmpty)
+        #expect(window.makeFirstResponder(nil))
+        #expect(field.currentEditor() == nil)
+    }
+
     @Test func macFieldFormatterRejectsTheProposedEdit() {
         let formatter = AuthInputFormatter {
             $0.utf16.count <= 128 && AuthIdentifierInput.isAllowed($0, allowsEmail: true)
