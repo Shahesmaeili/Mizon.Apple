@@ -478,11 +478,11 @@ struct MusicHomePage: View {
         }
         .frame(maxWidth: 2200)
         .padding(.horizontal, margin)
+        .padding(.top, outerTopMargin)
+        .frame(maxWidth: .infinity)
         #if os(macOS)
         .clipped()
         #endif
-        .padding(.top, outerTopMargin)
-        .frame(maxWidth: .infinity)
     }
 
     private func feature(width: CGFloat) -> some View {
@@ -493,15 +493,10 @@ struct MusicHomePage: View {
             if let item = currentFeature {
                 heroSurface(item, compact: compact)
                     .frame(height: height)
-                    .clipShape(.rect(cornerRadius: 12))
+                    .clipShape(.rect(cornerRadius: MusicFeaturedArtworkShadow.cornerRadius, style: .circular))
                     .background {
                         if let heroArtwork {
-                            let shadowColor = heroArtwork.edgeColor?.color ?? .black
-                            RoundedRectangle(cornerRadius: 12, style: .circular)
-                                .fill(shadowColor)
-                                .shadow(color: shadowColor, radius: 80, x: 0, y: 0)
-                                .allowsHitTesting(false)
-                                .accessibilityHidden(true)
+                            MusicFeaturedArtworkShadow(color: heroArtwork.edgeColor?.color ?? .black)
                         }
                     }
                     .modifier(MusicHeroLighting(active: canPresentFeature && !fullWindowVideo, palette: heroArtwork?.palette))
