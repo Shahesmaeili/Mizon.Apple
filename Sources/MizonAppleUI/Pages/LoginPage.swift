@@ -13,7 +13,7 @@ import AppKit
 public struct MizonRootView: View {
     @State private var model: LoginViewModel
     #if !os(watchOS)
-    @Namespace private var profileTransition
+    @State private var profileTransition = ProfilePictureTransition()
     @State private var checkedStartup = false
     @State private var home: HomeEntrance?
     @State private var nearby = NearbyDiscoveryModel()
@@ -27,7 +27,7 @@ public struct MizonRootView: View {
     private struct HomeEntrance {
         let sessionID: UUID
         let account: WelcomeAccount?
-        let avatar: CGImage?
+        var avatar: CGImage?
     }
 
     private struct NearbyIdentity: Equatable {
@@ -50,7 +50,7 @@ public struct MizonRootView: View {
     }
 
     public var body: some View {
-        content
+        ZStack { content }
             .foregroundStyle(MizonPalette.ink)
             .tint(MizonPalette.accent)
             .preferredColorScheme(.dark)
@@ -58,10 +58,19 @@ public struct MizonRootView: View {
             #if os(iOS)
             .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active { nearbyInForeground = true }
-                if phase == .background { nearbyInForeground = false }
+                if phase == .background {
+                    nearbyInForeground = false
+                    profileTransition.cancel()
+                }
             }
             #endif
             #if os(macOS) || os(iOS)
+            .task(id: home?.sessionID) { await profileTransition.play() }
+            .task(id: home?.sessionID) { await loadMissingHomeAvatar() }
+            .onChange(of: reduceMotion) { _, enabled in
+                if enabled { profileTransition.cancel() }
+            }
+            .onDisappear { profileTransition.cancel() }
             .task(id: discoverableIdentity) { [identity = discoverableIdentity] in
                 let mediaAccess: NearbyMediaAccess?
                 if let identity, let session = model.session, identity.sessionID == session.sessionPublicId {
@@ -89,6 +98,17 @@ public struct MizonRootView: View {
             #endif
     }
 
+    #if os(macOS) || os(iOS)
+    private func loadMissingHomeAvatar() async {
+        guard let session = model.session, let home, home.sessionID == session.sessionPublicId,
+              home.avatar == nil, let avatarID = home.account?.avatarID,
+              let avatar = try? await model.welcomeService.avatar(for: avatarID, session: session),
+              !Task.isCancelled, model.session?.sessionPublicId == session.sessionPublicId,
+              self.home?.sessionID == session.sessionPublicId else { return }
+        self.home?.avatar = avatar
+    }
+    #endif
+
     #if os(macOS)
     private var showingAuthentication: Bool {
         home == nil || home?.sessionID != model.session?.sessionPublicId
@@ -102,8 +122,8 @@ public struct MizonRootView: View {
         #else
         if let session = model.session, let home, home.sessionID == session.sessionPublicId {
             MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
-                          nearby: nearby,
-                          avatar: home.avatar, profileTransition: profileTransition, initialMood: home.account?.mood) {
+                          nearby: nearby, avatar: home.avatar, profileTransition: profileTransition,
+                          initialMood: home.account?.mood) {
                 Task {
                     await model.signOut()
                     if model.session == nil { self.home = nil }
@@ -137,10 +157,9 @@ public struct MizonRootView: View {
                 enter: { session, account, avatar in
                     guard model.session == session else { return }
                     model.dismissError()
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.32)) {
-                        checkedStartup = true
-                        home = HomeEntrance(sessionID: session.sessionPublicId, account: account, avatar: avatar)
-                    }
+                    profileTransition.prepare(avatar: avatar, displayName: account?.displayName, reduceMotion: reduceMotion)
+                    checkedStartup = true
+                    home = HomeEntrance(sessionID: session.sessionPublicId, account: account, avatar: avatar)
                 }
             )
         } else {

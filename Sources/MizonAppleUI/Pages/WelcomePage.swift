@@ -24,13 +24,13 @@ struct WelcomePage: View {
     @Environment(\.appearsActive) private var appearsActive
     #endif
     private var localization = AuthLocalization()
-    let profileTransition: Namespace.ID
+    let profileTransition: ProfilePictureTransition
     let restoreSession: () async throws -> AuthSession?
     let signIn: () async -> Bool
     let accountReady: (AuthSession, WelcomeAccount) -> Void
     let enter: (AuthSession, WelcomeAccount?, CGImage?) -> Void
 
-    init(service: any WelcomeService, profileTransition: Namespace.ID,
+    init(service: any WelcomeService, profileTransition: ProfilePictureTransition,
          restoreSession: @escaping () async throws -> AuthSession?,
          signIn: @escaping () async -> Bool,
          accountReady: @escaping (AuthSession, WelcomeAccount) -> Void = { _, _ in },
@@ -54,7 +54,7 @@ struct WelcomePage: View {
                         WelcomeOrbit(size: orbitSize, moves: !reduceMotion && isActive)
                         WelcomeProfileBadge(avatar: model.avatar)
                             .frame(width: orbitSize / 4, height: orbitSize / 4)
-                            .matchedGeometryEffect(id: "welcome-profile", in: profileTransition)
+                            .background { profileTransition.anchor(.welcome) }
                     }
                     VStack(alignment: .leading, spacing: 5) {
                         Text(title)

@@ -129,12 +129,13 @@ struct MusicHomePage: View {
     let displayName: String?
     let nearby: NearbyDiscoveryModel
     let avatar: CGImage?
-    let profileTransition: Namespace.ID
+    let profileTransition: ProfilePictureTransition
     let initialMood: ClientMoodItemResponse?
     let signOut: () -> Void
 
-    init(session: AuthSession, service: MusicHomeService, displayName: String?, nearby: NearbyDiscoveryModel, avatar: CGImage?,
-         profileTransition: Namespace.ID, initialMood: ClientMoodItemResponse? = nil, signOut: @escaping () -> Void) {
+    init(session: AuthSession, service: MusicHomeService, displayName: String?, nearby: NearbyDiscoveryModel,
+         avatar: CGImage?, profileTransition: ProfilePictureTransition,
+         initialMood: ClientMoodItemResponse? = nil, signOut: @escaping () -> Void) {
         _model = State(initialValue: MusicHomeViewModel(session: session, service: service, peerNetwork: nearby.peerNetwork))
         self.displayName = displayName
         self.nearby = nearby
@@ -356,13 +357,13 @@ struct MusicHomePage: View {
                     Button(text("Profile")) { destination = .client(model.session.clientPublicId) }
                     Button(localization.string("SignOut", table: "Settings"), action: signOut)
                 } label: {
-                    WelcomeProfileBadge(avatar: avatar)
-                        .frame(width: 32, height: 32)
-                        .matchedGeometryEffect(id: "welcome-profile", in: profileTransition)
+                    MusicHomeProfilePicture(avatar: avatar, displayName: displayName)
+                        .opacity(profileTransition.isInFlight ? 0 : 1)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-                .fixedSize()
+                .frame(width: 32, height: 32)
+                .background { profileTransition.anchor(.header) }
                 .accessibilityLabel(displayName ?? text("Profile"))
                 .accessibilityIdentifier("music.home.profile")
             }

@@ -43,6 +43,31 @@ struct NearbyProfileArtworkServiceTests {
         #expect(requests[3].value(forHTTPHeaderField: "Range") == "bytes=0-\(fixture.imageData.count - 1)")
     }
 
+    @Test func signedInAvatarUsesAuthenticatedContentForServerLocalFiles() async throws {
+        let fixture = try Fixture()
+        defer { fixture.close() }
+        NearbyArtworkProtocol.install(fixture.reply)
+        let service = MizonWelcomeService(api: fixture.api, cacheRoot: fixture.cacheRoot)
+        try await fixture.api.setToken(fixture.session.accessToken)
+
+        let account = try await service.account(for: fixture.session)
+        let mediaID = try #require(account.avatarID)
+        #expect(mediaID == fixture.avatarID)
+        let image = try #require(await service.avatar(for: mediaID, session: fixture.session))
+        #expect(image.width == 240)
+        #expect(image.height == 144)
+
+        let requests = NearbyArtworkProtocol.requests
+        #expect(requests.map { $0.url?.path } == ["/api/Clients/Me", "/api/Medias/Media", "/api/Medias/MediaContent"])
+        #expect(requests.allSatisfy { $0.url?.host == "mizon.example" })
+        #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-access" })
+        #expect(requests.last?.query("MediaPublicId").flatMap(UUID.init(uuidString:)) == mediaID)
+
+        await fixture.api.clearToken()
+        await #expect(throws: CancellationError.self) { try await service.avatar(for: mediaID, session: fixture.session) }
+        #expect(NearbyArtworkProtocol.requests.count == requests.count)
+    }
+
     @Test func invalidIdentityAndStaleSessionsDoNotContactTheServer() async throws {
         let fixture = try Fixture()
         defer { fixture.close() }
@@ -139,6 +164,10 @@ struct NearbyProfileArtworkServiceTests {
         func reply(_ request: URLRequest) throws -> NearbyArtworkProtocol.Reply {
             let encoder = MizonJSON.encoder()
             switch request.url?.path {
+            case "/api/Clients/Me":
+                return .init(body: try encoder.encode(BaseApiResponse(content: MeResponse(
+                    username: "viewer", meProfile: .init(mediaPublicId: avatarID)
+                ))))
             case "/api/Search/Global":
                 let lines = [
                     GlobalSearchItemResponse(itemType: "Client", publicId: UUID(), username: "wrong.user", nickName: "target.user"),
