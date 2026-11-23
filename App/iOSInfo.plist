@@ -8,5 +8,10 @@
     </array>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Mizon uses your local network to connect to your server and discover devices while you are signed in. Nearby Mizon users can see your device details and public profile. You can turn discovery off in Mizon.</string>
+    <key>UILaunchScreen</key>
+    <dict>
+        <key>UIColorName</key>
+        <string>MizonLaunchBackground</string>
+    </dict>
 </dict>
 </plist>
