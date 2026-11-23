@@ -63,6 +63,8 @@
 "Refresh" = "دریافت دوباره";
 "RefreshFeatures" = "دریافت دوبارهٔ پیشنهادها";
 "ResetModel" = "بازنشانی مدل";
+"ArtistModelLoading" = "در حال بارگیری مدل سه‌بعدی";
+"ArtistModelUnavailable" = "مدل سه‌بعدی در دسترس نیست";
 "ResumePresentation" = "ادامهٔ نمایش";
 "Retry" = "تلاش دوباره";
 "ReturnToMood" = "دوباره به همان حس برگرد";

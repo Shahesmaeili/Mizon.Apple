@@ -1106,9 +1106,13 @@ struct MusicHomePage: View {
                 .allowsHitTesting(false)
                 ZStack {
                     Group {
-                        if artist.modelMediaPublicId != nil {
-                            MusicArtistModel(artist: artist, model: model, rotateHint: text("RotateHint"),
-                                             resetLabel: text("ResetModel"), showsRotationHint: !compact)
+                        if let mediaID = artist.modelMediaPublicId {
+                            MusicArtistModel(configuration: .init(mediaID: mediaID, portraitMediaID: artist.profileMediaPublicId,
+                                                                  yaw: artist.modelYawInDegrees, zoom: artist.modelViewScale,
+                                                                  verticalFocus: artist.modelVerticalFocus,
+                                                                  attribution: artist.modelAttribution),
+                                             model: model, rotateHint: text("RotateHint"), resetLabel: text("ResetModel"),
+                                             showsRotationHint: !compact)
                         } else {
                             spotlightPortrait(artist, size: min(118, orbit * 0.82))
                         }

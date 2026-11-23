@@ -22,3 +22,11 @@ Windows reference remained `ac0ea2c525a7d5e6cd1213c8364322466330aff9` when check
 The signed-in music page uses the Windows top navigation and embedded search, the original featured-player overlay and spotlight proportions, and closer ports of the card rails and sidebar widgets. The search and mood controls use the existing SDK operations. The reference timings drive the hero selection, spotlight entrances, and news transitions. The actual Windows photos are loaded from the SwiftPM bundle with bounded ImageIO decoding. The rendering check covered 320, 390, 1000, 1100, and 1600 point macOS fixtures. The iPhone simulator exercised the search field and selected music tab, feature controls, the Windows Kana model, track navigation, page scrolling, and the story preview. The 30-test Swift suite includes bundled artwork coverage.
 
 The test fixtures used synthetic data. A live pixel comparison with the Windows app remains open. The English typography falls back to the Apple system font when Segoe UI Variable is unavailable. The mood control displays the API emoji and supports selection, with the Windows Lottie effects still pending. The non-music sections still need their own Apple destinations.
+
+## Artist model delivery
+
+Codex repaired artist-model loading from Apple base `53c471a0d4d2e25560b685ca246ba6dfc3b7f2f6`. The Music Home spotlight and artist profile share the same authenticated GLB download and transparent SceneKit renderer. The renderer preserves the existing GLB size and geometry limits. The profile uses its own yaw or the matching Spotlight pose when available.
+
+The registered-media endpoint needs Mizon.Server.API `9832f13d7b1cc17a11f08f200848acec4e1e9092` or later and the existing Mizon.API.Swift pin `9c7f4621e276f07d48fb960ae44a202dc3b018a0`. The server serves `App_Data/PersonProfileFixtures` by default. For existing featured artists registered against files elsewhere, configure the exact artist-model directory in `Media:LocalContentRoots` on the server.
+
+Validation covered authenticated GLB ranges in the server diagnostics, one shared content request for two Swift artist previews, and reference GLB decoding on macOS and iPhone simulator. The display fixture used local copies of reference models and synthetic sessions.

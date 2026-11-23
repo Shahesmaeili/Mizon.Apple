@@ -1,8 +1,8 @@
 #if os(macOS) || os(iOS)
 import Foundation
 @preconcurrency import GLTFKit2
-import MizonAPIClient
 import MizonAppleCore
+import OSLog
 @preconcurrency import SceneKit
 import simd
 import SwiftUI
@@ -11,7 +11,17 @@ import UIKit
 #endif
 
 struct MusicArtistModel: View {
-    let artist: FeaturedPersonItem
+    struct Configuration: Equatable {
+        let mediaID: UUID
+        let portraitMediaID: UUID?
+        let yaw: Float
+        var zoom: Float = 1
+        var verticalFocus: Float = 0
+        var attribution: String? = nil
+    }
+
+    private static let logger = Logger(subsystem: "com.shahesmaeili.Mizon.Apple", category: "ArtistModel")
+    let configuration: Configuration
     let model: MusicHomeViewModel
     let rotateHint: String
     let resetLabel: String
@@ -21,11 +31,12 @@ struct MusicArtistModel: View {
     @Environment(\.scenePhase) private var scenePhase
     private var localization = AuthLocalization()
     @State private var visible = false
-    @State private var scene: ArtistPreviewScene?
+    @State private var loaded: (mediaID: UUID, scene: ArtistPreviewScene)?
+    @State private var failedMediaID: UUID?
     @State private var dragOrigin: simd_quatf?
 
     private var rest: simd_quatf {
-        let yaw = artist.modelYawInDegrees.isFinite ? artist.modelYawInDegrees.truncatingRemainder(dividingBy: 360) : 0
+        let yaw = configuration.yaw.isFinite ? configuration.yaw.truncatingRemainder(dividingBy: 360) : 0
         return simd_quatf(angle: yaw * .pi / 180, axis: SIMD3(0, 1, 0))
             * simd_quatf(angle: -0.04, axis: SIMD3(1, 0, 0))
     }
@@ -33,7 +44,7 @@ struct MusicArtistModel: View {
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             if let scene, visible, scenePhase == .active {
-                SceneView(scene: scene.scene, pointOfView: scene.camera, options: [.autoenablesDefaultLighting])
+                ArtistModelSceneView(preview: scene)
                     .allowsHitTesting(false)
                 rotationSurface(scene)
                     .accessibilityLabel(rotateHint)
@@ -56,27 +67,53 @@ struct MusicArtistModel: View {
                 .padding(.leading, 10)
                 .padding(.bottom, 9)
             } else if visible {
-                MusicArtwork(mediaID: artist.profileMediaPublicId, model: model, symbol: "person.fill")
+                MusicArtwork(mediaID: configuration.portraitMediaID, model: model, symbol: "person.fill")
                     .frame(width: showsRotationHint ? 118 : 96, height: showsRotationHint ? 118 : 96)
                     .clipShape(.circle)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
+                    .accessibilityLabel(localization.string(
+                        failedMediaID == configuration.mediaID ? "ArtistModelUnavailable" : "ArtistModelLoading",
+                        table: "MusicHome"
+                    ))
             } else {
                 Color.clear
             }
         }
         .onScrollVisibilityChange(threshold: 0.15) { visible = $0 }
         .task(id: activeModelID) {
-            guard scene == nil, let id = activeModelID else { return }
+            guard let id = activeModelID, scene == nil else { return }
+            dragOrigin = nil
+            failedMediaID = nil
             do {
-                let path = try await model.artwork.file(id, session: model.session, maximumBytes: 32 * 1024 * 1024)
+                let path = try await model.artwork.artistModelFile(id, session: model.session)
                 let decoded = try await ArtistPreviewScene.load(path)
                 try Task.checkCancellation()
-                scene = decoded
-                decoded.configure(orientation: rest, zoom: artist.modelViewScale, verticalFocus: artist.modelVerticalFocus)
-            } catch {}
+                configure(decoded)
+                loaded = (id, decoded)
+            } catch is CancellationError {
+            } catch {
+                guard !Task.isCancelled else { return }
+                failedMediaID = id
+                let failure = error as NSError
+                Self.logger.error("Artist model load failed (\(failure.domain, privacy: .public): \(failure.code)).")
+            }
         }
-        .help(artist.modelAttribution ?? rotateHint)
+        .onChange(of: configuration) {
+            if let scene { configure(scene) }
+        }
+        .help(failedMediaID == configuration.mediaID
+              ? localization.string("ArtistModelUnavailable", table: "MusicHome")
+              : configuration.attribution ?? rotateHint)
+    }
+
+    private var scene: ArtistPreviewScene? {
+        guard loaded?.mediaID == configuration.mediaID else { return nil }
+        return loaded?.scene
+    }
+
+    private func configure(_ scene: ArtistPreviewScene) {
+        scene.configure(orientation: rest, zoom: configuration.zoom, verticalFocus: configuration.verticalFocus)
     }
 
     @ViewBuilder
@@ -105,7 +142,7 @@ struct MusicArtistModel: View {
     }
 
     private var activeModelID: UUID? {
-        visible && scenePhase == .active ? artist.modelMediaPublicId : nil
+        visible && scenePhase == .active ? configuration.mediaID : nil
     }
 
     private func reset(_ scene: ArtistPreviewScene) {
@@ -119,6 +156,39 @@ struct MusicArtistModel: View {
         SCNTransaction.commit()
     }
 }
+
+@MainActor
+private struct ArtistModelSceneView {
+    let preview: ArtistPreviewScene
+
+    func makeSceneView() -> SCNView {
+        let view = SCNView()
+        view.backgroundColor = .clear
+        #if os(iOS)
+        view.isOpaque = false
+        #endif
+        view.autoenablesDefaultLighting = true
+        return view
+    }
+
+    func updateScene(_ view: SCNView) {
+        guard view.scene !== preview.scene else { return }
+        view.scene = preview.scene
+        view.pointOfView = preview.camera
+    }
+}
+
+#if os(macOS)
+extension ArtistModelSceneView: NSViewRepresentable {
+    func makeNSView(context: Context) -> SCNView { makeSceneView() }
+    func updateNSView(_ view: SCNView, context: Context) { updateScene(view) }
+}
+#else
+extension ArtistModelSceneView: UIViewRepresentable {
+    func makeUIView(context: Context) -> SCNView { makeSceneView() }
+    func updateUIView(_ view: SCNView, context: Context) { updateScene(view) }
+}
+#endif
 
 #if os(iOS)
 private struct MusicArtistPan: UIGestureRecognizerRepresentable {

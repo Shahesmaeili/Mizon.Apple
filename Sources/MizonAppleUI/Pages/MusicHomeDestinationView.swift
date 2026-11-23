@@ -26,6 +26,7 @@ struct MusicHomeDestinationView: View {
     @State private var updating = false
     @State private var video: AVPlayer?
     @State private var loadID = 0
+    @State private var artistHeaderWidth: CGFloat = 0
     private var localization = AuthLocalization()
 
     var body: some View {
@@ -93,17 +94,14 @@ struct MusicHomeDestinationView: View {
             }
             .buttonStyle(.glass)
         case .artist(let artist):
-            MusicArtwork(mediaID: artist.coverMediaPublicId ?? artist.profileMediaPublicId, model: model, symbol: "person.crop.circle")
-                .frame(height: 212).clipShape(.rect(cornerRadius: 12))
-            HStack {
-                Text(title).font(localization.font(25, weight: .semibold)).accessibilityAddTraits(.isHeader)
-                Spacer()
-                if artist.canFollow {
-                    Button(text(artist.isFollowing ? "Following" : "Follow")) { Task { await follow(artist) } }
-                        .buttonStyle(.glass).disabled(updating)
-                }
+            if let mediaID = artist.modelMediaPublicId {
+                artistModelHeader(artist, mediaID: mediaID)
+            } else {
+                artistCover(artist)
+                    .frame(height: 212)
+                    .clipShape(.rect(cornerRadius: 12))
+                artistIdentity(artist)
             }
-            Label(artist.followersCount.formatted(), systemImage: "person.2").foregroundStyle(.secondary)
             rows
         case .client(let item):
             MusicArtwork(mediaID: item.profileMediaPublicId, model: model, symbol: "person.fill")
@@ -147,6 +145,69 @@ struct MusicHomeDestinationView: View {
                 }
             }
         }
+    }
+
+    private func artistCover(_ artist: PersonProfileResponse) -> some View {
+        MusicArtwork(mediaID: artist.coverMediaPublicId ?? artist.profileMediaPublicId,
+                     model: model, symbol: "person.crop.circle")
+    }
+
+    private func artistIdentity(_ artist: PersonProfileResponse) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text(title)
+                    .font(localization.font(25, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                if artist.canFollow {
+                    Button(text(artist.isFollowing ? "Following" : "Follow")) { Task { await follow(artist) } }
+                        .buttonStyle(.glass)
+                        .disabled(updating)
+                }
+            }
+            Label(artist.followersCount.formatted(), systemImage: "person.2").foregroundStyle(.secondary)
+        }
+    }
+
+    private func artistModelHeader(_ artist: PersonProfileResponse, mediaID: UUID) -> some View {
+        let stacked = artistHeaderWidth < 600
+        let layout = stacked
+            ? AnyLayout(VStackLayout(spacing: 0))
+            : AnyLayout(HStackLayout(spacing: 0))
+        let modelWidth = stacked ? nil : artistHeaderWidth * (1.15 / 2.15)
+        let featured = model.artists.first {
+            $0.personPublicId == artist.personPublicId && $0.modelMediaPublicId == mediaID
+        }
+        let yaw = artist.modelYawInDegrees.flatMap { $0.isFinite ? $0 : nil }
+            ?? featured.flatMap { $0.modelYawInDegrees.isFinite ? $0.modelYawInDegrees : nil }
+            ?? (0.24 * 180 / .pi)
+        let configuration = MusicArtistModel.Configuration(
+            mediaID: mediaID,
+            portraitMediaID: artist.profileMediaPublicId,
+            yaw: yaw,
+            attribution: featured?.modelAttribution
+        )
+        return layout {
+            artistIdentity(artist)
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            MusicArtistModel(configuration: configuration, model: model, rotateHint: text("RotateHint"),
+                             resetLabel: text("ResetModel"))
+                .frame(maxWidth: .infinity)
+                .frame(width: modelWidth, height: stacked ? 220 : 288)
+        }
+        .frame(maxWidth: .infinity, minHeight: stacked ? nil : 336)
+        .background {
+            artistCover(artist)
+                .overlay {
+                    LinearGradient(colors: [MizonPalette.surface.opacity(0.92), MizonPalette.surface.opacity(0.38)],
+                                   startPoint: stacked ? .top : .leading,
+                                   endPoint: stacked ? .bottom : .trailing)
+                }
+                .allowsHitTesting(false)
+        }
+        .clipShape(.rect(cornerRadius: 12))
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { artistHeaderWidth = $0 }
     }
 
     private var rows: some View {

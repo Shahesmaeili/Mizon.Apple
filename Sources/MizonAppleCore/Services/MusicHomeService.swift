@@ -175,6 +175,11 @@ public struct MusicHomeService: Sendable {
 }
 
 public actor MusicArtworkStore {
+    private struct ArtistModelRequest {
+        let task: Task<URL, Error>
+        var viewers: Set<UUID>
+    }
+
     private final class CachedArtwork: Sendable {
         let contents: (image: CGImage, source: URL)
 
@@ -191,6 +196,7 @@ public actor MusicArtworkStore {
     private let cache = NSCache<NSUUID, CachedArtwork>()
     private let profileThumbnails = NSCache<NSUUID, CGImage>()
     private var requests: [UUID: Task<CachedArtwork, Error>] = [:]
+    private var artistModelRequests: [UUID: ArtistModelRequest] = [:]
 
     public init(service: MusicHomeService, session: AuthSession, cacheRoot: URL? = nil,
                 peerNetwork: NearbyDiscoveryService? = nil) {
@@ -268,6 +274,43 @@ public actor MusicArtworkStore {
         let media = try await service.media(id, session: session)
         return try await service.cacheMedia(media, session: session, downloader: downloader,
                                             maximumBytes: maximumBytes, peerNetwork: peerNetwork)
+    }
+
+    public func artistModelFile(_ id: UUID, session: AuthSession) async throws -> URL {
+        try Task.checkCancellation()
+        guard session.clientPublicId == accountID, session.server == server else { throw CancellationError() }
+        while let request = artistModelRequests[id], request.task.isCancelled {
+            _ = await request.task.result
+            try Task.checkCancellation()
+        }
+        let viewer = UUID()
+        let task: Task<URL, Error>
+        if let request = artistModelRequests[id] {
+            task = request.task
+            artistModelRequests[id]?.viewers.insert(viewer)
+        } else {
+            task = Task {
+                defer { artistModelRequests[id] = nil }
+                let media = try await service.media(id, session: session)
+                guard media.mediaPublicId == id else { throw LoginFailure.invalidResponse }
+                return try await service.cacheMedia(media, session: session, downloader: downloader,
+                                                    maximumBytes: 32 * 1024 * 1024, peerNetwork: peerNetwork)
+            }
+            artistModelRequests[id] = ArtistModelRequest(task: task, viewers: [viewer])
+        }
+        return try await withTaskCancellationHandler {
+            let path = try await task.value
+            try Task.checkCancellation()
+            return path
+        } onCancel: {
+            Task { await self.cancelArtistModelViewer(viewer, mediaID: id) }
+        }
+    }
+
+    private func cancelArtistModelViewer(_ viewer: UUID, mediaID: UUID) {
+        guard artistModelRequests[mediaID]?.viewers.remove(viewer) != nil,
+              let request = artistModelRequests[mediaID], request.viewers.isEmpty else { return }
+        request.task.cancel()
     }
 
     public func playableURL(_ id: UUID, session: AuthSession) async throws -> URL {

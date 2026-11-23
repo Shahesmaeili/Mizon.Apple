@@ -63,6 +63,8 @@
 "Refresh" = "Refresh";
 "RefreshFeatures" = "Refresh featured media";
 "ResetModel" = "Reset model";
+"ArtistModelLoading" = "Loading 3D model";
+"ArtistModelUnavailable" = "3D model unavailable";
 "ResumePresentation" = "Resume presentation";
 "Retry" = "Try again";
 "ReturnToMood" = "Return to that feeling";

@@ -68,6 +68,41 @@ struct NearbyProfileArtworkServiceTests {
         #expect(NearbyArtworkProtocol.requests.count == requests.count)
     }
 
+    @Test func sharesTheAuthenticatedGLBDownloadBetweenArtistPreviews() async throws {
+        let fixture = try Fixture()
+        defer { fixture.close() }
+        let id = UUID()
+        let bytes = Data([0x67, 0x6C, 0x54, 0x46, 2, 0, 0, 0, 24, 0, 0, 0,
+                          4, 0, 0, 0, 0x4A, 0x53, 0x4F, 0x4E, 0x7B, 0x7D, 0x20, 0x20])
+        NearbyArtworkProtocol.install { request in
+            #expect(request.query("MediaPublicId").flatMap(UUID.init(uuidString:)) == id)
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-access")
+            switch request.url?.path {
+            case "/api/Medias/Media":
+                let media = MediaResponse(mediaPublicId: id, totalChunks: 1, chunkSize: bytes.count,
+                    fileName: "artist.glb", fileSize: Int64(bytes.count), storagePath: "file:///C:/Models/artist.glb")
+                return .init(body: try MizonJSON.encoder().encode(BaseApiResponse(content: media)))
+            case "/api/Medias/MediaContent":
+                #expect(request.value(forHTTPHeaderField: "Range") == "bytes=0-23")
+                return .init(status: 206, body: bytes, headers: [
+                    "Content-Type": "model/gltf-binary", "Content-Range": "bytes 0-23/24"
+                ])
+            default:
+                Issue.record("Unexpected artist model fixture URL path")
+                return .init(status: 404, body: Data())
+            }
+        }
+        try await fixture.api.setToken(fixture.session.accessToken)
+
+        async let spotlight = fixture.artwork.artistModelFile(id, session: fixture.session)
+        async let profile = fixture.artwork.artistModelFile(id, session: fixture.session)
+        let (spotlightFile, profileFile) = try await (spotlight, profile)
+
+        #expect(spotlightFile == profileFile)
+        #expect(try Data(contentsOf: profileFile) == bytes)
+        #expect(NearbyArtworkProtocol.requests.filter { $0.url?.path == "/api/Medias/MediaContent" }.count == 1)
+    }
+
     @Test func invalidIdentityAndStaleSessionsDoNotContactTheServer() async throws {
         let fixture = try Fixture()
         defer { fixture.close() }
