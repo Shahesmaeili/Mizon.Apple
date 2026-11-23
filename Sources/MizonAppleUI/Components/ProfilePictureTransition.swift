@@ -13,8 +13,8 @@ private typealias ProfileTransitionView = UIView
 final class ProfilePictureTransition {
     enum Anchor { case welcome, header }
 
-    // DirectConnectedAnimationConfiguration in WinUI, in milliseconds.
-    private static let flightDuration = 200
+    // WinUI's default service duration used by GravityConnectedAnimationConfiguration.
+    private static let duration = 300
     private(set) var isInFlight = false
     @ObservationIgnored private weak var welcome: ProfileTransitionView?
     @ObservationIgnored private weak var header: ProfileTransitionView?
@@ -82,6 +82,7 @@ final class ProfilePictureTransition {
         let sourceImage = imageView(source, frame: picture.bounds)
         let destinationImage = imageView(destination, frame: picture.bounds)
         #if os(macOS)
+        picture.wantsLayer = true
         destinationImage.alphaValue = 0
         #else
         destinationImage.alpha = 0
@@ -103,7 +104,7 @@ final class ProfilePictureTransition {
             if let end = destination(in: flight.canvas) {
                 if previous == end {
                     animate(flight, to: end)
-                    try? await clock.sleep(for: .milliseconds(Self.flightDuration))
+                    try? await clock.sleep(for: .milliseconds(Self.duration))
                     return
                 }
                 previous = end
@@ -155,17 +156,18 @@ final class ProfilePictureTransition {
     }
 
     private func animate(_ flight: Flight, to frame: CGRect) {
-        let duration = Double(Self.flightDuration) / 1_000
+        let duration = Double(Self.duration) / 1_000
+        applyGravity(to: flight, destination: frame, duration: duration)
         #if os(macOS)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.1, 0.9, 0.2, 1)
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.8, 0, 0.2, 1)
             flight.picture.animator().frame = frame
             flight.sourceImage.animator().alphaValue = 0
             flight.destinationImage.animator().alphaValue = 1
         }
         #else
-        let timing = UICubicTimingParameters(controlPoint1: CGPoint(x: 0.1, y: 0.9),
+        let timing = UICubicTimingParameters(controlPoint1: CGPoint(x: 0.8, y: 0),
                                              controlPoint2: CGPoint(x: 0.2, y: 1))
         let animator = UIViewPropertyAnimator(duration: duration, timingParameters: timing)
         animator.addAnimations {
@@ -175,6 +177,41 @@ final class ProfilePictureTransition {
         }
         animator.startAnimation()
         #endif
+    }
+
+    private func applyGravity(to flight: Flight, destination: CGRect, duration: TimeInterval) {
+        #if os(macOS)
+        guard let layer = flight.picture.layer else { return }
+        let down: CGFloat = flight.canvas.isFlipped ? 1 : -1
+        #else
+        let layer = flight.picture.layer
+        let down: CGFloat = 1
+        #endif
+
+        // WinUI adds the dip to the normal movement in screen space, so it is independent of resizing.
+        addGravityKeyframes(to: layer, keyPath: "transform.translation.y", values: [0, 80 * down, 0], duration: duration)
+        addGravityKeyframes(to: layer, keyPath: "zPosition", values: [0, 32, 0], duration: duration)
+        if flight.picture.frame.size == destination.size {
+            addGravityKeyframes(to: layer, keyPath: "transform.scale", values: [1, 1.1, 1], duration: duration)
+        }
+
+        // Core Animation casts a directional shadow from the circular image as the WinUI elevation peaks.
+        layer.shadowColor = CGColor(gray: 0, alpha: 1)
+        layer.shadowOffset = CGSize(width: 0, height: 12.8 * down)
+        addGravityKeyframes(to: layer, keyPath: "shadowRadius", values: [0, 28.8, 0], duration: duration)
+        addGravityKeyframes(to: layer, keyPath: "shadowOpacity", values: [0, 0.22, 0], duration: duration)
+    }
+
+    private func addGravityKeyframes(to layer: CALayer, keyPath: String, values: [CGFloat], duration: TimeInterval) {
+        let animation = CAKeyframeAnimation(keyPath: keyPath)
+        animation.values = values
+        animation.keyTimes = [0, 0.66, 1]
+        animation.timingFunctions = [
+            CAMediaTimingFunction(controlPoints: 0.35, 0, 0.55, 1),
+            CAMediaTimingFunction(controlPoints: 0.45, 0, 0.55, 1)
+        ]
+        animation.duration = duration
+        layer.add(animation, forKey: keyPath)
     }
 
     private func isVisible(_ view: ProfileTransitionView, frame: CGRect, in host: ProfileTransitionView) -> Bool {
