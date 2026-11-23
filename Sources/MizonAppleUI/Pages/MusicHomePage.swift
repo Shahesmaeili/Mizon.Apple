@@ -357,12 +357,19 @@ struct MusicHomePage: View {
                     Button(text("Profile")) { destination = .client(model.session.clientPublicId) }
                     Button(localization.string("SignOut", table: "Settings"), action: signOut)
                 } label: {
-                    MusicHomeProfilePicture(avatar: avatar, displayName: displayName)
-                        .opacity(profileTransition.isInFlight ? 0 : 1)
+                    Color.clear
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .frame(width: 32, height: 32)
+                // The native Mac menu can snapshot its label. Keep the portrait live as the session photo loads.
+                .overlay {
+                    MusicHomeProfilePicture(avatar: avatar, displayName: displayName)
+                        .opacity(profileTransition.isInFlight ? 0 : 1)
+                        .allowsHitTesting(false)
+                }
                 .background { profileTransition.anchor(.header) }
                 .accessibilityLabel(displayName ?? text("Profile"))
                 .accessibilityIdentifier("music.home.profile")
