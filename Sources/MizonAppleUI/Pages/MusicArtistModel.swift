@@ -161,32 +161,62 @@ struct MusicArtistModel: View {
 private struct ArtistModelSceneView {
     let preview: ArtistPreviewScene
 
-    func makeSceneView() -> SCNView {
-        let view = SCNView()
+    func makeSceneView() -> ArtistViewportView {
+        let view = ArtistViewportView()
         view.backgroundColor = .clear
-        #if os(iOS)
+        #if os(macOS)
+        view.wantsLayer = true
+        view.layer?.backgroundColor = CGColor(gray: 0, alpha: 0)
+        view.layer?.isOpaque = false
+        #else
         view.isOpaque = false
         #endif
         view.autoenablesDefaultLighting = true
         return view
     }
 
-    func updateScene(_ view: SCNView) {
-        guard view.scene !== preview.scene else { return }
-        view.scene = preview.scene
-        view.pointOfView = preview.camera
+    func updateScene(_ view: ArtistViewportView) {
+        view.show(preview)
     }
+}
+
+@MainActor
+private final class ArtistViewportView: SCNView {
+    private var preview: ArtistPreviewScene?
+
+    func show(_ preview: ArtistPreviewScene) {
+        guard self.preview !== preview else { return }
+        self.preview = preview
+        preview.scene.background.contents = backgroundColor
+        scene = preview.scene
+        pointOfView = preview.camera
+        preview.resize(to: bounds.size)
+    }
+
+    #if os(macOS)
+    override var isOpaque: Bool { false }
+
+    override func layout() {
+        super.layout()
+        preview?.resize(to: bounds.size)
+    }
+    #else
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        preview?.resize(to: bounds.size)
+    }
+    #endif
 }
 
 #if os(macOS)
 extension ArtistModelSceneView: NSViewRepresentable {
-    func makeNSView(context: Context) -> SCNView { makeSceneView() }
-    func updateNSView(_ view: SCNView, context: Context) { updateScene(view) }
+    func makeNSView(context: Context) -> ArtistViewportView { makeSceneView() }
+    func updateNSView(_ view: ArtistViewportView, context: Context) { updateScene(view) }
 }
 #else
 extension ArtistModelSceneView: UIViewRepresentable {
-    func makeUIView(context: Context) -> SCNView { makeSceneView() }
-    func updateUIView(_ view: SCNView, context: Context) { updateScene(view) }
+    func makeUIView(context: Context) -> ArtistViewportView { makeSceneView() }
+    func updateUIView(_ view: ArtistViewportView, context: Context) { updateScene(view) }
 }
 #endif
 
@@ -235,6 +265,8 @@ private final class ArtistPreviewScene: @unchecked Sendable {
     let scene: SCNScene
     let pivot = SCNNode()
     let camera = SCNNode()
+    private var zoom: CGFloat = 1
+    private var viewport = CGSize(width: 1, height: 1)
 
     private init(scene source: SCNScene) throws {
         scene = SCNScene()
@@ -255,6 +287,7 @@ private final class ArtistPreviewScene: @unchecked Sendable {
 
         let lens = SCNCamera()
         lens.usesOrthographicProjection = true
+        lens.projectionDirection = .vertical
         lens.zNear = 0.1
         lens.zFar = 30
         camera.camera = lens
@@ -265,8 +298,23 @@ private final class ArtistPreviewScene: @unchecked Sendable {
     @MainActor
     func configure(orientation: simd_quatf, zoom: Float, verticalFocus: Float) {
         pivot.simdOrientation = orientation
-        camera.camera?.orthographicScale = 2.22 / Double(zoom.isFinite ? min(2.5, max(0.5, zoom)) : 1)
+        self.zoom = CGFloat(zoom.isFinite ? min(2.5, max(0.5, zoom)) : 1)
         pivot.simdPosition.y = verticalFocus.isFinite ? -min(1, max(-1, verticalFocus)) : 0
+        updateProjection()
+    }
+
+    @MainActor
+    func resize(to size: CGSize) {
+        guard size.width.isFinite, size.height.isFinite, min(size.width, size.height) >= 1, size != viewport else { return }
+        viewport = size
+        updateProjection()
+    }
+
+    @MainActor
+    private func updateProjection() {
+        // WinUI uses 45% of the shorter viewport side per world unit; SceneKit's scale is a vertical half-span.
+        let pointsPerUnit = min(viewport.width, viewport.height) * 0.45 * zoom
+        camera.camera?.orthographicScale = Double(viewport.height / (2 * pointsPerUnit))
     }
 
     @concurrent

@@ -39,7 +39,7 @@ struct MusicHomeDestinationView: View {
                     Button(text("Retry")) { loadID += 1 }.buttonStyle(.glass)
                 }
             }
-            .frame(maxWidth: 700, alignment: .leading)
+            .frame(maxWidth: contentWidth, alignment: .leading)
             .padding(24)
             .frame(maxWidth: .infinity)
         }
@@ -63,6 +63,11 @@ struct MusicHomeDestinationView: View {
             if scenePhase == .active { await observeBack() }
         }
         .onDisappear { video?.pause() }
+    }
+
+    private var contentWidth: CGFloat {
+        if case .artist(let artist)? = details, artist.modelMediaPublicId != nil { return .infinity }
+        return 700
     }
 
     private var title: String {
@@ -103,6 +108,8 @@ struct MusicHomeDestinationView: View {
                 artistIdentity(artist)
             }
             rows
+                .frame(maxWidth: 700)
+                .frame(maxWidth: .infinity)
         case .client(let item):
             MusicArtwork(mediaID: item.profileMediaPublicId, model: model, symbol: "person.fill")
                 .frame(width: 118, height: 118)
@@ -171,10 +178,16 @@ struct MusicHomeDestinationView: View {
 
     private func artistModelHeader(_ artist: PersonProfileResponse, mediaID: UUID) -> some View {
         let stacked = artistHeaderWidth < 600
+        let sizing: (modelHeight: CGFloat, minHeaderHeight: CGFloat?, modelFraction: CGFloat) = switch artistHeaderWidth {
+        case ..<600: (220, nil, 1)
+        case ..<1040: (288, 336, 1.15 / 2.15)
+        case ..<1450: (350, 374, 0.5)
+        default: (420, 450, 0.5)
+        }
         let layout = stacked
             ? AnyLayout(VStackLayout(spacing: 0))
             : AnyLayout(HStackLayout(spacing: 0))
-        let modelWidth = stacked ? nil : artistHeaderWidth * (1.15 / 2.15)
+        let modelWidth = stacked ? nil : artistHeaderWidth * sizing.modelFraction
         let featured = model.artists.first {
             $0.personPublicId == artist.personPublicId && $0.modelMediaPublicId == mediaID
         }
@@ -194,9 +207,9 @@ struct MusicHomeDestinationView: View {
             MusicArtistModel(configuration: configuration, model: model, rotateHint: text("RotateHint"),
                              resetLabel: text("ResetModel"))
                 .frame(maxWidth: .infinity)
-                .frame(width: modelWidth, height: stacked ? 220 : 288)
+                .frame(width: modelWidth, height: sizing.modelHeight)
         }
-        .frame(maxWidth: .infinity, minHeight: stacked ? nil : 336)
+        .frame(maxWidth: .infinity, minHeight: sizing.minHeaderHeight)
         .background {
             artistCover(artist)
                 .overlay {
