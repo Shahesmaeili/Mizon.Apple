@@ -9,69 +9,308 @@ enum MusicHomeChrome {
     static let hint = MizonPalette.ink.opacity(0.62)
 }
 
-struct MusicHomeHeader<Search: View, HomeTab: View, Account: View>: View {
-    let width: CGFloat
-    @ViewBuilder let search: () -> Search
-    @ViewBuilder let home: () -> HomeTab
-    @ViewBuilder let account: () -> Account
+enum MusicHomeNavigationSection: String, CaseIterable, Identifiable {
+    case music, movies, apps, vpn
+
+    var id: Self { self }
+
+    var key: String {
+        switch self {
+        case .music: "ShellMusic"
+        case .movies: "ShellMovies"
+        case .apps: "ShellApps"
+        case .vpn: "ShellVPN"
+        }
+    }
+
+    var icon: FluentSymbol {
+        switch self {
+        case .music: .headphones
+        case .movies: .video
+        case .apps: .apps
+        case .vpn: .shield
+        }
+    }
+
+    var estimatedWidth: CGFloat {
+        switch self {
+        case .music: 101
+        case .movies: 148
+        case .apps: 86
+        case .vpn: 85
+        }
+    }
+}
+
+struct MusicHomeNavigationLabel: View {
+    let section: MusicHomeNavigationSection
+    let compact: Bool
+    @ScaledMetric(relativeTo: .body) private var titleHeight: CGFloat = 26
+
+    var body: some View {
+        MusicHomeNavigationTitle(section: section, showsText: !compact)
+            .padding(.horizontal, compact ? 0 : 16)
+            .frame(width: compact ? MusicHomeNavigationLayout.compactMusicWidth : nil,
+                   height: compact ? 40 : max(40, titleHeight + 10))
+            .contentShape(Rectangle())
+    }
+}
+
+private struct MusicHomeNavigationTitle: View {
+    let section: MusicHomeNavigationSection
+    var showsText = true
+    var allowsWrapping = false
     private var localization = AuthLocalization()
 
     var body: some View {
         HStack(spacing: 8) {
-            tabStrip(showsMovies: width >= 625, showsApps: width >= 725, showsVPN: width >= 825)
-            search().frame(maxWidth: 640).frame(maxWidth: .infinity, alignment: .trailing)
-            account()
+            FluentIcon(symbol: section.icon, size: 18, usesColor: true)
+                .dynamicTypeSize(.large)
+            if showsText {
+                Text(localization.string(section.key, table: "MusicHome"))
+                    .font(localization.font(14))
+                    .foregroundStyle(MizonPalette.ink)
+                    .lineLimit(allowsWrapping ? nil : 1)
+            }
         }
-        .padding(.horizontal, width >= 960 ? 18 : 8)
+    }
+}
+
+struct MusicHomeOverflowNavigationLabel: View {
+    let compact: Bool
+
+    var body: some View {
+        FluentIcon(symbol: .moreHorizontal, size: 16)
+            .dynamicTypeSize(.large)
+            .foregroundStyle(MizonPalette.ink)
+            .frame(width: MusicHomeNavigationLayout.overflowWidth(compact: compact), height: 40)
+            .contentShape(Rectangle())
+    }
+}
+
+struct MusicHomeNavigationTabStyle: ButtonStyle {
+    let selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        MusicHomeNavigationTabAppearance(
+            label: configuration.label,
+            selected: selected,
+            isPressed: configuration.isPressed
+        )
+    }
+}
+
+private struct MusicHomeNavigationTabAppearance<Label: View>: View {
+    let label: Label
+    let selected: Bool
+    let isPressed: Bool
+    @State private var hovered = false
+
+    var body: some View {
+        label
+            .background {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(MizonPalette.ink.opacity(isPressed ? 0.04 : hovered ? 0.07 : 0))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+            }
+            .overlay(alignment: .bottom) {
+                if selected {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(MizonPalette.accent)
+                        .frame(width: 16, height: 3)
+                        .padding(.bottom, 4)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .onHover { hovered = $0 }
+    }
+}
+
+struct MusicHomeHeader<Search: View, HomeTab: View, Overflow: View, Account: View>: View {
+    let width: CGFloat
+    @Binding var showingOverflow: Bool
+    let onOverflowAvailabilityChange: (Bool) -> Void
+    @ViewBuilder let search: (Bool) -> Search
+    @ViewBuilder let home: (Bool) -> HomeTab
+    @ViewBuilder let overflow: (MusicHomeOverflowNavigationLabel) -> Overflow
+    @ViewBuilder let account: () -> Account
+    @State private var measuredTabs: [MusicHomeNavigationSection: CGFloat] = [:]
+    @State private var accountWidth: CGFloat = 108
+    @State private var hadOverflow = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.locale) private var locale
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    private var localization = AuthLocalization()
+
+    var body: some View {
+        let minimumSearch: CGFloat = 32
+        let fullSearch: CGFloat = 144
+        let regularInset: CGFloat = width >= 960 ? 18 : 8
+        let regularGap: CGFloat = 8
+        let minimumTabs = MusicHomeNavigationLayout.compactMusicWidth
+            + MusicHomeNavigationLayout.overflowWidth(compact: false)
+        let tight = width - accountWidth < (regularInset + regularGap) * 2 + minimumSearch + minimumTabs
+        let horizontalInset = tight ? 2 : regularInset
+        let gap = tight ? 3 : regularGap
+        let tabBudget = max(0, width - horizontalInset * 2 - gap * 2 - accountWidth - minimumSearch)
+        let layout = MusicHomeNavigationLayout(
+            budget: tabBudget,
+            widths: measuredTabs,
+            compactOverflow: tight,
+            restoringAll: hadOverflow
+        )
+        let hasOverflow = !layout.hidden.isEmpty
+        let compactSearch = tabBudget + minimumSearch - layout.width < fullSearch
+
+        HStack(spacing: gap) {
+            tabStrip(layout, compactOverflow: tight)
+            search(compactSearch)
+                .frame(maxWidth: 640)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            account()
+                .fixedSize(horizontal: true, vertical: false)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { accountWidth = $0 }
+        }
+        .padding(.horizontal, horizontalInset)
         .frame(width: width)
+        .background(alignment: .leading) { tabMeasurements }
         .environment(\.layoutDirection, .leftToRight)
+        .onChange(of: hasOverflow, initial: true) { _, available in
+            hadOverflow = available
+            if !available { showingOverflow = false }
+            onOverflowAvailabilityChange(available)
+        }
     }
 
-    private func tabStrip(showsMovies: Bool, showsApps: Bool, showsVPN: Bool) -> some View {
-        HStack(spacing: 5) {
-            home()
-            if showsMovies { inactive("ShellMovies", icon: .video) }
-            if showsApps { inactive("ShellApps", icon: .apps) }
-            if showsVPN { inactive("ShellVPN", icon: .shield) }
-            if !showsMovies || !showsApps || !showsVPN {
-                Menu {
-                    if !showsMovies { overflowItem("ShellMovies", icon: .video) }
-                    if !showsApps { overflowItem("ShellApps", icon: .apps) }
-                    if !showsVPN { overflowItem("ShellVPN", icon: .shield) }
-                } label: {
-                    FluentIcon(symbol: .moreHorizontal, size: 16)
-                        .foregroundStyle(MizonPalette.ink)
-                        .frame(width: 30, height: 36)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .accessibilityLabel(localization.string("ShellMoreTabs", table: "MusicHome"))
-                .accessibilityIdentifier("music.home.menu")
+    private var tabMeasurements: some View {
+        HStack(spacing: 0) {
+            ForEach(MusicHomeNavigationSection.allCases) { section in
+                MusicHomeNavigationLabel(section: section, compact: false)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { measuredTabs[section] = $0 }
+            }
+        }
+        .fixedSize()
+        .hidden()
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
+
+    private func tabStrip(_ layout: MusicHomeNavigationLayout, compactOverflow: Bool) -> some View {
+        HStack(spacing: 0) {
+            home(layout.compactMusic)
+            ForEach(layout.visible) { section in
+                unavailable(section) { MusicHomeNavigationLabel(section: section, compact: false) }
+            }
+            if !layout.hidden.isEmpty {
+                overflow(MusicHomeOverflowNavigationLabel(compact: compactOverflow))
+                    .popover(isPresented: $showingOverflow, arrowEdge: .top) {
+                        overflowMenu(layout.hidden)
+                            .presentationCompactAdaptation(.popover)
+                    }
             }
         }
         .fixedSize(horizontal: true, vertical: true)
     }
 
-    private func overflowItem(_ key: String, icon: FluentSymbol) -> some View {
-        Button {} label: {
-            HStack {
-                FluentIcon(symbol: icon, size: 16, usesColor: true)
-                Text(localization.string(key, table: "MusicHome"))
+    private func overflowMenu(_ sections: [MusicHomeNavigationSection]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(sections) { section in
+                unavailable(section) {
+                    overflowRow(section)
+                }
+                .accessibilityIdentifier("music.home.overflow.\(section.rawValue)")
             }
         }
-        .disabled(true)
+        .padding(.vertical, 2)
+        .frame(width: min(272, max(244, width - 20)))
+        .background {
+            MizonPalette.surface.opacity(reduceTransparency ? 1 : 0.70).ignoresSafeArea()
+        }
+        .environment(\.layoutDirection, .leftToRight)
+        .environment(\.locale, locale)
+        .environment(\.dynamicTypeSize, dynamicTypeSize)
+        .accessibilityIdentifier("music.home.overflow")
     }
 
-    private func inactive(_ key: String, icon: FluentSymbol) -> some View {
-        let label = localization.string(key, table: "MusicHome")
-        return HStack(spacing: 8) {
-            FluentIcon(symbol: icon, size: 18, usesColor: true)
-            Text(label).font(localization.font(14)).foregroundStyle(MizonPalette.secondaryText).lineLimit(1)
+    private func overflowRow(_ section: MusicHomeNavigationSection) -> some View {
+        let status = Text(localization.string("ShellSectionUnavailable", table: "MusicHome"))
+            .font(localization.font(11))
+            .foregroundStyle(MusicHomeChrome.hint)
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 0) {
+                MusicHomeNavigationTitle(section: section)
+                Spacer(minLength: 12)
+                status.lineLimit(1)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            VStack(alignment: .leading, spacing: 2) {
+                MusicHomeNavigationTitle(section: section, allowsWrapping: true)
+                status.padding(.leading, 26)
+            }
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 10).frame(height: 36)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(.isStaticText)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 16)
+        .padding(.trailing, 20)
+        .padding(.vertical, 4)
+        .frame(minHeight: 36)
+    }
+
+    private func unavailable<Label: View>(
+        _ section: MusicHomeNavigationSection,
+        @ViewBuilder label: () -> Label
+    ) -> some View {
+        label()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(localization.string(section.key, table: "MusicHome"))
+            .accessibilityValue(localization.string("ShellSectionUnavailable", table: "MusicHome"))
+            .accessibilityAddTraits(.isStaticText)
+    }
+}
+
+struct MusicHomeNavigationLayout {
+    static let compactMusicWidth: CGFloat = 36
+    let visible: [MusicHomeNavigationSection]
+    let hidden: [MusicHomeNavigationSection]
+    let compactMusic: Bool
+    let width: CGFloat
+
+    static func overflowWidth(compact: Bool) -> CGFloat {
+        compact ? 32 : 40
+    }
+
+    init(
+        budget: CGFloat,
+        widths: [MusicHomeNavigationSection: CGFloat],
+        compactOverflow: Bool,
+        restoringAll: Bool = false
+    ) {
+        let sections = Array(MusicHomeNavigationSection.allCases.dropFirst())
+        let musicWidth = widths[.music] ?? MusicHomeNavigationSection.music.estimatedWidth
+        let total = sections.reduce(musicWidth) { $0 + (widths[$1] ?? $1.estimatedWidth) }
+        if total + (restoringAll ? 5 : 0) <= budget {
+            visible = sections
+            hidden = []
+            compactMusic = false
+            width = total
+            return
+        }
+
+        let overflowWidth = Self.overflowWidth(compact: compactOverflow)
+        compactMusic = musicWidth + overflowWidth > budget
+        var used = (compactMusic ? Self.compactMusicWidth : musicWidth) + overflowWidth
+        let fitting = sections.prefix {
+            let next = widths[$0] ?? $0.estimatedWidth
+            guard used + next <= budget else { return false }
+            used += next
+            return true
+        }
+        visible = Array(fitting)
+        hidden = Array(sections.dropFirst(fitting.count))
+        width = used
     }
 }
 
@@ -105,9 +344,11 @@ struct MusicHomeSearch: View {
                     Text("⌘ K").font(.system(size: 10)).foregroundStyle(MusicHomeChrome.hint)
                     #endif
                 }
-                FluentIcon(symbol: .search, size: 16).foregroundStyle(MizonPalette.accent)
+                FluentIcon(symbol: .search, size: 16)
+                    .dynamicTypeSize(.large)
+                    .foregroundStyle(MizonPalette.accent)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, compact ? 8 : 10)
             .frame(height: 32)
             .background(MusicHomeChrome.controlFill, in: .rect(cornerRadius: 9))
             .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }

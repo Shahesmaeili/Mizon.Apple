@@ -59,7 +59,7 @@ enum MusicDestination: Hashable, Identifiable {
 
 struct MusicHomePage: View {
     enum Action: Hashable {
-        case search, home, nearby, mood, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
+        case search, home, navigationOverflow, nearby, mood, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
         case featureControls, featureThumbnail(Int), retryFeatureMedia
         case allGenres, genre(UUID), story(UUID), profile(UUID), follow(UUID)
         case playlist(UUID), library, activity(String), moreActivity, recent, news(Int), transport
@@ -114,6 +114,8 @@ struct MusicHomePage: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     #endif
     @State private var showingSearch = false
+    @State private var showingNavigationOverflow = false
+    @State private var navigationHasOverflow = false
     @State private var showingMoodPicker = false
     @State private var moodPress: UInt = 0
     @State private var nearbyAvatars = NearbyAvatarModel()
@@ -315,33 +317,27 @@ struct MusicHomePage: View {
     private func header(viewport: CGSize, width: CGFloat) -> some View {
         let accountShape = UnevenRoundedRectangle(
             topLeadingRadius: 8, bottomLeadingRadius: 8, bottomTrailingRadius: 16, topTrailingRadius: 16)
-        return MusicHomeHeader(width: width) {
-            MusicHomeSearch(model: model, viewportWidth: viewport.width, compact: width < 440,
+        return MusicHomeHeader(width: width, showingOverflow: $showingNavigationOverflow,
+                               onOverflowAvailabilityChange: setNavigationOverflowAvailability) { compactSearch in
+            MusicHomeSearch(model: model, viewportWidth: viewport.width, compact: compactSearch,
                             focusRequest: $searchFocusRequest, showingSearch: $showingSearch) { result in
                 destination = result.kind == .music ? .track(result.publicID) : .client(result.publicID)
             }
             .focusable()
             .focused($controlFocus, equals: .search)
-        } home: {
+        } home: { compactTab in
             control(.home) {
-                HStack(spacing: 6) {
-                    FluentIcon(symbol: .headphones, size: 18, usesColor: true)
-                    if width >= 320 {
-                        Text(text("ShellMusic")).font(localization.font(14, weight: .semibold)).lineLimit(1)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 36)
-                .foregroundStyle(MizonPalette.ink)
-                .overlay(alignment: .bottom) {
-                    Capsule().fill(MizonPalette.accent).frame(width: 17, height: 3).offset(y: -2)
-                }
+                MusicHomeNavigationLabel(section: .music, compact: compactTab)
             }
-            .buttonStyle(MusicHomeButtonStyle(fill: MizonPalette.accent.opacity(0.10),
-                                             stroke: MizonPalette.accent.opacity(0.20), corner: 6))
+            .buttonStyle(MusicHomeNavigationTabStyle(selected: true))
             .accessibilityLabel(text("ShellMusic"))
             .accessibilityAddTraits(.isSelected)
             .accessibilityIdentifier("music.home.tab")
+        } overflow: { label in
+            control(.navigationOverflow) { label }
+                .buttonStyle(MusicHomeNavigationTabStyle(selected: false))
+                .accessibilityLabel(text("ShellMoreTabs"))
+                .accessibilityIdentifier("music.home.menu")
         } account: {
             HStack(spacing: 0) {
                 nearbyControl(viewport: viewport)
@@ -372,6 +368,14 @@ struct MusicHomePage: View {
             }
             .background(MusicHomeChrome.controlFill, in: accountShape)
             .overlay { accountShape.strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }
+        }
+    }
+
+    private func setNavigationOverflowAvailability(_ available: Bool) {
+        navigationHasOverflow = available
+        if !available {
+            showingNavigationOverflow = false
+            if controlFocus == .navigationOverflow { controlFocus = .home }
         }
     }
 
@@ -458,7 +462,8 @@ struct MusicHomePage: View {
                 .frame(width: feedWidth)
                 .scrollIndicators(.hidden)
                 .onChange(of: controlFocus) { _, target in
-                    if let target, target != .search, target != .home, target != .nearby, target != .mood, target != .recent {
+                    if let target, target != .search, target != .home, target != .navigationOverflow, target != .nearby,
+                       target != .mood, target != .recent {
                         reader.scrollTo(target, anchor: .center)
                     }
                 }
@@ -1465,7 +1470,8 @@ struct MusicHomePage: View {
             .authHandPointer(enabled: true)
             .overlay {
                 if controlFocus == action {
-                    let focusColor = action == .home || action == .transport ? MizonPalette.accent : Color.accentColor
+                    let focusColor = action == .home || action == .navigationOverflow || action == .transport
+                        ? MizonPalette.accent : Color.accentColor
                     RoundedRectangle(cornerRadius: 9).strokeBorder(focusColor, lineWidth: 2).allowsHitTesting(false)
                 }
             }
@@ -1475,6 +1481,8 @@ struct MusicHomePage: View {
         switch action {
         case .search: searchFocusRequest += 1
         case .home: scrollHomeRequest += 1
+        case .navigationOverflow:
+            if navigationHasOverflow { showingNavigationOverflow.toggle() }
         case .nearby: nearbyPress &+= 1
         case .mood: moodPress &+= 1
         case .featureControls: showingPreviewControls = true
@@ -1558,7 +1566,9 @@ struct MusicHomePage: View {
     }
 
     private var controllerTargets: [Action] {
-        var targets: [Action] = [.home, .search, .nearby, .mood]
+        var targets: [Action] = [.home]
+        if navigationHasOverflow { targets.append(.navigationOverflow) }
+        targets += [.search, .nearby, .mood]
         if let item = currentFeature {
             targets.append(.featureControls)
             if model.features.count > 1 {
@@ -1608,13 +1618,19 @@ struct MusicHomePage: View {
                     : vertical < -0.65 || horizontal > 0.65 ? 3 : vertical > 0.65 || horizontal < -0.65 ? 4 : 0
                 if control == 0 { armed = true }
                 if armed, control != 0, control != previous {
-                    let targets = controllerTargets
-                    if control == 1 {
+                    if showingNavigationOverflow {
+                        if control == 2 {
+                            showingNavigationOverflow = false
+                            controlFocus = navigationHasOverflow ? .navigationOverflow : .home
+                        }
+                    } else if control == 1 {
+                        let targets = controllerTargets
                         if let controlFocus, targets.contains(controlFocus) { activate(controlFocus) }
                         else { controlFocus = targets.first }
                     } else if control == 2 {
                         controlFocus = nil
-                    } else if !targets.isEmpty {
+                    } else {
+                        let targets = controllerTargets
                         let index = controlFocus.flatMap { targets.firstIndex(of: $0) }
                         let next = index.map { ($0 + (control == 3 ? 1 : targets.count - 1)) % targets.count } ?? 0
                         controlFocus = targets[next]
