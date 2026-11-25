@@ -145,7 +145,8 @@ struct NearbyProfileArtworkServiceTests {
         let lastByte = fixture.imageData.count - 1
         let ranges = NearbyArtworkProtocol.requests.filter { $0.url?.path == "/current.png" }
             .compactMap { $0.value(forHTTPHeaderField: "Range") }
-        #expect(ranges == (resumePartial ? ["bytes=16-\(lastByte)", "bytes=0-\(lastByte)"] : ["bytes=0-\(lastByte)"]))
+        let requestedStart = resumePartial ? 16 : 0
+        #expect(ranges == ["bytes=\(requestedStart)-\(lastByte)"])
     }
 
     @Test func sharesTheAuthenticatedGLBDownloadBetweenArtistPreviews() async throws {

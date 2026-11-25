@@ -104,7 +104,7 @@ public struct MizonWelcomeService: WelcomeService {
                 } else if media.chunkSize <= 0 {
                     media.chunkSize = Self.legacyMediaChunkSize
                 }
-                return try await downloadAvatar(media, directHTTPS: directHTTPS, endpoints: endpoints, session: session)
+                return try await downloadAvatar(media, endpoints: endpoints, session: session)
             }
             group.addTask {
                 try await Task.sleep(for: .seconds(timeout))
@@ -115,9 +115,8 @@ public struct MizonWelcomeService: WelcomeService {
         }
     }
 
-    private func downloadAvatar(_ media: MediaResponse, directHTTPS: Bool, endpoints: Endpoints,
-                                session: AuthSession) async throws -> CGImage? {
-        for attempt in 0..<2 {
+    private func downloadAvatar(_ media: MediaResponse, endpoints: Endpoints, session: AuthSession) async throws -> CGImage? {
+        for _ in 0..<2 {
             do {
                 let path = try await downloader.downloadToCache(media, api: api, endpoints: endpoints)
                 try await checkAvatarSession(session)
@@ -125,9 +124,6 @@ public struct MizonWelcomeService: WelcomeService {
                 try await checkAvatarSession(session)
                 if let image { return image }
                 Self.logger.error("Downloaded profile image could not be decoded")
-            } catch let error as BaseApiError where directHTTPS && error.code == 200 && attempt == 0 {
-                // An origin that ignores Range cannot resume an incomplete cached image.
-                Self.logger.notice("Restarting profile image download from the beginning")
             } catch let error as BaseApiError {
                 try await checkAvatarSession(session)
                 Self.logger.error("Profile image download failed (API code \(error.code, privacy: .public))")
