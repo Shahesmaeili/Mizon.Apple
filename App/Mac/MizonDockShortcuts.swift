@@ -46,7 +46,10 @@ final class MizonDockShortcuts: NSObject {
 
     private func open(_ destination: ShellShortcutDestination) {
         shortcuts.request(destination)
+        activateMainWindow()
+    }
 
+    func activateMainWindow() {
         let app = NSApplication.shared
         if app.isHidden { app.unhide(nil) }
         app.activate()

@@ -78,6 +78,10 @@ public struct MizonRootView: View {
             }
             .onDisappear { profileTransition.cancel() }
             .onChange(of: shellContext, initial: true) { _, _ in
+                #if os(macOS)
+                let busy = shellContext == .busy || shellContext == .signingOut
+                MacMenuBarProfile.shared.setAccountBusy(busy)
+                #endif
                 updateShortcutMenu()
                 openPendingShortcut()
             }
@@ -86,7 +90,17 @@ public struct MizonRootView: View {
             .onChange(of: model.session?.sessionPublicId) {
                 accountSheet = nil
                 authShortcut = nil
+                #if os(macOS)
+                MacMenuBarProfile.shared.retainOnlySession(model.session?.sessionPublicId)
+                #endif
             }
+            #if os(macOS)
+            .onReceive(MacMenuBarProfile.shared.$profileRequest) { request in
+                if let request, request.sessionID == model.session?.sessionPublicId, !model.isLoading {
+                    accountSheet = nil
+                }
+            }
+            #endif
             .sheet(item: $accountSheet, onDismiss: model.dismissError) { request in
                 AuthenticationPage(model: model, shellRequest: request) { accountSheet = nil }
                     .safeAreaInset(edge: .top, spacing: 0) {
@@ -194,7 +208,7 @@ public struct MizonRootView: View {
             MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
                           nearby: nearby, avatar: home.avatar, profileTransition: profileTransition,
                           initialMood: home.account?.mood, shellRequest: $sectionShortcut,
-                          shellAccountOpen: accountSheet != nil) {
+                          shellAccountOpen: accountSheet != nil || signingOut) {
                 guard !signingOut else { return }
                 signingOut = true
                 Task {

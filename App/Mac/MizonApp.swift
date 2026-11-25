@@ -57,7 +57,20 @@ private struct MizonMacWindowContent: View {
         MizonRootView(model: model)
             .onAppear {
                 shortcuts.reopenMainWindow = { [openWindow] in openWindow(id: "main") }
+                MacMenuBarProfile.shared.activateMainWindow = { [weak shortcuts] in shortcuts?.activateMainWindow() }
+                updateWindowActivity()
             }
+            .onDisappear { MacMenuBarProfile.shared.mainWindowClosed() }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in updateWindowActivity() }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in updateWindowActivity() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in updateWindowActivity() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in updateWindowActivity() }
+    }
+
+    private func updateWindowActivity() {
+        let window = NSApp.keyWindow
+        let active = NSApp.isActive && window?.identifier?.rawValue == "main" && window?.isVisible == true
+        MacMenuBarProfile.shared.setMainWindowActive(active)
     }
 }
 
@@ -123,6 +136,14 @@ final class MizonApplicationDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { dockShortcuts.menu() }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !MacMenuBarProfile.shared.keepsApplicationRunning
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag, MacMenuBarProfile.shared.keepsApplicationRunning else { return true }
+        dockShortcuts.activateMainWindow()
+        return false
+    }
 }
 #endif

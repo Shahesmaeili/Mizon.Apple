@@ -36,8 +36,7 @@ public final class MusicHomeViewModel {
     }
 
     public func moodAnimationURL(_ mediaID: UUID) async throws -> URL {
-        let source = try await artwork.file(mediaID, session: session, maximumBytes: Int64(MoodAnimationAsset.maximumBytes))
-        return try await MoodAnimationAsset.jsonFile(for: source)
+        try await artwork.moodAnimationURL(mediaID, session: session)
     }
 
     public func refresh() async {

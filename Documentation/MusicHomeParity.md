@@ -38,3 +38,11 @@ The reference is [Windows JumpListService](https://github.com/Shahesmaeili/Mizon
 macOS provides these commands through the running app’s Dock menu. iPhone provides dynamic Home Screen quick actions after the first launch and accepts them on warm and cold launches. Movies and TV and Apps open section landings. Apple VPN opens its availability page. The Apple app has no live MCP host or shortcut consent scope. The existing Mac application remains single-instance.
 
 Music Home uses a 52-point native macOS toolbar with 44-point tabs and 38-point search and account controls. The previous toolbar style returns when Music Home is removed. The Swift tests cover compact overflow, AppKit toolbar switching, shortcut ordering and localization, authentication gates, and replacement of pending requests.
+
+## Profile and mood in the macOS menu bar
+
+The [Windows taskbar companion](https://github.com/Shahesmaeili/Mizon.Windows/tree/315d795/Taskbar/Mizon.Windows.Taskbar) supplies the reference layout and actions. The Mac shows the confirmed mood to the left of the signed-in avatar in native status items. macOS sizes the menu bar and manages item placement. The avatar opens the authenticated profile and shows a loading ring until the profile resolves. The mood loops only while visible and plays its 208-point effect only on click. The effect appears below the top bar and respects Reduce Motion.
+
+Mac status items remain available when the main window closes. The Mizon process retains the verified presentation, clears it on sign-out, and releases the presence socket when the main window closes. Quit removes the items. Settings can hide them. The online badge requires acknowledgment from the existing Swift SDK hub for the current account and an active main window. The loop and click effect share Music Home’s authenticated artwork cache. This feature has no Apple MCP transport or grant.
+
+In the active Mizon window, the Xbox controller opens the focused account profile with A and plays the menu bar effect with X when the mood control is focused. The status items themselves use macOS keyboard and accessibility navigation.

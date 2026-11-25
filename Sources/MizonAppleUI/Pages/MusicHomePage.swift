@@ -62,7 +62,7 @@ struct MusicHomePage: View {
     enum Action: Hashable {
         case search, home, navigationOverflow, nearby, mood, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
         case featureControls, featureThumbnail(Int), retryFeatureMedia
-        case allGenres, genre(UUID), story(UUID), profile(UUID), follow(UUID)
+        case allGenres, genre(UUID), story(UUID), profile(UUID), ownProfile, follow(UUID)
         case playlist(UUID), library, activity(String), moreActivity, recent, news(Int), transport
         case rhythmDay(Int), previousNews, nextNews, toggleNews, selectNews(Int), spotlightTrack(UUID)
         case addStory, mutePreview, copyFeatureLink, previousSpotlight, nextSpotlight
@@ -112,6 +112,7 @@ struct MusicHomePage: View {
     @State private var headerViewport = CGSize(width: 960, height: 700)
     @State private var pendingHeroVisibility: Bool?
     @State private var resumePreviewAfterScroll = false
+    @Environment(\.appearsActive) private var appearsActive
     #else
     @State private var phoneHeaderHasScrolled = false
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -250,6 +251,25 @@ struct MusicHomePage: View {
                 }
         }
         .preferredColorScheme(.dark)
+        #if os(macOS)
+        .onAppear {
+            MacMenuBarProfile.shared.present(session: model.session, service: model.service, artwork: model.artwork,
+                                             displayName: displayName ?? "", avatar: avatar,
+                                             mood: initialMood, isPersian: localization.isPersian)
+        }
+        .onChange(of: avatar.map(ObjectIdentifier.init)) {
+            MacMenuBarProfile.shared.updateAvatar(avatar, sessionID: model.session.sessionPublicId)
+        }
+        .onChange(of: localization.isPersian) {
+            MacMenuBarProfile.shared.setLanguage(isPersian: localization.isPersian)
+        }
+        .onReceive(MacMenuBarProfile.shared.$profileRequest) { request in
+            openMenuBarProfile(request)
+        }
+        .onChange(of: shellAccountOpen) {
+            openMenuBarProfile(MacMenuBarProfile.shared.profileRequest)
+        }
+        #endif
         .onChange(of: shellRequest, initial: true) {
             guard let request = shellRequest else { return }
             openShellSection(request.destination)
@@ -336,10 +356,29 @@ struct MusicHomePage: View {
         .onDisappear { model.stop() }
     }
 
-    private var controllerActive: Bool { scenePhase == .active && !shellAccountOpen }
+    private var controllerActive: Bool {
+        #if os(macOS)
+        scenePhase == .active && appearsActive && !shellAccountOpen
+        #else
+        scenePhase == .active && !shellAccountOpen
+        #endif
+    }
+
+    #if os(macOS)
+    private func openMenuBarProfile(_ request: MacMenuBarProfile.ProfileRequest?) {
+        guard !shellAccountOpen, let request, request.sessionID == model.session.sessionPublicId else { return }
+        dismissShellOverlays()
+        destination = .client(model.session.clientPublicId)
+    }
+    #endif
 
     private func openShellSection(_ section: ShellShortcutDestination) {
         guard !section.isAccount else { return }
+        dismissShellOverlays()
+        destination = section == .music ? nil : .section(section)
+    }
+
+    private func dismissShellOverlays() {
         showingSearch = false
         showingNavigationOverflow = false
         showingLibrary = false
@@ -349,7 +388,6 @@ struct MusicHomePage: View {
         showingMoodPicker = false
         fullWindowVideo = false
         article = nil
-        destination = section == .music ? nil : .section(section)
     }
 
     private func header(viewport: CGSize, width: CGFloat) -> some View {
@@ -386,32 +424,40 @@ struct MusicHomePage: View {
                         .environment(navigationFocus)
                         #endif
                 }
-                Menu {
-                    if let displayName, !displayName.isEmpty { Text(displayName) }
-                    Button(text("Profile")) { destination = .client(model.session.clientPublicId) }
-                    Button(localization.string("SignOut", table: "Settings"), action: signOut)
-                } label: {
-                    Color.clear
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 32, height: 32)
-                // The native Mac menu can snapshot its label. Keep the portrait live as the session photo loads.
-                .overlay {
-                    MusicHomeProfilePicture(avatar: avatar, displayName: displayName)
-                        .opacity(profileTransition.isInFlight ? 0 : 1)
-                        .allowsHitTesting(false)
-                }
-                .background { profileTransition.anchor(.header) }
-                .accessibilityLabel(displayName ?? text("Profile"))
-                .accessibilityIdentifier("music.home.profile")
+                #if os(macOS)
+                focusableControl(.ownProfile, cornerRadius: 8) { profileMenu }
+                #else
+                profileMenu
+                #endif
             }
             .padding(.vertical, (MusicHomeChrome.controlHeight - 32) / 2)
             .background(MusicHomeChrome.controlFill, in: accountShape)
             .overlay { accountShape.strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }
         }
+    }
+
+    private var profileMenu: some View {
+        Menu {
+            if let displayName, !displayName.isEmpty { Text(displayName) }
+            Button(text("Profile")) { activate(.ownProfile) }
+            Button(localization.string("SignOut", table: "Settings"), action: signOut)
+        } label: {
+            Color.clear
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 32, height: 32)
+        // The native Mac menu can snapshot its label. Keep the portrait live as the session photo loads.
+        .overlay {
+            MusicHomeProfilePicture(avatar: avatar, displayName: displayName)
+                .opacity(profileTransition.isInFlight ? 0 : 1)
+                .allowsHitTesting(false)
+        }
+        .background { profileTransition.anchor(.header) }
+        .accessibilityLabel(displayName ?? text("Profile"))
+        .accessibilityIdentifier("music.home.profile")
     }
 
     private func setNavigationOverflowAvailability(_ available: Bool) {
@@ -522,7 +568,7 @@ struct MusicHomePage: View {
                 .onChange(of: controlFocus) { _, target in
                     if navigationFocus.showsNavigationFocus, let target,
                        target != .search, target != .home, target != .navigationOverflow, target != .nearby,
-                       target != .mood, target != .recent {
+                       target != .mood, target != .ownProfile, target != .recent {
                         reader.scrollTo(target, anchor: .center)
                     }
                 }
@@ -1620,6 +1666,7 @@ struct MusicHomePage: View {
             if navigationHasOverflow { showingNavigationOverflow.toggle() }
         case .nearby: nearbyPress &+= 1
         case .mood: moodPress &+= 1
+        case .ownProfile: destination = .client(model.session.clientPublicId)
         case .featureControls: showingPreviewControls = true
         case .featureThumbnail(let index): selectFeature(index)
         case .retryFeatureMedia: heroMediaRetry += 1
@@ -1704,6 +1751,9 @@ struct MusicHomePage: View {
         var targets: [Action] = [.home]
         if navigationHasOverflow { targets.append(.navigationOverflow) }
         targets += [.search, .nearby, .mood]
+        #if os(macOS)
+        targets.append(.ownProfile)
+        #endif
         if let item = currentFeature {
             targets.append(.featureControls)
             if model.features.count > 1 {
@@ -1739,8 +1789,10 @@ struct MusicHomePage: View {
         return targets
     }
 
+    private enum ControllerInput { case neutral, accept, back, next, previous, moodEffect }
+
     private func observeGamepad() async {
-        var previous = 0
+        var previous = ControllerInput.neutral
         var armed = false
         while !Task.isCancelled {
             if let pad = GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad,
@@ -1749,34 +1801,48 @@ struct MusicHomePage: View {
                !showingNearby, !showingMoodPicker, !showingSearch {
                 let horizontal = pad.dpad.xAxis.value
                 let vertical = pad.dpad.yAxis.value
-                let control = pad.buttonA.isPressed ? 1 : pad.buttonB.isPressed ? 2
-                    : vertical < -0.65 || horizontal > 0.65 ? 3 : vertical > 0.65 || horizontal < -0.65 ? 4 : 0
-                if control == 0 { armed = true }
-                if armed, control != 0, control != previous {
+                #if os(macOS)
+                let playsMoodEffect = pad.buttonX.isPressed
+                #else
+                let playsMoodEffect = false
+                #endif
+                let control: ControllerInput
+                if pad.buttonA.isPressed { control = .accept }
+                else if pad.buttonB.isPressed { control = .back }
+                else if playsMoodEffect { control = .moodEffect }
+                else if vertical < -0.65 || horizontal > 0.65 { control = .next }
+                else if vertical > 0.65 || horizontal < -0.65 { control = .previous }
+                else { control = .neutral }
+                if control == .neutral { armed = true }
+                if armed, control != .neutral, control != previous {
                     #if os(macOS)
                     navigationFocus.updateForNavigation(true)
                     #endif
                     if showingNavigationOverflow {
-                        if control == 2 {
+                        if control == .back {
                             showingNavigationOverflow = false
                             controlFocus = navigationHasOverflow ? .navigationOverflow : .home
                         }
-                    } else if control == 1 {
+                    } else if control == .accept {
                         let targets = controllerTargets
                         if let controlFocus, targets.contains(controlFocus) { activate(controlFocus) }
                         else { controlFocus = targets.first }
-                    } else if control == 2 {
+                    } else if control == .back {
                         controlFocus = nil
+                    } else if control == .moodEffect {
+                        #if os(macOS)
+                        if controlFocus == .mood { MacMenuBarProfile.shared.playEffect() }
+                        #endif
                     } else {
                         let targets = controllerTargets
                         let index = controlFocus.flatMap { targets.firstIndex(of: $0) }
-                        let next = index.map { ($0 + (control == 3 ? 1 : targets.count - 1)) % targets.count } ?? 0
+                        let next = index.map { ($0 + (control == .next ? 1 : targets.count - 1)) % targets.count } ?? 0
                         controlFocus = targets[next]
                     }
                 }
                 previous = control
             } else {
-                previous = 0
+                previous = .neutral
                 armed = false
             }
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }

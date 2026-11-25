@@ -515,6 +515,9 @@ struct MusicHomeMoodButton: View {
             try Task.checkCancellation()
             guard pendingSave == id else { return }
             mood = result
+            #if os(macOS)
+            MacMenuBarProfile.shared.updateMood(result, sessionID: model.session.sessionPublicId)
+            #endif
             AccessibilityNotification.Announcement(text("ShellMoodSaved")).post()
             suppressHover = true
             pickerMode = nil

@@ -63,11 +63,43 @@ struct MusicHomeDestinationView: View {
             }
         }
         .task(id: loadID) { await load() }
+        #if os(macOS)
+        .onReceive(MacMenuBarProfile.shared.$profileRequest) { request in
+            guard let request else { return }
+            Task { finishMenuBarRequest(request) }
+        }
+        .onChange(of: loading) {
+            finishMenuBarRequest(MacMenuBarProfile.shared.profileRequest)
+        }
+        .onDisappear {
+            if let request = matchingMenuBarRequest(MacMenuBarProfile.shared.profileRequest) {
+                MacMenuBarProfile.shared.finishProfileRequest(request, succeeded: false)
+            }
+        }
+        #endif
         .task(id: scenePhase) {
             if scenePhase == .active { await observeBack() }
         }
         .onDisappear { video?.pause() }
     }
+
+    #if os(macOS)
+    private func matchingMenuBarRequest(_ request: MacMenuBarProfile.ProfileRequest?) -> MacMenuBarProfile.ProfileRequest? {
+        guard let request, request.sessionID == model.session.sessionPublicId,
+              route == .client(model.session.clientPublicId) else { return nil }
+        return request
+    }
+
+    private func finishMenuBarRequest(_ request: MacMenuBarProfile.ProfileRequest?) {
+        guard !loading, let request = matchingMenuBarRequest(request),
+              request == MacMenuBarProfile.shared.profileRequest else { return }
+        if case .client = details, !failed {
+            MacMenuBarProfile.shared.finishProfileRequest(request, succeeded: true)
+        } else if failed {
+            loadID += 1
+        }
+    }
+    #endif
 
     private var contentWidth: CGFloat {
         if case .artist(let artist)? = details, artist.modelMediaPublicId != nil { return .infinity }
@@ -312,7 +344,14 @@ struct MusicHomeDestinationView: View {
                 }
             }
         } catch {
-            if !Task.isCancelled { failed = true }
+            if !Task.isCancelled {
+                failed = true
+                #if os(macOS)
+                if let request = matchingMenuBarRequest(MacMenuBarProfile.shared.profileRequest) {
+                    MacMenuBarProfile.shared.finishProfileRequest(request, succeeded: false)
+                }
+                #endif
+            }
         }
     }
 
