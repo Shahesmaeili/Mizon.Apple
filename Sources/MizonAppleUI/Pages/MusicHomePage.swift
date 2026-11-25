@@ -424,7 +424,13 @@ struct MusicHomePage: View {
         let feedWidth = max(0, contentWidth - (wide ? 2 * rail : medium ? rail : 0))
         return HStack(alignment: .top, spacing: 0) {
             if wide {
-                ScrollView { windowsEditorialRail(width: rail - 24).padding(.bottom, 48) }
+                ScrollView {
+                    windowsEditorialRail(width: rail - 24)
+                        .padding(.bottom, 48)
+                        #if os(macOS)
+                        .background { MusicHomeScrollSpeed().frame(width: 0, height: 0) }
+                        #endif
+                }
                     #if os(iOS)
                     .contentMargins(.top, scrollTopMargin, for: .scrollContent)
                     #endif
@@ -459,6 +465,9 @@ struct MusicHomePage: View {
                     }
                     .frame(width: feedWidth, alignment: .leading)
                     .padding(.bottom, 48)
+                    #if os(macOS)
+                    .background { MusicHomeScrollSpeed().frame(width: 0, height: 0) }
+                    #endif
                 }
                 .scrollClipDisabled()
                 #if os(macOS)
@@ -494,7 +503,13 @@ struct MusicHomePage: View {
             }
             if medium {
                 let gutter: CGFloat = wide ? 24 : 20
-                ScrollView { windowsCommunityRail(width: rail - gutter).padding(.bottom, 48) }
+                ScrollView {
+                    windowsCommunityRail(width: rail - gutter)
+                        .padding(.bottom, 48)
+                        #if os(macOS)
+                        .background { MusicHomeScrollSpeed().frame(width: 0, height: 0) }
+                        #endif
+                }
                     #if os(iOS)
                     .contentMargins(.top, scrollTopMargin, for: .scrollContent)
                     #endif
