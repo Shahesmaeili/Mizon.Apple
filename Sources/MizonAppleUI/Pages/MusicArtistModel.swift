@@ -26,6 +26,7 @@ struct MusicArtistModel: View {
     let rotateHint: String
     let resetLabel: String
     var showsRotationHint = true
+    var isInMusicFeed = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -43,7 +44,7 @@ struct MusicArtistModel: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            if let scene, visible, scenePhase == .active {
+            if let scene, showsLoadedScene, scenePhase == .active {
                 ArtistModelSceneView(preview: scene)
                     .allowsHitTesting(false)
                 rotationSurface(scene)
@@ -110,6 +111,16 @@ struct MusicArtistModel: View {
     private var scene: ArtistPreviewScene? {
         guard loaded?.mediaID == configuration.mediaID else { return nil }
         return loaded?.scene
+    }
+
+    private var showsLoadedScene: Bool {
+        #if os(macOS)
+        // The feed owns the viewport clip. Retain the event-driven renderer with the
+        // lazy row so crossing its visibility threshold doesn't rebuild a Metal view.
+        visible || isInMusicFeed
+        #else
+        visible
+        #endif
     }
 
     private func configure(_ scene: ArtistPreviewScene) {

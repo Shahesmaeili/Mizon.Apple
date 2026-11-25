@@ -229,11 +229,12 @@ public actor MusicArtworkStore {
             let path = try await service.cacheMedia(media, session: session, downloader: downloader,
                                                    maximumBytes: 24 * 1024 * 1024)
             try Task.checkCancellation()
-            guard let source = CGImageSourceCreateWithURL(path as CFURL, nil),
+            guard let source = CGImageSourceCreateWithURL(path as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
                   let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
                     kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 960
+                    kCGImageSourceThumbnailMaxPixelSize: 960,
+                    kCGImageSourceShouldCacheImmediately: true
                   ] as CFDictionary) else { throw LoginFailure.invalidResponse }
             return CachedArtwork(image: image, source: path)
         }

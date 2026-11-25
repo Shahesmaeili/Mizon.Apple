@@ -109,6 +109,8 @@ struct MusicHomePage: View {
     @State private var pointer = MusicHomePointer()
     #if os(macOS)
     @State private var headerViewport = CGSize(width: 960, height: 700)
+    @State private var pendingHeroVisibility: Bool?
+    @State private var resumePreviewAfterScroll = false
     #else
     @State private var phoneHeaderHasScrolled = false
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -463,9 +465,14 @@ struct MusicHomePage: View {
                 .onScrollPhaseChange { oldPhase, newPhase in
                     if oldPhase.isScrolling != newPhase.isScrolling {
                         pointer.setScrolling(newPhase.isScrolling)
+                        if !newPhase.isScrolling { settleFeatureViewport() }
                     }
                 }
-                .onDisappear { pointer.setScrolling(false) }
+                .onDisappear {
+                    pointer.setScrolling(false)
+                    pendingHeroVisibility = nil
+                    resumePreviewAfterScroll = false
+                }
                 #else
                 .contentMargins(.top, scrollTopMargin, for: .scrollContent)
                 .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -543,7 +550,7 @@ struct MusicHomePage: View {
         .padding(.bottom, 16)
         .environment(\.layoutDirection, .leftToRight)
         .onHover { heroHovered = $0 }
-        .onScrollVisibilityChange { heroVisible = $0 }
+        .onScrollVisibilityChange { featureViewportChanged($0) }
         .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: canPresentFeature, retry: heroMediaRetry)) {
             await presentFeatureVideo()
         }
@@ -572,6 +579,35 @@ struct MusicHomePage: View {
             if canRotate { advanceFinishedVideo() }
         }
     }
+
+    private func featureViewportChanged(_ visible: Bool) {
+        #if os(macOS)
+        if pointer.scrollStartedAt != nil {
+            // Match WinUI's settled viewport check. Pause playback immediately, but let the
+            // same AVPlayer and its surface survive a transient exit during scrolling.
+            pendingHeroVisibility = visible
+            if !visible, let previewPlayer, previewPlayer.timeControlStatus != .paused {
+                resumePreviewAfterScroll = true
+                previewPlayer.pause()
+            }
+            return
+        }
+        #endif
+        heroVisible = visible
+    }
+
+    #if os(macOS)
+    private func settleFeatureViewport() {
+        if let pendingHeroVisibility {
+            heroVisible = pendingHeroVisibility
+            self.pendingHeroVisibility = nil
+        }
+        if resumePreviewAfterScroll, canPresentFeature, !featurePaused, !heroVideoEnded {
+            previewPlayer?.play()
+        }
+        resumePreviewAfterScroll = false
+    }
+    #endif
 
     private func presentFeatureArtwork() async {
         guard canPresentFeature, let item = currentFeature else { return }
@@ -614,6 +650,9 @@ struct MusicHomePage: View {
     private func presentFeatureVideo() async {
         previewPlayer?.pause()
         previewPlayer = nil
+        #if os(macOS)
+        resumePreviewAfterScroll = false
+        #endif
         heroVideoStatus = .waiting
         heroVideoEnded = false
         guard canPresentFeature, let item = currentFeature, isVideo(item) else { return }
@@ -631,7 +670,17 @@ struct MusicHomePage: View {
                 if status == .failed { throw media.error ?? CocoaError(.fileReadCorruptFile) }
                 if status == .readyToPlay, heroVideoStatus == .loading {
                     heroVideoStatus = .ready
-                    if !featurePaused && !reduceMotion { player.play() }
+                    if !featurePaused && !reduceMotion {
+                        #if os(macOS)
+                        if pendingHeroVisibility == false {
+                            resumePreviewAfterScroll = true
+                        } else {
+                            player.play()
+                        }
+                        #else
+                        player.play()
+                        #endif
+                    }
                 }
             }
         } catch {
@@ -1119,7 +1168,7 @@ struct MusicHomePage: View {
                                                                   verticalFocus: artist.modelVerticalFocus,
                                                                   attribution: artist.modelAttribution),
                                              model: model, rotateHint: text("RotateHint"), resetLabel: text("ResetModel"),
-                                             showsRotationHint: !compact)
+                                             showsRotationHint: !compact, isInMusicFeed: true)
                         } else {
                             spotlightPortrait(artist, size: min(118, orbit * 0.82))
                         }
