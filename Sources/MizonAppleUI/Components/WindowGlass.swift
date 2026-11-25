@@ -1,7 +1,37 @@
 import SwiftUI
 #if os(macOS)
 import AppKit
-struct WindowGlass: NSViewRepresentable {
+#endif
+
+struct WindowGlass: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    #if os(iOS)
+    var tintOpacity = 0.86
+    #endif
+
+    var body: some View {
+        #if os(macOS)
+        if reduceTransparency {
+            MizonPalette.surface
+        } else {
+            WindowBackdrop()
+                .overlay(MizonPalette.surface.opacity(0.73))
+        }
+        #elseif os(iOS)
+        if reduceTransparency {
+            MizonPalette.surface
+        } else {
+            Rectangle().fill(.ultraThinMaterial)
+                .overlay(MizonPalette.surface.opacity(tintOpacity))
+        }
+        #else
+        MizonPalette.surface
+        #endif
+    }
+}
+
+#if os(macOS)
+private struct WindowBackdrop: NSViewRepresentable {
     final class Backdrop: NSVisualEffectView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -12,16 +42,12 @@ struct WindowGlass: NSViewRepresentable {
     }
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = Backdrop()
-        view.material = .hudWindow
+        view.material = .sidebar
         view.appearance = NSAppearance(named: .darkAqua)
         view.blendingMode = .behindWindow
         view.state = .active
         return view
     }
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
-}
-#else
-struct WindowGlass: View {
-    var body: some View { Rectangle().fill(.ultraThinMaterial) }
 }
 #endif

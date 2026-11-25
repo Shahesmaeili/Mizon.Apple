@@ -1,6 +1,7 @@
 #if os(macOS) || os(iOS)
 import AVKit
 import GameController
+import ImageIO
 import MizonAPIClient
 import MizonAppleCore
 import SwiftUI
@@ -11,17 +12,74 @@ import AppKit
 import UIKit
 #endif
 
+#if os(iOS)
+private struct MusicHomePhoneHeaderGlass: View {
+    let isRevealed: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    private let fadeDepth: CGFloat = 26
+
+    var body: some View {
+        Group {
+            if reduceTransparency {
+                MizonPalette.surface
+            } else {
+                WindowGlass(tintOpacity: 0.40)
+                    .mask {
+                        VStack(spacing: 0) {
+                            Color.white
+                            LinearGradient(stops: [
+                                .init(color: .white, location: 0),
+                                .init(color: .white.opacity(0.86), location: 0.25),
+                                .init(color: .white.opacity(0.45), location: 0.55),
+                                .init(color: .white.opacity(0.12), location: 0.8),
+                                .init(color: .clear, location: 1)
+                            ], startPoint: .top, endPoint: .bottom)
+                            .frame(height: fadeDepth)
+                        }
+                    }
+                    .padding(.bottom, -fadeDepth)
+                    .opacity(isRevealed ? 1 : 0)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isRevealed)
+            }
+        }
+        .ignoresSafeArea(.container, edges: [.top, .horizontal])
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+#endif
+
 enum MusicDestination: Hashable, Identifiable {
     case track(UUID), artist(UUID), client(UUID), playlist(UUID), story(UUID)
+    case musicVideo(UUID), musicComment(UUID, comment: UUID)
+    case section(ShellShortcutDestination)
 
     var id: Self { self }
+
+    init?(deepLink: MizonDeepLink) {
+        switch deepLink {
+        case .track(let id, .video): self = .musicVideo(id)
+        case .track(let id, _): self = .track(id)
+        case .musicComment(let id, let comment): self = .musicComment(id, comment: comment)
+        case .client(let id): self = .client(id)
+        case .person(let id): self = .artist(id)
+        case .playlist(let id): self = .playlist(id)
+        case .story(let id): self = .story(id)
+        case .movies: self = .section(.movies)
+        case .apps: self = .section(.apps)
+        case .vpn: self = .section(.vpn)
+        default: return nil
+        }
+    }
 }
 
 struct MusicHomePage: View {
     enum Action: Hashable {
-        case search, home, mood, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
+        case search, home, navigationOverflow, nearby, mood, previousFeature, nextFeature, rotateFeatures, playFeature, likeFeature, openFeature
         case featureControls, featureThumbnail(Int), retryFeatureMedia
-        case allGenres, genre(UUID), story(UUID), profile(UUID), follow(UUID)
+        case allGenres, genre(UUID), story(UUID), profile(UUID), ownProfile, follow(UUID)
         case playlist(UUID), library, activity(String), moreActivity, recent, news(Int), transport
         case rhythmDay(Int), previousNews, nextNews, toggleNews, selectNews(Int), spotlightTrack(UUID)
         case addStory, mutePreview, copyFeatureLink, previousSpotlight, nextSpotlight
@@ -30,6 +88,8 @@ struct MusicHomePage: View {
     }
 
     @State var model: MusicHomeViewModel
+    @State private var incomingDeepLink: MizonDeepLinkRouter.AuthorizedLink?
+    @State private var presentedDeepLink: MizonDeepLinkRouter.AuthorizedLink?
     @State private var destination: MusicDestination?
     @State private var showingLibrary = false
     @State private var showingAllMusicActivity = false
@@ -66,30 +126,52 @@ struct MusicHomePage: View {
     @State private var recentScrollRequest = 0
     @State private var scrollHomeRequest = 0
     @State private var searchFocusRequest = 0
+    @State private var pointer = MusicHomePointer()
     #if os(macOS)
     @State private var headerViewport = CGSize(width: 960, height: 700)
+    @State private var pendingHeroVisibility: Bool?
+    @State private var resumePreviewAfterScroll = false
+    @Environment(\.appearsActive) private var appearsActive
+    #else
+    @State private var phoneHeaderHasScrolled = false
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     #endif
     @State private var showingSearch = false
+    @State private var showingNavigationOverflow = false
+    @State private var navigationHasOverflow = false
     @State private var showingMoodPicker = false
     @State private var moodPress: UInt = 0
+    @State private var nearbyAvatars = NearbyAvatarModel()
+    @State private var showingNearby = false
+    @State private var nearbyPress: UInt = 0
+    @State private var navigationFocus = MusicHomeFocus()
     @FocusState private var controlFocus: Action?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     var localization = AuthLocalization()
 
     let displayName: String?
+    let nearby: NearbyDiscoveryModel
     let avatar: CGImage?
-    let profileTransition: Namespace.ID
+    let profileTransition: ProfilePictureTransition
     let initialMood: ClientMoodItemResponse?
+    @Binding var shellRequest: ShellShortcutRequest?
+    let shellAccountOpen: Bool
     let signOut: () -> Void
 
-    init(session: AuthSession, service: MusicHomeService, displayName: String?, avatar: CGImage?,
-         profileTransition: Namespace.ID, initialMood: ClientMoodItemResponse? = nil, signOut: @escaping () -> Void) {
-        _model = State(initialValue: MusicHomeViewModel(session: session, service: service))
+    init(session: AuthSession, service: MusicHomeService, displayName: String?, nearby: NearbyDiscoveryModel,
+         avatar: CGImage?, profileTransition: ProfilePictureTransition,
+         initialMood: ClientMoodItemResponse? = nil, shellRequest: Binding<ShellShortcutRequest?>,
+         shellAccountOpen: Bool,
+         signOut: @escaping () -> Void) {
+        _model = State(initialValue: MusicHomeViewModel(session: session, service: service, peerNetwork: nearby.peerNetwork))
         self.displayName = displayName
+        self.nearby = nearby
         self.avatar = avatar
         self.profileTransition = profileTransition
         self.initialMood = initialMood
+        _shellRequest = shellRequest
+        self.shellAccountOpen = shellAccountOpen
         self.signOut = signOut
     }
 
@@ -119,53 +201,148 @@ struct MusicHomePage: View {
     private var discoveryRecommended: [MusicDiscoverySample] { Array(discovery.reversed().prefix(6)) }
     private var discoveryRecent: [MusicDiscoverySample] { Array((Array(discovery.dropFirst(2)) + discovery.prefix(2)).prefix(6)) }
 
+    #if os(iOS)
+    private var usesPhoneHeader: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+    #endif
+
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
                 #if os(iOS)
-                AnyView(layout(width: geometry.size.width))
-                    .safeAreaInset(edge: .top, spacing: 0) {
-                        AnyView(header(viewport: geometry.size, width: geometry.size.width))
+                let feed = AnyView(layout(width: geometry.size.width))
+                let topBar = AnyView(header(viewport: geometry.size, width: geometry.size.width))
+                if usesPhoneHeader {
+                    feed.safeAreaBar(edge: .top, spacing: 0) {
+                        topBar
+                            .padding(.top, verticalSizeClass == .compact ? 8 : 0)
+                            .background {
+                                MusicHomePhoneHeaderGlass(isRevealed: phoneHeaderHasScrolled)
+                            }
                     }
+                    .scrollEdgeEffectHidden(true, for: .top)
+                } else {
+                    feed.safeAreaInset(edge: .top, spacing: 0) { topBar }
+                }
                 #else
                 layout(width: geometry.size.width)
                 #endif
             }
+                .task(id: visibleHomeLink?.id) {
+                    guard let request = visibleHomeLink, !Task.isCancelled else { return }
+                    MizonDeepLinkRouter.shared.complete(request, stage: .opened)
+                }
+                .coordinateSpace(.named(MusicHomePointer.coordinateSpace))
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let location) where scenePhase == .active: pointer.location = location
+                    default: pointer.location = nil
+                    }
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase != .active { pointer.location = nil }
+                }
+                .onDisappear { pointer.location = nil }
+                .environment(pointer)
                 .navigationTitle("")
                 #if os(macOS)
+                .background {
+                    MusicHomeFocusInput(input: navigationFocus).frame(width: 0, height: 0)
+                    MusicHomeToolbarStyle().frame(width: 0, height: 0)
+                }
                 .onGeometryChange(for: CGSize.self, of: \.size) { headerViewport = $0 }
                 .toolbar {
                     ToolbarItem(placement: .principal) {
                         header(viewport: headerViewport, width: min(1120, max(230, headerViewport.width - 168)))
+                            .padding(.top, 5)
+                            .padding(.bottom, 3)
                     }
                     .sharedBackgroundVisibility(.hidden)
                 }
                 #else
                 .toolbar(.hidden, for: .navigationBar)
+                .scrollContentBackground(.hidden)
+                .containerBackground(for: .navigation) {
+                    if usesPhoneHeader {
+                        WindowGlass().ignoresSafeArea(.container, edges: .horizontal)
+                    } else {
+                        WindowGlass()
+                    }
+                }
                 #endif
                 .navigationDestination(item: $destination) { route in
-                    MusicHomeDestinationView(route: route, model: model)
+                    let link = presentedDeepLink.flatMap { MusicDestination(deepLink: $0.route) == route ? $0 : nil }
+                    MusicHomeDestinationView(route: route, model: model, deepLink: link)
                 }
         }
         .preferredColorScheme(.dark)
+        #if os(macOS)
+        .onAppear {
+            MacMenuBarProfile.shared.present(session: model.session, service: model.service, artwork: model.artwork,
+                                             displayName: displayName ?? "", avatar: avatar,
+                                             mood: initialMood, isPersian: localization.isPersian)
+        }
+        .onChange(of: avatar.map(ObjectIdentifier.init)) {
+            MacMenuBarProfile.shared.updateAvatar(avatar, sessionID: model.session.sessionPublicId)
+        }
+        .onChange(of: localization.isPersian) {
+            MacMenuBarProfile.shared.setLanguage(isPersian: localization.isPersian)
+        }
+        #endif
+        .onReceive(MizonDeepLinkRouter.shared.$authorized) { incomingDeepLink = $0 }
+        .task(id: shellAccountOpen ? nil : incomingDeepLink?.id) {
+            guard !Task.isCancelled, !shellAccountOpen, let request = incomingDeepLink else { return }
+            openDeepLink(request)
+        }
+        .onChange(of: destination) { _, route in
+            if let request = presentedDeepLink,
+               let linkedDestination = MusicDestination(deepLink: request.route), linkedDestination != route {
+                presentedDeepLink = nil
+            }
+        }
+        .onChange(of: showingSearch) { _, visible in
+            if !visible, case .search = presentedDeepLink?.route { presentedDeepLink = nil }
+        }
+        .onChange(of: showingLibrary) { _, visible in
+            if !visible, presentedDeepLink?.route == .playlists { presentedDeepLink = nil }
+        }
+        .onChange(of: showingAllMusicActivity) { _, visible in
+            if !visible, presentedDeepLink?.route == .activities { presentedDeepLink = nil }
+        }
+        .onChange(of: shellRequest, initial: true) {
+            guard let request = shellRequest else { return }
+            openShellSection(request.destination)
+            shellRequest = nil
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if model.playingTrack != nil || model.requestingPlayback { transport }
         }
         .task { await model.refresh() }
-        .task(id: scenePhase) {
-            if scenePhase == .active { await observeGamepad() }
+        .task(id: nearbyAvatarUsernames) { [usernames = nearbyAvatarUsernames] in
+            let service = model.service.nearbyProfileArtworkService
+            let session = model.session
+            let artwork = model.artwork
+            await nearbyAvatars.load(for: usernames) { username in
+                try await service.image(for: username, session: session, artwork: artwork)
+            }
+        }
+        .task(id: controllerActive) {
+            if controllerActive { await observeGamepad() }
         }
         .sheet(isPresented: $showingLibrary) {
-            MusicLibraryBrowser(model: model) { id in
+            let link = presentedDeepLink?.route == .playlists ? presentedDeepLink : nil
+            MusicLibraryBrowser(model: model, deepLink: link) { id in
                 showingLibrary = false
                 destination = .playlist(id)
             }
+            .id(link?.id)
         }
         .sheet(isPresented: $showingAllMusicActivity) {
-            MusicHomeAllActivityPage(model: model) { item in
+            let link = presentedDeepLink?.route == .activities ? presentedDeepLink : nil
+            MusicHomeAllActivityPage(model: model, deepLink: link) { item in
                 showingAllMusicActivity = false
                 destination = activityDestination(item)
             }
+            .id(link?.id)
         }
         .sheet(isPresented: Binding(get: { article != nil }, set: { if !$0 { article = nil } })) {
             if let article { articleView(article) }
@@ -199,7 +376,7 @@ struct MusicHomePage: View {
             defer { if !Task.isCancelled { exportRequest = nil } }
             do {
                 let url = try await model.artwork.file(item.mediaPublicId, session: model.session,
-                                                       maximumBytes: 128 * 1024 * 1024)
+                                                       maximumBytes: PeerMediaTransfer.maximumFileSize)
                 try Task.checkCancellation()
                 exportFile = MusicFeatureExport(url: url)
                 exportPresented = true
@@ -221,74 +398,187 @@ struct MusicHomePage: View {
         .onDisappear { model.stop() }
     }
 
+    private var controllerActive: Bool {
+        #if os(macOS)
+        scenePhase == .active && appearsActive && !shellAccountOpen
+        #else
+        scenePhase == .active && !shellAccountOpen
+        #endif
+    }
+
+    private var visibleHomeLink: MizonDeepLinkRouter.AuthorizedLink? {
+        guard destination == nil, let request = presentedDeepLink,
+              request.route == .home || request.route == .music else { return nil }
+        return request
+    }
+
+    private func openDeepLink(_ request: MizonDeepLinkRouter.AuthorizedLink) {
+        let router = MizonDeepLinkRouter.shared
+        guard request.sessionID == model.session.sessionPublicId, router.isActive(request) else { return }
+        switch request.route {
+        case .login, .register, .settings: return
+        default: break
+        }
+        guard !exportPresented, exportRequest == nil else {
+            router.fail(request, code: "busy", message: "Finish the current export before opening a new destination.")
+            return
+        }
+        dismissShellOverlays()
+        presentedDeepLink = request
+        switch request.route {
+        case .home, .music:
+            destination = nil
+        case .playlists:
+            destination = nil
+            showingLibrary = true
+        case .activities:
+            destination = nil
+            showingAllMusicActivity = true
+        case .search:
+            destination = nil
+            showingSearch = true
+        default:
+            destination = MusicDestination(deepLink: request.route)
+        }
+    }
+
+    private func openShellSection(_ section: ShellShortcutDestination) {
+        guard !section.isAccount else { return }
+        dismissShellOverlays()
+        presentedDeepLink = nil
+        destination = section == .music ? nil : .section(section)
+    }
+
+    private func dismissShellOverlays() {
+        showingSearch = false
+        showingNavigationOverflow = false
+        showingLibrary = false
+        showingAllMusicActivity = false
+        showingPreviewControls = false
+        showingNearby = false
+        showingMoodPicker = false
+        fullWindowVideo = false
+        article = nil
+    }
+
     private func header(viewport: CGSize, width: CGFloat) -> some View {
-        MusicHomeHeader(width: width) {
-            MusicHomeSearch(model: model, viewportWidth: viewport.width, compact: width < 440,
-                            focusRequest: $searchFocusRequest, showingSearch: $showingSearch) { result in
-                destination = result.kind == .music ? .track(result.publicID) : .client(result.publicID)
+        let accountShape = UnevenRoundedRectangle(
+            topLeadingRadius: 8, bottomLeadingRadius: 8, bottomTrailingRadius: 16, topTrailingRadius: 16)
+        return MusicHomeHeader(width: width, showingOverflow: $showingNavigationOverflow,
+                               onOverflowAvailabilityChange: setNavigationOverflowAvailability) { compactSearch in
+            focusableControl(.search, cornerRadius: 8) {
+                MusicHomeSearch(model: model, viewportWidth: viewport.width, compact: compactSearch,
+                                focusRequest: $searchFocusRequest, showingSearch: $showingSearch,
+                                deepLink: presentedDeepLink) { result in
+                    destination = result.kind == .music ? .track(result.publicID) : .client(result.publicID)
+                }
             }
-            .focusable()
-            .focused($controlFocus, equals: .search)
-        } home: {
+        } home: { compactTab in
             control(.home) {
-                HStack(spacing: 6) {
-                    FluentIcon(symbol: .headphones, size: 18, usesColor: true)
-                    if width >= 320 {
-                        Text(text("ShellMusic")).font(localization.font(14, weight: .semibold)).lineLimit(1)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 36)
-                .overlay(alignment: .bottom) {
-                    Capsule().fill(Color.accentColor).frame(width: 17, height: 3).offset(y: -2)
-                }
+                MusicHomeNavigationLabel(section: .music, compact: compactTab)
             }
-            .buttonStyle(MusicHomeButtonStyle(corner: 6))
+            .buttonStyle(MusicHomeNavigationTabStyle(selected: true))
             .accessibilityLabel(text("ShellMusic"))
             .accessibilityAddTraits(.isSelected)
             .accessibilityIdentifier("music.home.tab")
+        } overflow: { label in
+            control(.navigationOverflow) { label }
+                .buttonStyle(MusicHomeNavigationTabStyle(selected: false))
+                .accessibilityLabel(text("ShellMoreTabs"))
+                .accessibilityIdentifier("music.home.menu")
         } account: {
             HStack(spacing: 0) {
-                MusicHomeMoodButton(model: model, initialMood: initialMood, viewport: viewport,
-                                    controllerPress: moodPress) { showingMoodPicker = $0 }
-                    .focusable()
-                    .focused($controlFocus, equals: .mood)
-                    .overlay {
-                        if controlFocus == .mood {
-                            RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                Menu {
-                    if let displayName, !displayName.isEmpty { Text(displayName) }
-                    Button(text("Profile")) { destination = .client(model.session.clientPublicId) }
-                    Button(localization.string("SignOut", table: "Settings"), action: signOut)
-                } label: {
-                    WelcomeProfileBadge(avatar: avatar)
-                        .frame(width: 32, height: 32)
-                        .matchedGeometryEffect(id: "welcome-profile", in: profileTransition)
+                nearbyControl(viewport: viewport)
+                focusableControl(.mood, cornerRadius: 8) {
+                    MusicHomeMoodButton(model: model, initialMood: initialMood, viewport: viewport,
+                                        controllerPress: moodPress) { showingMoodPicker = $0 }
+                        #if os(macOS)
+                        .environment(navigationFocus)
+                        #endif
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .accessibilityLabel(displayName ?? text("Profile"))
-                .accessibilityIdentifier("music.home.profile")
+                #if os(macOS)
+                focusableControl(.ownProfile, cornerRadius: 8) { profileMenu }
+                #else
+                profileMenu
+                #endif
             }
-            .background(.white.opacity(15.0 / 255), in: UnevenRoundedRectangle(
-                topLeadingRadius: 8, bottomLeadingRadius: 8, bottomTrailingRadius: 16, topTrailingRadius: 16))
+            .padding(.vertical, (MusicHomeChrome.controlHeight - 32) / 2)
+            .background(MusicHomeChrome.controlFill, in: accountShape)
+            .overlay { accountShape.strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }
         }
+    }
+
+    private var profileMenu: some View {
+        Menu {
+            if let displayName, !displayName.isEmpty { Text(displayName) }
+            Button(text("Profile")) { activate(.ownProfile) }
+            Button(localization.string("SignOut", table: "Settings"), action: signOut)
+        } label: {
+            Color.clear
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 32, height: 32)
+        // The native Mac menu can snapshot its label. Keep the portrait live as the session photo loads.
+        .overlay {
+            MusicHomeProfilePicture(avatar: avatar, displayName: displayName)
+                .opacity(profileTransition.isInFlight ? 0 : 1)
+                .allowsHitTesting(false)
+        }
+        .background { profileTransition.anchor(.header) }
+        .accessibilityLabel(displayName ?? text("Profile"))
+        .accessibilityIdentifier("music.home.profile")
+    }
+
+    private func setNavigationOverflowAvailability(_ available: Bool) {
+        navigationHasOverflow = available
+        if !available {
+            showingNavigationOverflow = false
+            if controlFocus == .navigationOverflow { controlFocus = .home }
+        }
+    }
+
+    private func nearbyControl(viewport: CGSize) -> some View {
+        @Bindable var model = nearby
+        return focusableControl(.nearby, cornerRadius: 8) {
+            NearbyDevicesControl(peers: model.peers, avatars: nearbyAvatars.images, enabled: $model.enabled,
+                                 status: model.status, viewport: viewport, controllerPress: nearbyPress) { showingNearby = $0 }
+        }
+    }
+
+    private var nearbyAvatarUsernames: [String] {
+        guard showingNearby, scenePhase != .background, nearby.enabled, nearby.status == .ready else { return [] }
+        return NearbyAvatarModel.usernames(for: nearby.peers)
     }
 
     private func layout(width: CGFloat) -> some View {
         let wide = width >= 1440
         let medium = width >= 1040
         let margin: CGFloat = medium ? 28 : 14
+        let topMargin: CGFloat = medium ? 16 : 12
+        #if os(iOS)
+        let scrollTopMargin: CGFloat? = usesPhoneHeader ? topMargin : nil
+        let outerTopMargin = usesPhoneHeader ? 0 : topMargin
+        #else
+        let outerTopMargin = topMargin
+        #endif
         let contentWidth = min(2200, max(0, width - margin * 2))
         let rail = min(320, max(220, contentWidth * 0.2))
         let feedWidth = max(0, contentWidth - (wide ? 2 * rail : medium ? rail : 0))
         return HStack(alignment: .top, spacing: 0) {
             if wide {
-                ScrollView { windowsEditorialRail(width: rail - 24).padding(.bottom, 48) }
+                ScrollView {
+                    windowsEditorialRail(width: rail - 24)
+                        .padding(.bottom, 48)
+                        #if os(macOS)
+                        .background { MusicHomeScrollSpeed().frame(width: 0, height: 0) }
+                        #endif
+                }
+                    #if os(iOS)
+                    .contentMargins(.top, scrollTopMargin, for: .scrollContent)
+                    #endif
                     .scrollIndicators(.hidden)
                     .frame(width: rail - 24)
                     .padding(.trailing, 24)
@@ -309,22 +599,48 @@ struct MusicHomePage: View {
                                                       samples: discoveryRecent, compact: true)).id(Action.recent)
                         if !medium { AnyView(windowsCommunityRail(width: feedWidth)) }
                         if !wide { AnyView(windowsEditorialRail(width: feedWidth)) }
-                        Rectangle().fill(MusicHomeStyle.stroke).frame(height: 1)
+                        Rectangle().fill(MusicHomeChrome.hairline).frame(height: 1)
                         HStack(alignment: .top, spacing: 12) {
                             Text("MADE FOR YOUR MOMENTS").font(localization.font(9)).tracking(1.44)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             Text(text("DemoFooter")).font(localization.font(9))
                                 .frame(maxWidth: 220, alignment: .trailing)
                         }
-                        .foregroundStyle(MusicHomeStyle.secondary)
+                        .foregroundStyle(MizonPalette.secondaryText)
                     }
                     .frame(width: feedWidth, alignment: .leading)
                     .padding(.bottom, 48)
+                    #if os(macOS)
+                    .background { MusicHomeScrollSpeed().frame(width: 0, height: 0) }
+                    #endif
                 }
+                .scrollClipDisabled()
+                #if os(macOS)
+                .onScrollPhaseChange { oldPhase, newPhase in
+                    if oldPhase.isScrolling != newPhase.isScrolling {
+                        pointer.setScrolling(newPhase.isScrolling)
+                        if !newPhase.isScrolling { settleFeatureViewport() }
+                    }
+                }
+                .onDisappear {
+                    pointer.setScrolling(false)
+                    pendingHeroVisibility = nil
+                    resumePreviewAfterScroll = false
+                }
+                #else
+                .contentMargins(.top, scrollTopMargin, for: .scrollContent)
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    usesPhoneHeader && geometry.contentOffset.y + geometry.contentInsets.top > 1
+                } action: { _, hasScrolled in
+                    phoneHeaderHasScrolled = hasScrolled
+                }
+                #endif
                 .frame(width: feedWidth)
                 .scrollIndicators(.hidden)
                 .onChange(of: controlFocus) { _, target in
-                    if let target, target != .search, target != .home, target != .mood, target != .recent {
+                    if navigationFocus.showsNavigationFocus, let target,
+                       target != .search, target != .home, target != .navigationOverflow, target != .nearby,
+                       target != .mood, target != .ownProfile, target != .recent {
                         reader.scrollTo(target, anchor: .center)
                     }
                 }
@@ -333,7 +649,16 @@ struct MusicHomePage: View {
             }
             if medium {
                 let gutter: CGFloat = wide ? 24 : 20
-                ScrollView { windowsCommunityRail(width: rail - gutter).padding(.bottom, 48) }
+                ScrollView {
+                    windowsCommunityRail(width: rail - gutter)
+                        .padding(.bottom, 48)
+                        #if os(macOS)
+                        .background { MusicHomeScrollSpeed().frame(width: 0, height: 0) }
+                        #endif
+                }
+                    #if os(iOS)
+                    .contentMargins(.top, scrollTopMargin, for: .scrollContent)
+                    #endif
                     .scrollIndicators(.hidden)
                     .frame(width: rail - gutter)
                     .padding(.leading, gutter)
@@ -341,8 +666,11 @@ struct MusicHomePage: View {
         }
         .frame(maxWidth: 2200)
         .padding(.horizontal, margin)
-        .padding(.top, medium ? 16 : 12)
+        .padding(.top, outerTopMargin)
         .frame(maxWidth: .infinity)
+        #if os(macOS)
+        .clipped()
+        #endif
     }
 
     private func feature(width: CGFloat) -> some View {
@@ -353,7 +681,12 @@ struct MusicHomePage: View {
             if let item = currentFeature {
                 heroSurface(item, compact: compact)
                     .frame(height: height)
-                    .clipShape(.rect(cornerRadius: 12))
+                    .clipShape(.rect(cornerRadius: MusicFeaturedArtworkShadow.cornerRadius, style: .circular))
+                    .background {
+                        if let heroArtwork {
+                            MusicFeaturedArtworkShadow(color: heroArtwork.edgeColor?.color ?? .black)
+                        }
+                    }
                     .modifier(MusicHeroLighting(active: canPresentFeature && !fullWindowVideo, palette: heroArtwork?.palette))
             } else if model.loading.contains(.features) {
                 MusicHomeSkeleton(height: 300, label: text("LoadingFeatures"))
@@ -378,7 +711,7 @@ struct MusicHomePage: View {
         .padding(.bottom, 16)
         .environment(\.layoutDirection, .leftToRight)
         .onHover { heroHovered = $0 }
-        .onScrollVisibilityChange { heroVisible = $0 }
+        .onScrollVisibilityChange { featureViewportChanged($0) }
         .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: canPresentFeature, retry: heroMediaRetry)) {
             await presentFeatureVideo()
         }
@@ -408,19 +741,51 @@ struct MusicHomePage: View {
         }
     }
 
+    private func featureViewportChanged(_ visible: Bool) {
+        #if os(macOS)
+        if pointer.scrollStartedAt != nil {
+            // Match WinUI's settled viewport check. Pause playback immediately, but let the
+            // same AVPlayer and its surface survive a transient exit during scrolling.
+            pendingHeroVisibility = visible
+            if !visible, let previewPlayer, previewPlayer.timeControlStatus != .paused {
+                resumePreviewAfterScroll = true
+                previewPlayer.pause()
+            }
+            return
+        }
+        #endif
+        heroVisible = visible
+    }
+
+    #if os(macOS)
+    private func settleFeatureViewport() {
+        if let pendingHeroVisibility {
+            heroVisible = pendingHeroVisibility
+            self.pendingHeroVisibility = nil
+        }
+        if resumePreviewAfterScroll, canPresentFeature, !featurePaused, !heroVideoEnded {
+            previewPlayer?.play()
+        }
+        resumePreviewAfterScroll = false
+    }
+    #endif
+
     private func presentFeatureArtwork() async {
         guard canPresentFeature, let item = currentFeature else { return }
         if heroArtwork?.id == item.publicId, heroArtworkStatus == .ready { return }
         heroArtworkStatus = .loading
         for id in featureArtworkIDs(item) {
             do {
-                let image = try await model.artwork.image(id, session: model.session)
+                let artwork = try await model.artwork.imageWithSource(id, session: model.session)
+                let image = artwork.image
                 try Task.checkCancellation()
-                let palette = await MusicHeroPalette.extract(from: image)
+                async let palette = MusicHeroPalette.extract(from: image)
+                let edgeColor = await Self.featureArtworkEdgeColor(at: artwork.source)
+                let colors = await palette
                 try Task.checkCancellation()
                 let animate = !reduceMotion && !fullWindowVideo
                 outgoingHeroArtwork = animate ? heroArtwork : nil
-                heroArtwork = FeatureArtwork(id: item.publicId, image: image, palette: palette,
+                heroArtwork = FeatureArtwork(id: item.publicId, image: image, palette: colors, edgeColor: edgeColor,
                                              stretch: !isVideo(item), direction: featureDirection,
                                              revealStart: animate ? Date() : nil)
                 heroArtworkStatus = .ready
@@ -432,9 +797,23 @@ struct MusicHomePage: View {
         heroArtworkStatus = .failed
     }
 
+    @concurrent
+    private static func featureArtworkEdgeColor(at url: URL) async -> MusicArtworkEdgeColor? {
+        guard !Task.isCancelled, let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let dimensions = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let width = dimensions[kCGImagePropertyPixelWidth as String] as? Int,
+              let height = dimensions[kCGImagePropertyPixelHeight as String] as? Int,
+              width > 0, height > 0, width <= 16_777_216 / height,
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        return await MusicArtworkEdgeColor.extract(from: image)
+    }
+
     private func presentFeatureVideo() async {
         previewPlayer?.pause()
         previewPlayer = nil
+        #if os(macOS)
+        resumePreviewAfterScroll = false
+        #endif
         heroVideoStatus = .waiting
         heroVideoEnded = false
         guard canPresentFeature, let item = currentFeature, isVideo(item) else { return }
@@ -452,7 +831,17 @@ struct MusicHomePage: View {
                 if status == .failed { throw media.error ?? CocoaError(.fileReadCorruptFile) }
                 if status == .readyToPlay, heroVideoStatus == .loading {
                     heroVideoStatus = .ready
-                    if !featurePaused && !reduceMotion { player.play() }
+                    if !featurePaused && !reduceMotion {
+                        #if os(macOS)
+                        if pendingHeroVisibility == false {
+                            resumePreviewAfterScroll = true
+                        } else {
+                            player.play()
+                        }
+                        #else
+                        player.play()
+                        #endif
+                    }
                 }
             }
         } catch {
@@ -641,8 +1030,7 @@ struct MusicHomePage: View {
                             .clipShape(.rect(cornerRadius: 7)).padding(1)
                             .frame(width: size, height: size)
                     }
-                    .buttonStyle(MusicHomeButtonStyle(stroke: index == featureIndex ? musicColor("0697EA") : musicColor("4E555D").opacity(80.0 / 255),
-                                                      corner: 8))
+                    .buttonStyle(featureThumbnailStyle(selected: index == featureIndex))
                     .accessibilityLabel(localized(preview.title, preview.persianTitle))
                     .accessibilityAddTraits(index == featureIndex ? .isSelected : [])
                     .help(localized(preview.title, preview.persianTitle))
@@ -656,6 +1044,15 @@ struct MusicHomePage: View {
         let count = min(3, model.features.count)
         let start = min(max(0, featureIndex - 1), max(0, model.features.count - count))
         return start..<(start + count)
+    }
+
+    private func featureThumbnailStyle(selected: Bool) -> MusicHomeButtonStyle {
+        let stroke = musicColor("4E555D").opacity(80.0 / 255)
+        #if os(macOS)
+        return MusicHomeButtonStyle(fill: selected ? MizonPalette.ink.opacity(0.17) : .clear, stroke: stroke, corner: 8)
+        #else
+        return MusicHomeButtonStyle(stroke: selected ? musicColor("0697EA") : stroke, corner: 8)
+        #endif
     }
 
     private func heroArrow(_ action: Action, icon: FluentSymbol, label: String) -> some View {
@@ -835,6 +1232,7 @@ struct MusicHomePage: View {
         let id: UUID
         let image: CGImage
         let palette: MusicHeroPalette?
+        let edgeColor: MusicArtworkEdgeColor?
         let stretch: Bool
         let direction: Int
         var revealStart: Date?
@@ -933,9 +1331,13 @@ struct MusicHomePage: View {
                 .allowsHitTesting(false)
                 ZStack {
                     Group {
-                        if artist.modelMediaPublicId != nil {
-                            MusicArtistModel(artist: artist, model: model, rotateHint: text("RotateHint"),
-                                             resetLabel: text("ResetModel"), showsRotationHint: !compact)
+                        if let mediaID = artist.modelMediaPublicId {
+                            MusicArtistModel(configuration: .init(mediaID: mediaID, portraitMediaID: artist.profileMediaPublicId,
+                                                                  yaw: artist.modelYawInDegrees, zoom: artist.modelViewScale,
+                                                                  verticalFocus: artist.modelVerticalFocus,
+                                                                  attribution: artist.modelAttribution),
+                                             model: model, rotateHint: text("RotateHint"), resetLabel: text("ResetModel"),
+                                             showsRotationHint: !compact, isInMusicFeed: true)
                         } else {
                             spotlightPortrait(artist, size: min(118, orbit * 0.82))
                         }
@@ -1229,8 +1631,10 @@ struct MusicHomePage: View {
     }
 
     private var transport: some View {
-        HStack(spacing: 14) {
+        let shape = RoundedRectangle(cornerRadius: 14)
+        return HStack(spacing: 14) {
             Image(systemName: "music.note")
+                .foregroundStyle(MizonPalette.accent)
             Text(model.playbackTitle).font(localization.font(13, weight: .semibold)).lineLimit(1)
             Spacer()
             if model.requestingPlayback { ProgressView().controlSize(.small) }
@@ -1238,10 +1642,14 @@ struct MusicHomePage: View {
                 control(.transport) { Image(systemName: model.isPlaying ? "pause.fill" : "play.fill") }
                     .accessibilityLabel(text(model.isPlaying ? "PausePresentation" : "ResumePresentation"))
                     .buttonStyle(.glass)
+                    .foregroundStyle(MizonPalette.accent)
             }
         }
+        .foregroundStyle(MizonPalette.ink)
+        .tint(MizonPalette.accent)
         .padding(12)
-        .glassEffect(.regular, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular.tint(MizonPalette.surface.opacity(0.55)), in: shape)
+        .overlay { shape.strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
     }
@@ -1278,28 +1686,47 @@ struct MusicHomePage: View {
                     case .library: widget("LibraryError")
                     case .activity: widget("FollowingError")
                     }
-                    Text(message).foregroundStyle(.secondary)
+                    Text(message).foregroundStyle(MizonPalette.secondaryText)
                     control(.refresh(section)) { Text(text("Retry")) }.buttonStyle(.glass)
                 } else {
-                    Text(text(empty)).foregroundStyle(.secondary)
+                    Text(text(empty)).foregroundStyle(MizonPalette.secondaryText)
                 }
             }
         }
         .font(localization.font(12))
+        .tint(MizonPalette.accent)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     func control<Label: View>(_ action: Action, @ViewBuilder label: () -> Label) -> some View {
-        Button { activate(action) } label: { label() }
+        focusableControl(action, cornerRadius: 9) {
+            Button { activate(action) } label: { label() }
+        }
+        .id(action)
+        .authHandPointer(enabled: true)
+    }
+
+    private func focusableControl<Content: View>(_ action: Action, cornerRadius: CGFloat,
+                                                 @ViewBuilder content: () -> Content) -> some View {
+        content()
             .focusable()
             .focused($controlFocus, equals: action)
-            .id(action)
-            .authHandPointer(enabled: true)
+            #if os(macOS)
+            .focusEffectDisabled()
+            #endif
             .overlay {
-                if controlFocus == action {
-                    RoundedRectangle(cornerRadius: 9).strokeBorder(Color.accentColor, lineWidth: 2).allowsHitTesting(false)
+                #if os(macOS)
+                MusicHomeFocusOutline(isFocused: controlFocus == action, cornerRadius: cornerRadius, input: navigationFocus)
+                #else
+                if action != .search, controlFocus == action {
+                    let themed = action == .home || action == .navigationOverflow || action == .transport
+                        || action == .mood || action == .nearby
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .strokeBorder(themed ? MizonPalette.accent : Color.accentColor, lineWidth: 2)
+                        .allowsHitTesting(false)
                 }
+                #endif
             }
     }
 
@@ -1307,7 +1734,11 @@ struct MusicHomePage: View {
         switch action {
         case .search: searchFocusRequest += 1
         case .home: scrollHomeRequest += 1
+        case .navigationOverflow:
+            if navigationHasOverflow { showingNavigationOverflow.toggle() }
+        case .nearby: nearbyPress &+= 1
         case .mood: moodPress &+= 1
+        case .ownProfile: destination = .client(model.session.clientPublicId)
         case .featureControls: showingPreviewControls = true
         case .featureThumbnail(let index): selectFeature(index)
         case .retryFeatureMedia: heroMediaRetry += 1
@@ -1330,7 +1761,7 @@ struct MusicHomePage: View {
             previewPlayer?.isMuted = previewMuted
         case .copyFeatureLink:
             guard let id = currentFeature?.musicPublicId else { return }
-            let link = "mizon://music/\(id.uuidString.lowercased())"
+            let link = MizonDeepLink.track(id, action: .details).canonicalURI
             #if os(macOS)
             NSPasteboard.general.clearContents()
             copiedFeatureLink = NSPasteboard.general.setString(link, forType: .string)
@@ -1378,6 +1809,7 @@ struct MusicHomePage: View {
     func activityDestination(_ item: FollowingActivityItemResponse) -> MusicDestination? {
         if let id = item.storyPublicId { return .story(id) }
         if let id = item.musicPlaylistPublicId { return .playlist(id) }
+        if let id = item.musicPublicId, let comment = item.musicCommentPublicId { return .musicComment(id, comment: comment) }
         return item.musicPublicId.map(MusicDestination.track)
     }
 
@@ -1389,7 +1821,12 @@ struct MusicHomePage: View {
     }
 
     private var controllerTargets: [Action] {
-        var targets: [Action] = [.home, .search, .mood]
+        var targets: [Action] = [.home]
+        if navigationHasOverflow { targets.append(.navigationOverflow) }
+        targets += [.search, .nearby, .mood]
+        #if os(macOS)
+        targets.append(.ownProfile)
+        #endif
         if let item = currentFeature {
             targets.append(.featureControls)
             if model.features.count > 1 {
@@ -1425,35 +1862,60 @@ struct MusicHomePage: View {
         return targets
     }
 
+    private enum ControllerInput { case neutral, accept, back, next, previous, moodEffect }
+
     private func observeGamepad() async {
-        var previous = 0
+        var previous = ControllerInput.neutral
         var armed = false
         while !Task.isCancelled {
             if let pad = GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad,
                destination == nil, !showingLibrary, !showingAllMusicActivity, article == nil, !showingStoryPreview,
                !copiedFeatureLink, !model.actionFailed, !showingPreviewControls, !fullWindowVideo, !exportPresented,
-               !showingMoodPicker, !showingSearch {
+               !showingNearby, !showingMoodPicker, !showingSearch {
                 let horizontal = pad.dpad.xAxis.value
                 let vertical = pad.dpad.yAxis.value
-                let control = pad.buttonA.isPressed ? 1 : pad.buttonB.isPressed ? 2
-                    : vertical < -0.65 || horizontal > 0.65 ? 3 : vertical > 0.65 || horizontal < -0.65 ? 4 : 0
-                if control == 0 { armed = true }
-                if armed, control != 0, control != previous {
-                    let targets = controllerTargets
-                    if control == 1 {
+                #if os(macOS)
+                let playsMoodEffect = pad.buttonX.isPressed
+                #else
+                let playsMoodEffect = false
+                #endif
+                let control: ControllerInput
+                if pad.buttonA.isPressed { control = .accept }
+                else if pad.buttonB.isPressed { control = .back }
+                else if playsMoodEffect { control = .moodEffect }
+                else if vertical < -0.65 || horizontal > 0.65 { control = .next }
+                else if vertical > 0.65 || horizontal < -0.65 { control = .previous }
+                else { control = .neutral }
+                if control == .neutral { armed = true }
+                if armed, control != .neutral, control != previous {
+                    #if os(macOS)
+                    navigationFocus.updateForNavigation(true)
+                    #endif
+                    if showingNavigationOverflow {
+                        if control == .back {
+                            showingNavigationOverflow = false
+                            controlFocus = navigationHasOverflow ? .navigationOverflow : .home
+                        }
+                    } else if control == .accept {
+                        let targets = controllerTargets
                         if let controlFocus, targets.contains(controlFocus) { activate(controlFocus) }
                         else { controlFocus = targets.first }
-                    } else if control == 2 {
+                    } else if control == .back {
                         controlFocus = nil
-                    } else if !targets.isEmpty {
+                    } else if control == .moodEffect {
+                        #if os(macOS)
+                        if controlFocus == .mood { MacMenuBarProfile.shared.playEffect() }
+                        #endif
+                    } else {
+                        let targets = controllerTargets
                         let index = controlFocus.flatMap { targets.firstIndex(of: $0) }
-                        let next = index.map { ($0 + (control == 3 ? 1 : targets.count - 1)) % targets.count } ?? 0
+                        let next = index.map { ($0 + (control == .next ? 1 : targets.count - 1)) % targets.count } ?? 0
                         controlFocus = targets[next]
                     }
                 }
                 previous = control
             } else {
-                previous = 0
+                previous = .neutral
                 armed = false
             }
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }

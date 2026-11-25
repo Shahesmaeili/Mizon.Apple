@@ -24,19 +24,22 @@ struct WelcomePage: View {
     @Environment(\.appearsActive) private var appearsActive
     #endif
     private var localization = AuthLocalization()
-    let profileTransition: Namespace.ID
+    let profileTransition: ProfilePictureTransition
     let restoreSession: () async throws -> AuthSession?
     let signIn: () async -> Bool
+    let accountReady: (AuthSession, WelcomeAccount) -> Void
     let enter: (AuthSession, WelcomeAccount?, CGImage?) -> Void
 
-    init(service: any WelcomeService, profileTransition: Namespace.ID,
+    init(service: any WelcomeService, profileTransition: ProfilePictureTransition,
          restoreSession: @escaping () async throws -> AuthSession?,
          signIn: @escaping () async -> Bool,
+         accountReady: @escaping (AuthSession, WelcomeAccount) -> Void = { _, _ in },
          enter: @escaping (AuthSession, WelcomeAccount?, CGImage?) -> Void) {
         _model = State(initialValue: WelcomeViewModel(service: service))
         self.profileTransition = profileTransition
         self.restoreSession = restoreSession
         self.signIn = signIn
+        self.accountReady = accountReady
         self.enter = enter
     }
 
@@ -51,7 +54,7 @@ struct WelcomePage: View {
                         WelcomeOrbit(size: orbitSize, moves: !reduceMotion && isActive)
                         WelcomeProfileBadge(avatar: model.avatar)
                             .frame(width: orbitSize / 4, height: orbitSize / 4)
-                            .matchedGeometryEffect(id: "welcome-profile", in: profileTransition)
+                            .background { profileTransition.anchor(.welcome) }
                     }
                     VStack(alignment: .leading, spacing: 5) {
                         Text(title)
@@ -59,7 +62,7 @@ struct WelcomePage: View {
                             .accessibilityAddTraits(.isHeader)
                             .accessibilityIdentifier("welcome.title")
                         Text(localization["WelcomeTagline"])
-                            .font(localization.font(12)).foregroundStyle(AuthAppearance.secondaryText)
+                            .font(localization.font(12)).foregroundStyle(MizonPalette.secondaryText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
@@ -90,13 +93,6 @@ struct WelcomePage: View {
             #endif
         }
         .environment(\.layoutDirection, .leftToRight)
-        .background {
-            WindowGlass()
-                .overlay(.black.opacity(0.42))
-                .ignoresSafeArea()
-        }
-        .preferredColorScheme(.dark)
-        .tint(AuthAppearance.accent)
         .accessibilityIdentifier("welcome")
         .onAppear {
             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.42)) { entranceVisible = true }
@@ -152,7 +148,7 @@ struct WelcomePage: View {
                         .font(localization.font(13, weight: .semibold))
                         .accessibilityIdentifier("welcome.status")
                     Text(localization[statusKeys.detail])
-                        .font(localization.font(11)).foregroundStyle(AuthAppearance.secondaryText)
+                        .font(localization.font(11)).foregroundStyle(MizonPalette.secondaryText)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 ZStack {
@@ -238,7 +234,7 @@ struct WelcomePage: View {
     private func prepare() async {
         let clock = ContinuousClock()
         let started = clock.now
-        guard let result = await model.prepare(session: restoreSession), !Task.isCancelled else { return }
+        guard let result = await model.prepare(onAccount: accountReady, session: restoreSession), !Task.isCancelled else { return }
         switch result {
         case .login:
             await goToLogin()

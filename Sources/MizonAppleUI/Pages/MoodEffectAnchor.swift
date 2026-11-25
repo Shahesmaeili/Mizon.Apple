@@ -9,16 +9,17 @@ import UIKit
 struct MoodEffectPresentation: Equatable {
     let id: UUID
     let file: URL
+    let playback = MoodLottieEffectPlayback()
 }
 
-private let moodEffectSize: CGFloat = 208
+private let moodEffectSize = MoodLottiePlayback.effectSize.width
 
 private struct MoodEffectSurface: View {
     let effect: MoodEffectPresentation
     let onCompletion: (UUID) -> Void
 
     var body: some View {
-        MoodLottieView(file: effect.file, looping: false, playing: true, restartID: effect.id,
+        MoodLottieView(file: effect.file, playback: .once(effect.playback), playing: true,
                        onCompletion: { onCompletion(effect.id) })
             .frame(width: moodEffectSize, height: moodEffectSize)
             .allowsHitTesting(false)
@@ -28,7 +29,7 @@ private struct MoodEffectSurface: View {
 
 #if os(macOS)
 struct MoodEffectAnchor: NSViewRepresentable {
-    let effect: MoodEffectPresentation?
+    let effect: MoodEffectPresentation
     let onCompletion: (UUID) -> Void
 
     func makeNSView(context: Context) -> Anchor { Anchor() }
@@ -123,7 +124,7 @@ struct MoodEffectAnchor: NSViewRepresentable {
 }
 #else
 struct MoodEffectAnchor: UIViewRepresentable {
-    let effect: MoodEffectPresentation?
+    let effect: MoodEffectPresentation
     let onCompletion: (UUID) -> Void
 
     func makeUIView(context: Context) -> Anchor {

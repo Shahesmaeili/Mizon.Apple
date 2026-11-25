@@ -29,7 +29,7 @@ extension MusicHomePage {
 
     private func windowsLibrary(width: CGFloat) -> some View {
         let accent = MusicWidgetTint.library
-        return railSurface {
+        return railSurface(tint: accent, showsPointerGlow: !model.loading.contains(.library) || model.library != nil) {
             railHeader("LibraryTitle", subtitle: "LibrarySubtitle", symbol: .music, tint: accent)
             if model.loading.contains(.library), model.library == nil {
                 railSkeleton(height: 360, label: text("LoadingLibrary"))
@@ -154,7 +154,7 @@ extension MusicHomePage {
 
     private func windowsRhythm(width: CGFloat) -> some View {
         let accent = MusicWidgetTint.rhythm
-        return railSurface {
+        return railSurface(tint: accent) {
             railHeader("RhythmTitle", subtitle: "RhythmSubtitle", symbol: .trendingArrow, tint: accent)
             if width >= 560 {
                 HStack(alignment: .top, spacing: 20) {
@@ -291,7 +291,7 @@ extension MusicHomePage {
         let accent = MusicWidgetTint.news
         let slideDistance = min(48, max(20, (width - 24) * 0.14))
         let artwork = ["slow-motion", "artist-stage-02", "city-lights", "quiet-room"]
-        return railSurface {
+        return railSurface(tint: accent) {
             railHeader("NewsTitle", subtitle: "NewsSubtitle", symbol: .news, tint: accent, badge: widget("Demo"))
             MusicNewsAutoAdvance(index: $newsIndex, paused: newsPaused || newsWidgetHasFocus,
                                  count: artwork.count, isPersian: localization.isPersian) { index, direction in
@@ -406,7 +406,7 @@ extension MusicHomePage {
     private func windowsTrending(width: CGFloat) -> some View {
         let accent = MusicWidgetTint.trending
         let samples = Array(discovery.sorted { $0.likes > $1.likes }.prefix(6))
-        return railSurface {
+        return railSurface(tint: accent) {
             railHeader("TrendingTitle", subtitle: "TrendingSubtitle", symbol: .fire, tint: accent,
                        badge: String(format: "%02d", samples.count))
             if let leading = samples.first {
@@ -516,7 +516,7 @@ extension MusicHomePage {
         let accent = MusicWidgetTint.friends
         let activity = model.activity
         let items = Array((activity?.activities ?? []).prefix(4))
-        return railSurface {
+        return railSurface(tint: accent, showsPointerGlow: !model.loading.contains(.activity) || activity != nil) {
             railHeader("FollowingTitle", subtitle: "FollowingSubtitle", symbol: .people, tint: accent,
                        badge: String(format: "%02d", items.count))
             if model.loading.contains(.activity), activity == nil {
@@ -567,11 +567,13 @@ extension MusicHomePage {
         .overlay { RoundedRectangle(cornerRadius: 11).strokeBorder(MusicWidgetTint.friends.color.opacity(0.094)) }
     }
 
-    private func railSurface<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    private func railSurface<Content: View>(tint: MusicWidgetTint, showsPointerGlow: Bool = true,
+                                            @ViewBuilder content: () -> Content) -> some View {
         VStack(spacing: 12, content: content)
             .frame(maxWidth: .infinity)
             .padding(12)
             .musicPanel(cornerRadius: 16)
+            .overlay { MusicWidgetPointerGlow(accent: tint.color, enabled: showsPointerGlow) }
     }
 
     private func railHeader(_ title: String, subtitle: String, symbol: MusicWidgetSymbol,
@@ -695,13 +697,18 @@ extension MusicHomePage {
 }
 
 struct MusicHomeAllActivityPage: View {
-    private enum Target: Hashable { case activity(String), more, close }
+    private enum Target: Hashable { case activity(String), more, retry, close }
 
     let model: MusicHomeViewModel
+    let deepLink: MizonDeepLinkRouter.AuthorizedLink?
     let open: (FollowingActivityItemResponse) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var paginationRequest = 0
+    @State private var response: FollowingActivitiesResponse?
+    @State private var loading = true
+    @State private var failed = false
+    @State private var linkResolved = false
     @FocusState private var focus: Target?
     private var localization = AuthLocalization()
 
@@ -710,7 +717,7 @@ struct MusicHomeAllActivityPage: View {
             ScrollViewReader { scroll in
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(model.activity?.activities ?? [], id: \.activityId) { item in
+                        ForEach(response?.activities ?? [], id: \.activityId) { item in
                             if canOpen(item) {
                                 Button { open(item) } label: { MusicActivityWidgetCard(item: item, model: model) }
                                     .buttonStyle(MusicWidgetButtonStyle(tint: .friends, radius: 11))
@@ -720,12 +727,20 @@ struct MusicHomeAllActivityPage: View {
                                 MusicActivityWidgetCard(item: item, model: model)
                             }
                         }
-                        if model.loading.contains(.activity) {
+                        if loading {
                             ProgressView().padding(12)
-                        } else if model.activity?.hasMore == true {
+                        } else if failed {
+                            Text(widget("FollowingError")).foregroundStyle(.secondary)
+                            Button(widget("FollowingRetry")) { paginationRequest += 1 }
+                                .buttonStyle(.glass)
+                                .focusable().focused($focus, equals: .retry).id(Target.retry)
+                        } else if response?.hasMore == true, response?.nextCursor != nil {
                             Button(widget("FollowingMore")) { paginationRequest += 1 }
                                 .buttonStyle(.glass)
                                 .focusable().focused($focus, equals: .more).id(Target.more)
+                        } else if response?.activities.isEmpty == true {
+                            ContentUnavailableView(widget("FollowingEmptyTitle"), systemImage: "person.2",
+                                                   description: Text(widget("FollowingEmptyDescription")))
                         }
                     }
                     .padding(16)
@@ -736,23 +751,64 @@ struct MusicHomeAllActivityPage: View {
             }
             .navigationTitle(widget("FollowingMore"))
             .toolbar {
-                Button(widget("Close")) { dismiss() }
+                Button(widget("Close")) { dismiss() }.keyboardShortcut(.cancelAction)
                     .focusable().focused($focus, equals: .close)
             }
         }
-        .task(id: paginationRequest) {
-            if paginationRequest > 0 { await model.loadMoreActivity() }
-        }
+        .task(id: paginationRequest) { await loadPage() }
         .task(id: scenePhase) {
             if scenePhase == .active { await observeController() }
+        }
+        .onDisappear {
+            if let deepLink, !linkResolved {
+                linkResolved = true
+                MizonDeepLinkRouter.shared.fail(deepLink, code: "page_changed",
+                                               message: "The active page changed before navigation completed.")
+            }
         }
     }
 
     private var targets: [Target] {
-        let items = (model.activity?.activities ?? []).filter(canOpen).map { Target.activity($0.activityId) }
+        let items = (response?.activities ?? []).filter(canOpen).map { Target.activity($0.activityId) }
         var controls: [Target] = [.close] + items
-        if model.activity?.hasMore == true, !model.loading.contains(.activity) { controls.append(.more) }
+        if !loading {
+            if failed { controls.append(.retry) }
+            else if response?.hasMore == true, response?.nextCursor != nil { controls.append(.more) }
+        }
         return controls
+    }
+
+    private func loadPage() async {
+        loading = true
+        failed = false
+        defer { if !Task.isCancelled { loading = false } }
+        let cursor = response?.nextCursor
+        do {
+            var next = try await model.service.allFollowingActivity(after: cursor, session: model.session)
+            try Task.checkCancellation()
+            if let response {
+                var identifiers = Set(response.activities.map(\.activityId))
+                next.activities = response.activities + next.activities.filter { identifiers.insert($0.activityId).inserted }
+            }
+            if next.nextCursor == cursor {
+                next.hasMore = false
+                next.nextCursor = nil
+            }
+            response = next
+            if let deepLink, !linkResolved {
+                linkResolved = true
+                MizonDeepLinkRouter.shared.complete(deepLink, stage: .completed)
+            }
+        } catch {
+            if !Task.isCancelled {
+                failed = true
+                if let deepLink, !linkResolved {
+                    linkResolved = true
+                    MizonDeepLinkRouter.shared.fail(deepLink, code: "page_unavailable",
+                                                   message: "The following activities could not be loaded.")
+                }
+            }
+        }
     }
 
     private func canOpen(_ item: FollowingActivityItemResponse) -> Bool {
@@ -785,14 +841,14 @@ struct MusicHomeAllActivityPage: View {
                     case 2:
                         switch focus {
                         case .close: dismiss(); return
-                        case .more:
-                            if controls.contains(.more) { paginationRequest += 1 }
+                        case .more where controls.contains(.more), .retry where controls.contains(.retry):
+                            paginationRequest += 1
                         case .activity(let id):
-                            if let item = model.activity?.activities.first(where: { $0.activityId == id }), canOpen(item) {
+                            if let item = response?.activities.first(where: { $0.activityId == id }), canOpen(item) {
                                 open(item)
                                 return
                             }
-                        case nil: focus = controls.first
+                        default: focus = controls.first
                         }
                     default:
                         let next = focus.flatMap { controls.firstIndex(of: $0) }.map {

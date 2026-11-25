@@ -13,15 +13,43 @@ import AppKit
 public struct MizonRootView: View {
     @State private var model: LoginViewModel
     #if !os(watchOS)
-    @Namespace private var profileTransition
+    @State private var profileTransition = ProfilePictureTransition()
     @State private var checkedStartup = false
     @State private var home: HomeEntrance?
+    @State private var nearby = NearbyDiscoveryModel()
+    @State private var nearbyIdentity: NearbyIdentity?
+    @ObservedObject private var shellShortcuts = MizonShellShortcuts.shared
+    @ObservedObject private var deepLinks = MizonDeepLinkRouter.shared
+    @State private var authShortcut: ShellShortcutRequest?
+    @State private var accountSheet: ShellShortcutRequest?
+    @State private var sectionShortcut: ShellShortcutRequest?
+    @State private var deepLinkSettings: MizonDeepLinkRouter.Request?
+    @State private var signingOut = false
+    private var localization = AuthLocalization()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if os(iOS)
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var nearbyInForeground = false
+    #endif
 
     private struct HomeEntrance {
         let sessionID: UUID
         let account: WelcomeAccount?
-        let avatar: CGImage?
+        var avatar: CGImage?
+    }
+
+    private struct NearbyIdentity: Equatable {
+        let sessionID: UUID
+        let username: String?
+        let displayName: String
+    }
+
+    private var discoverableIdentity: NearbyIdentity? {
+        #if os(iOS)
+        guard nearbyInForeground else { return nil }
+        #endif
+        guard nearby.enabled, let nearbyIdentity, nearbyIdentity.sessionID == model.session?.sessionPublicId else { return nil }
+        return nearbyIdentity
     }
     #endif
 
@@ -30,7 +58,97 @@ public struct MizonRootView: View {
     }
 
     public var body: some View {
-        content
+        ZStack { content }
+            .foregroundStyle(MizonPalette.ink)
+            .tint(MizonPalette.accent)
+            .preferredColorScheme(.dark)
+            .background { WindowGlass().ignoresSafeArea() }
+            #if os(iOS)
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                if phase == .active { nearbyInForeground = true }
+                if phase == .background {
+                    nearbyInForeground = false
+                    profileTransition.cancel()
+                }
+            }
+            #endif
+            #if os(macOS) || os(iOS)
+            .task(id: home?.sessionID) { await profileTransition.play() }
+            .task(id: home?.sessionID) { await loadMissingHomeAvatar() }
+            .onChange(of: reduceMotion) { _, enabled in
+                if enabled { profileTransition.cancel() }
+            }
+            .onDisappear {
+                profileTransition.cancel()
+                deepLinks.cancelDispatched()
+            }
+            .onChange(of: shellContext, initial: true) { _, _ in
+                #if os(macOS)
+                let busy = shellContext == .busy || shellContext == .signingOut
+                MacMenuBarProfile.shared.setAccountBusy(busy)
+                #endif
+                updateShortcutMenu()
+                if deepLinks.pending == nil { openPendingShortcut() }
+                else { openPendingDeepLink() }
+            }
+            .onChange(of: deepLinks.pending, initial: true) {
+                guard deepLinks.pending != nil else { return }
+                if let shortcut = shellShortcuts.pending { shellShortcuts.complete(shortcut) }
+                openPendingDeepLink()
+            }
+            .onChange(of: shellShortcuts.pending) {
+                guard shellShortcuts.pending != nil else { return }
+                deepLinks.cancelActive(code: "superseded", message: "A system shortcut replaced this request.")
+                deepLinkSettings = nil
+                openPendingShortcut()
+            }
+            .onChange(of: localization.isPersian) { updateShortcutMenu() }
+            .onChange(of: model.session?.sessionPublicId) {
+                accountSheet = nil
+                authShortcut = nil
+                deepLinkSettings = nil
+                if let request = deepLinks.authorized, request.sessionID != model.session?.sessionPublicId {
+                    deepLinks.fail(request, code: "requires_sign_in", message: "The active account has changed.")
+                }
+                #if os(macOS)
+                MacMenuBarProfile.shared.retainOnlySession(model.session?.sessionPublicId)
+                #endif
+            }
+            .sheet(item: $deepLinkSettings) { request in
+                if case .settings(let section) = request.route {
+                    DeepLinkSettingsView(model: model, section: section) {
+                        deepLinks.complete(id: request.id, stage: .opened)
+                    }
+                    .id(request.id)
+                }
+            }
+            .sheet(item: $accountSheet, onDismiss: model.dismissError) { request in
+                AuthenticationPage(model: model, shellRequest: request) { accountSheet = nil }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        Button(localization["AuthDone"]) { accountSheet = nil }
+                            .buttonStyle(.glass)
+                            .keyboardShortcut(.cancelAction)
+                            .disabled(model.isLoading)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .padding(12)
+                    }
+                    .interactiveDismissDisabled(model.isLoading)
+                    #if os(macOS)
+                    .frame(minWidth: 410, idealWidth: 490, minHeight: 520, idealHeight: 650)
+                    #endif
+            }
+            .task(id: discoverableIdentity) { [identity = discoverableIdentity] in
+                let mediaAccess: NearbyMediaAccess?
+                if let identity, let session = model.session, identity.sessionID == session.sessionPublicId {
+                    mediaAccess = model.musicHomeService.nearbyMediaAccess(session: session)
+                } else {
+                    mediaAccess = nil
+                }
+                await nearby.discover(inForeground: identity != nil,
+                                      publicUsername: identity?.username, displayName: identity?.displayName,
+                                      mediaAccess: mediaAccess)
+            }
+            #endif
             #if os(macOS)
             .toolbar {
                 if showingAuthentication {
@@ -41,10 +159,104 @@ public struct MizonRootView: View {
                     .sharedBackgroundVisibility(.hidden)
                 }
             }
-            .toolbarBackground(showingAuthentication ? .hidden : .automatic, for: .windowToolbar)
+            .toolbarBackground(.hidden, for: .windowToolbar)
             .environment(\.layoutDirection, .leftToRight)
             #endif
     }
+
+    #if os(macOS) || os(iOS)
+    private var shellContext: ShellShortcutContext {
+        if signingOut { return .signingOut }
+        if model.isLoading { return .busy }
+        guard let session = model.session else { return checkedStartup ? .signedOut : .restoring }
+        return home?.sessionID == session.sessionPublicId ? .home : .preparingHome
+    }
+
+    private func updateShortcutMenu() {
+        guard checkedStartup || model.session != nil else { return }
+        shellShortcuts.configure(signedIn: model.session != nil, language: localization.isPersian ? "fa" : "en")
+    }
+
+    private func openPendingShortcut() {
+        guard let request = shellShortcuts.pending else { return }
+        switch shellContext.action(for: request.destination) {
+        case .wait:
+            return
+        case .showSignIn:
+            // Keep the requested section until the existing Welcome flow validates the session.
+            if authShortcut?.id != request.id {
+                authShortcut = ShellShortcutRequest(id: request.id, destination: .login)
+            }
+            return
+        case .discard:
+            break
+        case .account:
+            if model.session == nil {
+                authShortcut = request
+                checkedStartup = true
+            } else {
+                accountSheet = request
+            }
+        case .section:
+            accountSheet = nil
+            sectionShortcut = request
+        }
+        shellShortcuts.complete(request)
+    }
+
+    private func openPendingDeepLink() {
+        guard let request = deepLinks.pending else { return }
+        let context = shellContext
+        if context == .signingOut || context == .busy {
+            if context == .signingOut || request.expectsResult {
+                deepLinks.fail(id: request.id, code: "busy", message: "An account operation is already in progress.")
+            }
+            return
+        }
+
+        if request.route == .login || request.route == .register {
+            let face = request.route == .login ? ShellShortcutDestination.login : .register
+            let shortcut = ShellShortcutRequest(id: request.id, destination: face)
+            deepLinks.dispatch(request)
+            deepLinkSettings = nil
+            if model.session == nil {
+                authShortcut = shortcut
+                checkedStartup = true
+            } else {
+                accountSheet = shortcut
+            }
+            return
+        }
+
+        if context == .signedOut {
+            if request.expectsResult {
+                deepLinks.fail(id: request.id, code: "requires_sign_in", message: "Sign in first. No navigation was queued.")
+            } else if authShortcut?.id != request.id {
+                authShortcut = ShellShortcutRequest(id: request.id, destination: .login)
+            }
+            return
+        }
+
+        guard context == .home, let session = model.session else { return }
+        accountSheet = nil
+        if case .settings = request.route {
+            deepLinks.dispatch(request)
+            deepLinkSettings = request
+        } else {
+            deepLinkSettings = nil
+            deepLinks.dispatch(request, sessionID: session.sessionPublicId)
+        }
+    }
+
+    private func loadMissingHomeAvatar() async {
+        guard let session = model.session, let home, home.sessionID == session.sessionPublicId,
+              home.avatar == nil, let avatarID = home.account?.avatarID,
+              let avatar = try? await model.welcomeService.avatar(for: avatarID, session: session),
+              !Task.isCancelled, model.session?.sessionPublicId == session.sessionPublicId,
+              self.home?.sessionID == session.sessionPublicId else { return }
+        self.home?.avatar = avatar
+    }
+    #endif
 
     #if os(macOS)
     private var showingAuthentication: Bool {
@@ -59,15 +271,20 @@ public struct MizonRootView: View {
         #else
         if let session = model.session, let home, home.sessionID == session.sessionPublicId {
             MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
-                          avatar: home.avatar, profileTransition: profileTransition, initialMood: home.account?.mood) {
+                          nearby: nearby, avatar: home.avatar, profileTransition: profileTransition,
+                          initialMood: home.account?.mood, shellRequest: $sectionShortcut,
+                          shellAccountOpen: accountSheet != nil || deepLinkSettings != nil || signingOut) {
+                guard !signingOut else { return }
+                signingOut = true
+                deepLinks.cancelActive(code: "cancelled", message: "The account was signed out.")
                 Task {
+                    defer { signingOut = false }
                     await model.signOut()
                     if model.session == nil { self.home = nil }
                 }
             }
-            .background { WindowGlass().ignoresSafeArea() }
             .alert(model.error?.errorDescription ?? "Sign out failed", isPresented: Binding(
-                get: { model.error != nil },
+                get: { accountSheet == nil && model.error != nil },
                 set: { if !$0 { model.dismissError() } }
             )) {
                 Button(model.error?.closeButtonText ?? "OK") { model.dismissError() }
@@ -86,17 +303,21 @@ public struct MizonRootView: View {
                     home = nil
                     return true
                 },
+                accountReady: { session, account in
+                    guard model.session?.sessionPublicId == session.sessionPublicId else { return }
+                    nearbyIdentity = NearbyIdentity(sessionID: session.sessionPublicId, username: account.publicUsername,
+                                                    displayName: account.displayName)
+                },
                 enter: { session, account, avatar in
                     guard model.session == session else { return }
                     model.dismissError()
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.32)) {
-                        checkedStartup = true
-                        home = HomeEntrance(sessionID: session.sessionPublicId, account: account, avatar: avatar)
-                    }
+                    profileTransition.prepare(avatar: avatar, displayName: account?.displayName, reduceMotion: reduceMotion)
+                    checkedStartup = true
+                    home = HomeEntrance(sessionID: session.sessionPublicId, account: account, avatar: avatar)
                 }
             )
         } else {
-            AuthenticationPage(model: model)
+            AuthenticationPage(model: model, shellRequest: authShortcut)
         }
         #endif
     }
@@ -137,6 +358,8 @@ private struct AuthenticationPage: View {
     }
 
     @Bindable var model: LoginViewModel
+    var shellRequest: ShellShortcutRequest? = nil
+    var closeShortcut: (() -> Void)? = nil
     private var localization = AuthLocalization()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -254,15 +477,10 @@ private struct AuthenticationPage: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background {
-            WindowGlass()
-                .overlay(Color.black.opacity(0.42))
-                .ignoresSafeArea()
-        }
         #if os(macOS)
         .overlay {
             RoundedRectangle(cornerRadius: 18)
-                .strokeBorder(AuthAppearance.windowError, lineWidth: 1)
+                .strokeBorder(MizonPalette.negative, lineWidth: 1)
                 .opacity(errorKey == nil ? 0 : 1)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
@@ -299,9 +517,12 @@ private struct AuthenticationPage: View {
         .task(id: scenePhase) {
             if scenePhase == .active { await observeGamepad() }
         }
-        .preferredColorScheme(.dark)
+        .onChange(of: shellRequest, initial: true) {
+            guard let shellRequest else { return }
+            if registration != (shellRequest.destination == .register) { switchMode() }
+            MizonDeepLinkRouter.shared.finishShowingAccount(id: shellRequest.id)
+        }
         .environment(\.layoutDirection, .leftToRight)
-        .tint(AuthAppearance.accent)
         .onAppear {
             withAnimation(reduceMotion ? nil : .timingCurve(0.16, 0.8, 1, 1, duration: 0.42)) {
                 entranceVisible = true
@@ -367,7 +588,7 @@ private struct AuthenticationPage: View {
                     .accessibilityAddTraits(.isHeader)
                 Text(text(registration ? "AuthRegisterDescription" : "AuthLoginDescription"))
                     .font(authFont(12))
-                    .foregroundStyle(AuthAppearance.secondaryText)
+                    .foregroundStyle(MizonPalette.secondaryText)
             }
             VStack(alignment: .leading, spacing: registration ? 12 : 16) {
                 if registration {
@@ -402,7 +623,7 @@ private struct AuthenticationPage: View {
                     if model.isLoading && self.registration == registration {
                         ProgressView()
                             .controlSize(.small)
-                            .tint(AuthAppearance.color(0x142331))
+                            .tint(MizonPalette.surface)
                             .frame(width: 20, height: 18)
                     } else {
                         Color.clear.frame(width: 20, height: 1)
@@ -519,7 +740,7 @@ private struct AuthenticationPage: View {
                     LoginPasswordField(text: editable, isFocused: $passwordFocused,
                                        dismissesFocus: focus == nil, isSecure: !revealPassword,
                                        label: text(label), help: text(field.helpKey), identifier: field.rawValue,
-                                       font: passwordInputFont, textColor: .label, submit: submit)
+                                       font: passwordInputFont, textColor: UIColor(MizonPalette.ink), submit: submit)
                         .frame(height: 24)
                     #endif
                 } else {
@@ -622,7 +843,7 @@ private struct AuthenticationPage: View {
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focus == field)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hoveredField == field)
             .onHover { if $0 { hoveredField = field } else if hoveredField == field { hoveredField = nil } }
-            if let hint { Text(text(hint)).font(authFont(10)).foregroundStyle(AuthAppearance.secondaryText) }
+            if let hint { Text(text(hint)).font(authFont(10)).foregroundStyle(MizonPalette.secondaryText) }
         }
         .frame(maxWidth: .infinity)
         .disabled(model.isLoading)
@@ -727,7 +948,11 @@ private struct AuthenticationPage: View {
         }
         switch action {
         case .back:
-            if registration { switchMode() }
+            if let closeShortcut {
+                if focus == nil { closeShortcut() }
+                else { focus = nil; revealPassword = false }
+            }
+            else if registration { switchMode() }
             else { focus = nil; revealPassword = false }
         case .help:
             showsControllerHelp = true
@@ -864,7 +1089,7 @@ private struct AuthenticationPage: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(text(caption.key + "Title")).font(authFont(24, weight: .semibold))
-                Text(text(caption.key + "Description")).font(authFont(12)).foregroundStyle(AuthAppearance.secondaryText)
+                Text(text(caption.key + "Description")).font(authFont(12)).foregroundStyle(MizonPalette.secondaryText)
             }
             .opacity(captionOpacity)
             .frame(maxWidth: .infinity, minHeight: 106, alignment: .topLeading)

@@ -5,6 +5,9 @@ public struct ServerSettingsView: View {
     @Bindable private var model: LoginViewModel
     @Environment(\.dismiss) private var dismiss
     @AppStorage("mizon.serverAddress") private var savedAddress = BackendConfiguration.defaultAddress
+    #if os(macOS)
+    @AppStorage(MacMenuBarProfile.preferenceKey) private var showsMenuBarProfile = true
+    #endif
     @State private var address: String
     @State private var showsValidation = false
     private var localization = AuthLocalization()
@@ -27,9 +30,10 @@ public struct ServerSettingsView: View {
                 .environment(\.layoutDirection, .leftToRight)
                 .accessibilityIdentifier("server.address")
             Text(text("ServerAddressHelp"))
-                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+                .font(.caption).foregroundStyle(MizonPalette.secondaryText).multilineTextAlignment(.leading)
             if showsValidation {
-                Text(text("InvalidServerAddress")).font(.caption).foregroundStyle(.red).accessibilityIdentifier("server.error")
+                Text(text("InvalidServerAddress")).font(.caption).foregroundStyle(MizonPalette.negative)
+                    .accessibilityIdentifier("server.error")
             }
             Button(text("Save")) {
                 do {
@@ -39,9 +43,13 @@ public struct ServerSettingsView: View {
                     model.dismissError(); dismiss()
                 } catch { showsValidation = true }
             }
-            .buttonStyle(.glassProminent).tint(.cyan).disabled(model.isLoading)
+            .buttonStyle(.glassProminent).tint(MizonPalette.accent).disabled(model.isLoading)
             #if !os(watchOS)
             .keyboardShortcut(.defaultAction)
+            #endif
+            #if os(macOS)
+            Toggle(localization.string("ShowMenuBarProfile", table: "MenuBarProfile"), isOn: $showsMenuBarProfile)
+                .onChange(of: showsMenuBarProfile) { _, visible in MacMenuBarProfile.shared.setEnabled(visible) }
             #endif
         }
         .environment(\.layoutDirection, localization.isPersian ? .rightToLeft : .leftToRight)
@@ -53,6 +61,8 @@ public struct ServerSettingsView: View {
         #if os(macOS)
         .frame(width: 420)
         #endif
+        .foregroundStyle(MizonPalette.ink)
+        .background { WindowGlass().ignoresSafeArea() }
         .preferredColorScheme(.dark)
     }
 

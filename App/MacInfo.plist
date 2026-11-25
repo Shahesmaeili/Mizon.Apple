@@ -2,7 +2,26 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLName</key>
+            <string>com.shahesmaeili.Mizon.Apple.deeplink</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>mizon</string>
+            </array>
+        </dict>
+    </array>
     <key>LSMultipleInstancesProhibited</key>
     <true/>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_mizon-peer._tcp</string>
+    </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Mizon uses your local network to connect to your server and discover devices while you are signed in. Nearby Mizon users can see your device details and public profile. You can turn discovery off in Mizon.</string>
 </dict>
 </plist>

@@ -129,6 +129,7 @@ struct MusicHeroLighting: ViewModifier {
     @State private var paletteBlend: PaletteBlend?
     @State private var settledThrough = Date.distantPast
     #if os(iOS)
+    @Environment(MusicHomePointer.self) private var pagePointer
     @State private var inputSize = CGSize.zero
     #endif
 
@@ -207,6 +208,17 @@ struct MusicHeroLighting: ViewModifier {
         }
         #else
         content
+            .background {
+                GeometryReader { geometry in
+                    let sample = MusicPointerSample(active ? pagePointer.location : nil,
+                        in: geometry.frame(in: .named(MusicHomePointer.coordinateSpace)))
+                    Color.clear.onChange(of: sample, initial: true) { _, value in
+                        movePointer(value.point, in: value.size)
+                    }
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
             .onGeometryChange(for: CGSize.self, of: \.size) { inputSize = $0 }
             .gesture(HeroTouchObserver(isEnabled: motion, onPress: { point in
                 guard CGRect(origin: .zero, size: inputSize).contains(point) else { return }
@@ -317,10 +329,18 @@ struct MusicHeroLighting: ViewModifier {
             var exterior = Path(CGRect(origin: .zero, size: size))
             exterior.addPath(Path(roundedRect: bounds, cornerRadius: Self.corner))
             halo.clip(to: exterior, style: FillStyle(eoFill: true))
+            var gain = ColorMatrix()
+            gain.r1 = 3
+            gain.g2 = 3
+            gain.b3 = 3
+            gain.a4 = 3
             halo.drawLayer { layer in
-                layer.addFilter(.blur(radius: 5.5))
-                // A threefold stroke width preserves the reference blur's threefold gain.
-                layer.stroke(stroke, with: gradient, lineWidth: Self.stroke * 3)
+                // Amplify the blurred premultiplied stroke without widening its source.
+                layer.addFilter(.colorMatrix(gain, isPremultiplied: true))
+                layer.drawLayer { source in
+                    source.addFilter(.blur(radius: 5.5))
+                    source.stroke(stroke, with: gradient, lineWidth: Self.stroke)
+                }
             }
             context.stroke(stroke, with: gradient, lineWidth: Self.stroke)
         }
@@ -430,6 +450,9 @@ private struct HeroMouseObserver: NSViewRepresentable {
         var onPress: ((CGPoint) -> Void)?
         private var monitor: Any?
         private var tracking: NSTrackingArea?
+        private var scrollUpdate: Task<Void, Never>?
+        private var lastPoint: CGPoint?
+        private var lastSize = CGSize.zero
 
         override var isFlipped: Bool { true }
 
@@ -456,11 +479,8 @@ private struct HeroMouseObserver: NSViewRepresentable {
             guard window != nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .mouseMoved, .scrollWheel]) {
                 [weak self] event in
-                if NSEvent.EventType.scrollWheel == event.type {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self, let window, window.isKeyWindow else { return }
-                        updateLocation(window.mouseLocationOutsideOfEventStream)
-                    }
+                if event.type == .scrollWheel {
+                    self?.scheduleScrollUpdate(for: event)
                 } else {
                     self?.observe(event)
                 }
@@ -471,22 +491,50 @@ private struct HeroMouseObserver: NSViewRepresentable {
         func removeMonitor() {
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
+            scrollUpdate?.cancel()
+            scrollUpdate = nil
+            lastPoint = nil
+            lastSize = .zero
+        }
+
+        private func scheduleScrollUpdate(for event: NSEvent) {
+            guard scrollUpdate == nil, let window, event.window === window, window.isKeyWindow else { return }
+            scrollUpdate = Task { @MainActor [weak self, weak window] in
+                // Sample the final geometry after AppKit applies a batch of wheel events.
+                do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+                guard let self else { return }
+                scrollUpdate = nil
+                guard let window, self.window === window, window.isKeyWindow else { return }
+                updateLocation(window.mouseLocationOutsideOfEventStream)
+            }
         }
 
         private func observe(_ event: NSEvent) {
             guard let window, event.window == window, window.isKeyWindow else {
-                onMove?(nil, bounds.size)
+                publish(nil)
                 return
             }
-            updateLocation(event.locationInWindow)
             let point = convert(event.locationInWindow, from: nil)
-            if event.type == .leftMouseDown, visibleRect.contains(point) { onPress?(point) }
+            let visible = visibleRect
+            updateLocation(point, within: visible)
+            if event.type == .leftMouseDown, visible.contains(point) { onPress?(point) }
         }
 
         private func updateLocation(_ windowPoint: CGPoint) {
-            let point = convert(windowPoint, from: nil)
-            let nearby = !visibleRect.isEmpty && visibleRect.insetBy(dx: -proximity, dy: -proximity).contains(point)
-            onMove?(nearby ? point : nil, bounds.size)
+            updateLocation(convert(windowPoint, from: nil), within: visibleRect)
+        }
+
+        private func updateLocation(_ point: CGPoint, within visible: CGRect) {
+            let nearby = !visible.isEmpty && visible.insetBy(dx: -proximity, dy: -proximity).contains(point)
+            publish(nearby ? point : nil)
+        }
+
+        private func publish(_ point: CGPoint?) {
+            let size = bounds.size
+            guard point != lastPoint || size != lastSize else { return }
+            lastPoint = point
+            lastSize = size
+            onMove?(point, size)
         }
     }
 }

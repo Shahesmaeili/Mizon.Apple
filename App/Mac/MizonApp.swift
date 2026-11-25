@@ -22,11 +22,13 @@ struct MizonApp: App {
     @State private var model = ApplicationServices.makeLoginViewModel()
     #if os(macOS)
     @NSApplicationDelegateAdaptor(MizonApplicationDelegate.self) private var appDelegate
+    #elseif os(iOS)
+    @UIApplicationDelegateAdaptor(MizonIOSApplicationDelegate.self) private var appDelegate
     #endif
     var body: some Scene {
         #if os(macOS)
         Window("Mizon", id: "main") {
-            MizonRootView(model: model)
+            MizonMacWindowContent(model: model, shortcuts: appDelegate.dockShortcuts)
                 .frame(minWidth: 340, minHeight: 350)
         }
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))
@@ -38,11 +40,41 @@ struct MizonApp: App {
         #else
         WindowGroup("Mizon") {
             MizonRootView(model: model)
+                #if os(iOS)
+                .onReceive(MizonShellShortcuts.shared.$entries) { MizonIOSQuickActions.publish($0) }
+                #endif
         }
         #endif
     }
 }
 #if os(macOS)
+private struct MizonMacWindowContent: View {
+    let model: LoginViewModel
+    let shortcuts: MizonDockShortcuts
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        MizonRootView(model: model)
+            .onAppear {
+                shortcuts.reopenMainWindow = { [openWindow] in openWindow(id: "main") }
+                MacMenuBarProfile.shared.activateMainWindow = { [weak shortcuts] in shortcuts?.activateMainWindow() }
+                MizonDeepLinkRouter.shared.activateMainWindow = { [weak shortcuts] in shortcuts?.activateMainWindow() }
+                updateWindowActivity()
+            }
+            .onDisappear { MacMenuBarProfile.shared.mainWindowClosed() }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in updateWindowActivity() }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in updateWindowActivity() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in updateWindowActivity() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in updateWindowActivity() }
+    }
+
+    private func updateWindowActivity() {
+        let window = NSApp.keyWindow
+        let active = NSApp.isActive && window?.identifier?.rawValue == "main" && window?.isVisible == true
+        MacMenuBarProfile.shared.setMainWindowActive(active)
+    }
+}
+
 @MainActor
 private enum MizonSingleInstance {
     private static let bundleID = "com.shahesmaeili.Mizon.Apple"
@@ -96,11 +128,33 @@ private enum MizonSingleInstance {
     }
 }
 
+@MainActor
 final class MizonApplicationDelegate: NSObject, NSApplicationDelegate {
+    let dockShortcuts = MizonDockShortcuts()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { dockShortcuts.menu() }
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where MizonDeepLinkRouter.shared.open(url) {
+            dockShortcuts.activateMainWindow()
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MizonDeepLinkRouter.shared.applicationWillClose()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !MacMenuBarProfile.shared.keepsApplicationRunning
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag, MacMenuBarProfile.shared.keepsApplicationRunning else { return true }
+        dockShortcuts.activateMainWindow()
+        return false
+    }
 }
 #endif

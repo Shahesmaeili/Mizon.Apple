@@ -12,6 +12,11 @@ for bundle in "$binary_dir"/*.bundle; do
     if [[ -d "$bundle" ]]; then ditto "$bundle" "$app/Contents/Resources/$(basename "$bundle")"; fi
 done
 cp App/Info.plist "$app/Contents/Info.plist"
+for language in en fa; do
+    resource_dir="$app/Contents/Resources/$language.lproj"
+    mkdir -p "$resource_dir"
+    cp "App/$language.lproj/InfoPlist.strings" "$resource_dir/InfoPlist.strings"
+done
 if [[ -f App/AppIcon.icns ]]; then cp App/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"; fi
 codesign --force --deep --sign - "$app"
 echo "$app"

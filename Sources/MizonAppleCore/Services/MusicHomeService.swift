@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import MizonAPI
 import MizonAPIClient
+import UniformTypeIdentifiers
 
 public struct MusicHomeService: Sendable {
     public enum Section: String, CaseIterable, Sendable {
@@ -23,6 +24,17 @@ public struct MusicHomeService: Sendable {
     public init(api: MizonApi = MizonApi()) { self.api = api }
 
     public var searchService: GlobalSearchService { GlobalSearchService(api: api) }
+    public var nearbyProfileArtworkService: NearbyProfileArtworkService { NearbyProfileArtworkService(api: api) }
+
+    #if os(macOS)
+    public func makeWindowPresenceSocket(session: AuthSession) -> MizonSocket {
+        MizonSocket(mizonApi: api, hubURL: Endpoints(baseURL: session.server).mizonHubURL)
+    }
+    #endif
+
+    public func nearbyMediaAccess(session: AuthSession) -> NearbyMediaAccess {
+        NearbyMediaAccess(api: api, session: session)
+    }
 
     public func load(_ section: Section, session: AuthSession) async throws -> Content {
         let endpoints = Endpoints(baseURL: session.server)
@@ -48,12 +60,26 @@ public struct MusicHomeService: Sendable {
     }
 
     public func activity(after cursor: String?, session: AuthSession) async throws -> FollowingActivitiesResponse {
-        try await request(FollowingActivitiesOperation(.init(scope: "music", pageSize: 20, cursor: cursor),
+        try await followingActivity(scope: "music", after: cursor, session: session)
+    }
+
+    public func allFollowingActivity(after cursor: String?, session: AuthSession) async throws -> FollowingActivitiesResponse {
+        try await followingActivity(scope: "all", after: cursor, session: session)
+    }
+
+    private func followingActivity(scope: String, after cursor: String?, session: AuthSession) async throws -> FollowingActivitiesResponse {
+        try await request(FollowingActivitiesOperation(.init(scope: scope, pageSize: 20, cursor: cursor),
                                                        endpoints: .init(baseURL: session.server)))
     }
 
     public func track(_ id: UUID, session: AuthSession) async throws -> MusicResponse {
         try await request(MusicOperation(.init(musicPublicId: id), endpoints: .init(baseURL: session.server)))
+    }
+
+    public func trackComment(_ commentID: UUID, musicID: UUID, session: AuthSession) async throws -> MusicCommentItemResponse? {
+        let request = MusicCommentsRequest(musicPublicId: musicID, musicCommentPublicId: commentID, pageSize: 1)
+        let response = try await self.request(MusicCommentsOperation(request, endpoints: .init(baseURL: session.server)))
+        return response.musicComments.first { $0.publicId == commentID }
     }
 
     public func client(_ id: UUID, session: AuthSession) async throws -> ClientProfileResponse {
@@ -103,6 +129,7 @@ public struct MusicHomeService: Sendable {
     }
 
     public func recordPlayback(_ id: UUID, playbackID: UUID, session: AuthSession) async throws {
+        guard await api.getToken() == session.accessToken else { throw CancellationError() }
         _ = try await request(MusicPlayOperation(.init(musicPublicId: id, playbackPublicId: playbackID), endpoints: .init(baseURL: session.server)))
     }
 
@@ -115,9 +142,41 @@ public struct MusicHomeService: Sendable {
     }
 
     fileprivate func cacheMedia(_ info: MediaResponse, session: AuthSession, downloader: MediaDownloader,
-                                maximumBytes: Int64) async throws -> URL {
+                                maximumBytes: Int64, peerNetwork: NearbyDiscoveryService? = nil) async throws -> URL {
         guard info.fileSize > 0, info.fileSize <= maximumBytes else { throw LoginFailure.invalidResponse }
+        if let peerNetwork,
+           let manifest = try await peerManifest(info, session: session, downloader: downloader, network: peerNetwork) {
+            return try await downloadVerified(info, manifest: manifest, session: session, downloader: downloader, network: peerNetwork)
+        }
         return try await downloader.downloadToCache(info, api: api, endpoints: .init(baseURL: session.server))
+    }
+
+    fileprivate func peerManifest(_ info: MediaResponse, session: AuthSession, downloader: MediaDownloader,
+                                  network: NearbyDiscoveryService) async throws -> VerifiedMediaManifest? {
+        guard info.fileSize <= PeerMediaTransfer.maximumFileSize,
+              await network.canFetchPeerMedia(sessionID: session.sessionPublicId),
+              await api.getToken() == session.accessToken else { return nil }
+        do {
+            return try await downloader.peerManifest(for: info, api: api, endpoints: .init(baseURL: session.server))
+        } catch {
+            try Task.checkCancellation()
+            // The authenticated origin download remains available when peer authorization is unavailable.
+            return nil
+        }
+    }
+
+    fileprivate func downloadVerified(_ info: MediaResponse, manifest: VerifiedMediaManifest, session: AuthSession,
+                                      downloader: MediaDownloader, network: NearbyDiscoveryService) async throws -> URL {
+        try Task.checkCancellation()
+        guard manifest.matches(info), await api.getToken() == session.accessToken else { throw LoginFailure.invalidResponse }
+        let endpoints = Endpoints(baseURL: session.server)
+        let origin = PeerMediaChunkProvider { index in
+            guard await api.getToken() == session.accessToken else { throw CancellationError() }
+            return try await downloader.readOriginPiece(for: info, manifest: manifest, index: index, api: api, endpoints: endpoints)
+        }
+        let destination = try await downloader.getCachedFilePath(info)
+        return try await network.downloadPeerMedia(manifest, mediaID: info.mediaPublicId, destination: destination,
+                                                   sessionID: session.sessionPublicId, origin: origin)
     }
 
     public static func storageURL(_ address: String) throws -> URL {
@@ -137,58 +196,198 @@ public struct MusicHomeService: Sendable {
 }
 
 public actor MusicArtworkStore {
+    private struct ArtistModelRequest {
+        let task: Task<URL, Error>
+        var viewers: Set<UUID>
+    }
+
+    private final class CachedArtwork: Sendable {
+        let contents: (image: CGImage, source: URL)
+
+        init(image: CGImage, source: URL) {
+            contents = (image, source)
+        }
+    }
+
     private let downloader: MediaDownloader
     private let service: MusicHomeService
-    private let cache = NSCache<NSUUID, CGImage>()
-    private var requests: [UUID: Task<CGImage, Error>] = [:]
+    private let accountID: UUID
+    private let server: URL
+    private let peerNetwork: NearbyDiscoveryService?
+    private let cache = NSCache<NSUUID, CachedArtwork>()
+    private let profileThumbnails = NSCache<NSUUID, CGImage>()
+    private var requests: [UUID: Task<CachedArtwork, Error>] = [:]
+    private var artistModelRequests: [UUID: ArtistModelRequest] = [:]
 
-    public init(service: MusicHomeService, session: AuthSession) {
+    public init(service: MusicHomeService, session: AuthSession, cacheRoot: URL? = nil,
+                peerNetwork: NearbyDiscoveryService? = nil) {
         self.service = service
-        let directory = URL.cachesDirectory.appending(path: "Mizon/Music/\(session.clientPublicId)", directoryHint: .isDirectory)
+        self.peerNetwork = peerNetwork
+        accountID = session.clientPublicId
+        server = session.server
+        let directory = cacheRoot ?? Self.cacheDirectory(for: session)
         downloader = MediaDownloader(cacheRoot: directory)
         cache.totalCostLimit = 32 * 1024 * 1024
+        profileThumbnails.totalCostLimit = 2 * 1024 * 1024
+    }
+
+    static func cacheDirectory(for session: AuthSession) -> URL {
+        URL.cachesDirectory.appending(path: "Mizon/Music/\(session.clientPublicId)", directoryHint: .isDirectory)
+    }
+
+    public func moodAnimationURL(_ id: UUID, session: AuthSession) async throws -> URL {
+        let source = try await file(id, session: session, maximumBytes: Int64(MoodAnimationAsset.maximumBytes))
+        return try await MoodAnimationAsset.jsonFile(for: source)
     }
 
     public func image(_ id: UUID, session: AuthSession) async throws -> CGImage {
+        try await imageWithSource(id, session: session).image
+    }
+
+    public func imageWithSource(_ id: UUID, session: AuthSession) async throws -> (image: CGImage, source: URL) {
+        try Task.checkCancellation()
+        guard session.clientPublicId == accountID, session.server == server else { throw CancellationError() }
         let key = id as NSUUID
-        if let image = cache.object(forKey: key) { return image }
-        if let request = requests[id] { return try await request.value }
+        if let artwork = cache.object(forKey: key) { return artwork.contents }
+        if let request = requests[id] { return try await request.value.contents }
         let request = Task { [service, downloader] in
             let media = try await service.media(id, session: session)
             let path = try await service.cacheMedia(media, session: session, downloader: downloader,
                                                    maximumBytes: 24 * 1024 * 1024)
             try Task.checkCancellation()
-            guard let source = CGImageSourceCreateWithURL(path as CFURL, nil),
+            guard let source = CGImageSourceCreateWithURL(path as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
                   let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
                     kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 960
+                    kCGImageSourceThumbnailMaxPixelSize: 960,
+                    kCGImageSourceShouldCacheImmediately: true
                   ] as CFDictionary) else { throw LoginFailure.invalidResponse }
-            return image
+            return CachedArtwork(image: image, source: path)
         }
         requests[id] = request
         defer { requests[id] = nil }
-        let image = try await request.value
-        cache.setObject(image, forKey: key, cost: image.bytesPerRow * image.height)
+        let artwork = try await request.value
+        let image = artwork.contents.image
+        cache.setObject(artwork, forKey: key, cost: image.bytesPerRow * image.height)
+        return artwork.contents
+    }
+
+    func profileImage(_ id: UUID, session: AuthSession) async throws -> CGImage {
+        try Task.checkCancellation()
+        guard session.clientPublicId == accountID, session.server == server else { throw CancellationError() }
+        let key = id as NSUUID
+        if let image = profileThumbnails.object(forKey: key) { return image }
+
+        let media = try await service.media(id, session: session)
+        guard media.mediaPublicId == id else { throw LoginFailure.invalidResponse }
+        let path = try await service.cacheMedia(media, session: session, downloader: downloader, maximumBytes: 4 * 1024 * 1024)
+        try Task.checkCancellation()
+
+        guard let source = CGImageSourceCreateWithURL(path as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let contentType = CGImageSourceGetType(source) as String?, UTType(contentType)?.conforms(to: .image) == true,
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 128,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary) else { throw LoginFailure.invalidResponse }
+
+        try Task.checkCancellation()
+        profileThumbnails.setObject(image, forKey: key, cost: image.bytesPerRow * image.height)
         return image
     }
 
     public func file(_ id: UUID, session: AuthSession, maximumBytes: Int64) async throws -> URL {
         let media = try await service.media(id, session: session)
-        return try await service.cacheMedia(media, session: session, downloader: downloader, maximumBytes: maximumBytes)
+        return try await service.cacheMedia(media, session: session, downloader: downloader,
+                                            maximumBytes: maximumBytes, peerNetwork: peerNetwork)
+    }
+
+    public func artistModelFile(_ id: UUID, session: AuthSession) async throws -> URL {
+        try Task.checkCancellation()
+        guard session.clientPublicId == accountID, session.server == server else { throw CancellationError() }
+        while let request = artistModelRequests[id], request.task.isCancelled {
+            _ = await request.task.result
+            try Task.checkCancellation()
+        }
+        let viewer = UUID()
+        let task: Task<URL, Error>
+        if let request = artistModelRequests[id] {
+            task = request.task
+            artistModelRequests[id]?.viewers.insert(viewer)
+        } else {
+            task = Task {
+                defer { artistModelRequests[id] = nil }
+                let media = try await service.media(id, session: session)
+                guard media.mediaPublicId == id else { throw LoginFailure.invalidResponse }
+                return try await service.cacheMedia(media, session: session, downloader: downloader,
+                                                    maximumBytes: 32 * 1024 * 1024, peerNetwork: peerNetwork)
+            }
+            artistModelRequests[id] = ArtistModelRequest(task: task, viewers: [viewer])
+        }
+        return try await withTaskCancellationHandler {
+            let path = try await task.value
+            try Task.checkCancellation()
+            return path
+        } onCancel: {
+            Task { await self.cancelArtistModelViewer(viewer, mediaID: id) }
+        }
+    }
+
+    private func cancelArtistModelViewer(_ viewer: UUID, mediaID: UUID) {
+        guard artistModelRequests[mediaID]?.viewers.remove(viewer) != nil,
+              let request = artistModelRequests[mediaID], request.viewers.isEmpty else { return }
+        request.task.cancel()
     }
 
     public func playableURL(_ id: UUID, session: AuthSession) async throws -> URL {
         let media = try await service.media(id, session: session)
+        if let peerNetwork,
+           let manifest = try await service.peerManifest(media, session: session, downloader: downloader, network: peerNetwork) {
+            return try await service.downloadVerified(media, manifest: manifest, session: session, downloader: downloader, network: peerNetwork)
+        }
         if URL(string: media.storagePath)?.isFileURL == true {
             return try await service.cacheMedia(media, session: session, downloader: downloader,
-                                                maximumBytes: 128 * 1024 * 1024)
+                                                maximumBytes: PeerMediaTransfer.maximumFileSize)
         }
         return try MusicHomeService.storageURL(media.storagePath)
+    }
+
+    public func playableTrack(_ file: MusicFileResponse, session: AuthSession) async throws -> URL {
+        let info = file.registeredMedia
+        if info.fileSize > 0, (try? await downloader.isCached(info)) == true {
+            return try await downloader.getCachedFilePath(info)
+        }
+        if let peerNetwork,
+           let manifest = try await service.peerManifest(info, session: session, downloader: downloader, network: peerNetwork) {
+            let media = try await service.media(file.mediaPublicId, session: session)
+            return try await service.downloadVerified(media, manifest: manifest, session: session, downloader: downloader, network: peerNetwork)
+        }
+        if URL(string: file.storagePath)?.isFileURL == true {
+            let media = try await service.media(file.mediaPublicId, session: session)
+            return try await service.cacheMedia(media, session: session, downloader: downloader,
+                                                maximumBytes: PeerMediaTransfer.maximumFileSize)
+        }
+        return try MusicHomeService.storageURL(file.storagePath)
+    }
+
+    public func cacheTrack(_ musicID: UUID, session: AuthSession) async throws {
+        let track = try await service.trackFile(musicID, session: session)
+        guard track.mediaPublicId != UUID.emptyPublicIdentifier else { throw LoginFailure.invalidResponse }
+        _ = try await service.cacheMedia(track.registeredMedia, session: session, downloader: downloader,
+                                         maximumBytes: PeerMediaTransfer.maximumFileSize, peerNetwork: peerNetwork)
+        try Task.checkCancellation()
     }
 
     public func cancel() {
         for request in requests.values { request.cancel() }
         requests.removeAll()
+    }
+}
+
+private extension MusicFileResponse {
+    var registeredMedia: MediaResponse {
+        MediaResponse(mediaPublicId: mediaPublicId, totalChunks: totalChunks, chunkSize: chunkSize,
+                      fileHash: fileHash, fileName: fileName, fileSize: fileSize, storagePath: storagePath)
     }
 }

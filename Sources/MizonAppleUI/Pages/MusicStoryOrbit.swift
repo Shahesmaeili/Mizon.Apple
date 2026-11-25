@@ -18,9 +18,43 @@ struct MusicStoryOrbit: View {
         let angles: (Double, Double, Double)
     }
 
+    private enum Label: Int, CaseIterable {
+        case year, rating, title
+
+        var bounds: CGRect {
+            switch self {
+            case .year: CGRect(x: -8, y: -8, width: 180, height: 132)
+            case .rating: CGRect(x: -10, y: -12, width: 80, height: 88)
+            case .title: CGRect(x: -8, y: -8, width: 480, height: 132)
+            }
+        }
+
+        func draw(_ card: Card, index: Int, in context: GraphicsContext) {
+            switch self {
+            case .year:
+                context.draw(Text(String(22 + index)).font(.custom(MusicStoryOrbit.typeface, fixedSize: card.typeSizes.0))
+                    .foregroundStyle(index == 1 ? musicColor("90B5FF") : card.accent), at: .zero, anchor: .topLeading)
+            case .rating:
+                context.draw(Text(card.rating).font(AuthLocalization.englishFont(12)).foregroundStyle(.primary),
+                             at: CGPoint(x: 29, y: 6))
+                context.fill(Path(ellipseIn: CGRect(x: 9, y: 28, width: 40, height: 40)), with: .color(.black))
+                context.draw(context.resolve(Image(systemName: "star.fill").symbolRenderingMode(.monochrome)),
+                             in: CGRect(x: 21, y: 40, width: 16, height: 16))
+            case .title:
+                context.draw(Text(card.title).font(.custom(MusicStoryOrbit.typeface, fixedSize: card.typeSizes.1)),
+                             at: .zero, anchor: .topLeading)
+            }
+        }
+    }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.displayScale) private var displayScale
     @Environment(\.scenePhase) private var scenePhase
+    #if os(macOS)
+    @Environment(MusicHomePointer.self) private var homePointer
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var labelCache: LabelCache?
+    #endif
     @State private var visible = false
     @State private var pointer: CGPoint?
     @State private var pixelWidth = 512
@@ -36,14 +70,28 @@ struct MusicStoryOrbit: View {
 
     var body: some View {
         let animating = visible && !reduceMotion && scenePhase == .active
+        #if os(macOS)
+        let scrollStartedAt = animating ? homePointer.scrollStartedAt : nil
+        let timeSpentScrolling = animating ? homePointer.timeSpentScrolling : 0
+        let drawsAsynchronously = true
+        let labelRequest = visible && homePointer.scrollStartedAt == nil
+            ? LabelRequest(pixelWidth: pixelWidth, colorScheme: colorScheme)
+            : nil
+        #else
+        let scrollStartedAt: Date? = nil
+        let timeSpentScrolling: TimeInterval = 0
+        let drawsAsynchronously = false
+        #endif
         let displayScale = displayScale
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !animating)) { time in
-            Canvas { context, size in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !animating || scrollStartedAt != nil)) { time in
+            let elapsed = animating
+                ? (scrollStartedAt ?? time.date).timeIntervalSinceReferenceDate - timeSpentScrolling
+                : nil
+            Canvas(rendersAsynchronously: drawsAsynchronously) { context, size in
                 guard size.width > 0 else { return }
                 var context = context
                 let scale = size.width / 1440
                 context.scaleBy(x: scale, y: scale)
-                let elapsed = animating ? time.date.timeIntervalSinceReferenceDate : nil
                 let hover = animating ? pointer.map { CGPoint(x: $0.x / scale, y: $0.y / scale) } : nil
                 for (index, card) in Self.cards.enumerated() {
                     draw(card, index: index, context: context, elapsed: elapsed, pointer: hover)
@@ -65,11 +113,26 @@ struct MusicStoryOrbit: View {
         .frame(maxWidth: .infinity)
         .onScrollVisibilityChange(threshold: 0.1) { visible = $0 }
         .onContinuousHover { phase in
+            #if os(macOS)
+            guard homePointer.scrollStartedAt == nil else { return }
+            #endif
             switch phase {
-            case .active(let location): pointer = location
+            case .active(let location):
+                if pointer != location { pointer = location }
             case .ended: pointer = nil
             }
         }
+        #if os(macOS)
+        .task(id: labelRequest) {
+            guard let labelRequest, labelCache?.request != labelRequest else { return }
+            labelCache = LabelCache(request: labelRequest, cards: Self.renderLabels(
+                pixelWidth: labelRequest.pixelWidth, colorScheme: labelRequest.colorScheme
+            ))
+        }
+        .onChange(of: scrollStartedAt) { _, current in
+            if current == nil { pointer = nil }
+        }
+        #endif
         .environment(\.layoutDirection, .leftToRight)
         .accessibilityHidden(true)
     }
@@ -136,24 +199,61 @@ struct MusicStoryOrbit: View {
         var year = layer(period: 26 + Double(index) * 1.3, phase: 43, x: -5, y: 5 * direction, pointerX: -14, pointerY: -10)
         year.translateBy(x: card.edition.x, y: card.edition.y)
         year.rotate(by: .degrees(card.angles.0))
-        year.draw(Text(String(22 + index)).font(.custom(Self.typeface, fixedSize: card.typeSizes.0))
-            .foregroundStyle(index == 1 ? musicColor("90B5FF") : card.accent), at: .zero, anchor: .topLeading)
+        drawLabel(.year, card: card, index: index, in: year)
 
         var rating = layer(period: 21 + Double(index) * 2.1, phase: 173, x: 5 * direction, y: -5, pointerX: 18, pointerY: -12)
         rating.translateBy(x: card.badge.x, y: card.badge.y)
         rating.rotate(by: .degrees(card.angles.1 + influence.x * 7))
-        rating.draw(Text(card.rating).font(AuthLocalization.englishFont(12)).foregroundStyle(.primary),
-                    at: CGPoint(x: 29, y: 6))
-        rating.fill(Path(ellipseIn: CGRect(x: 9, y: 28, width: 40, height: 40)), with: .color(.black))
-        rating.draw(rating.resolve(Image(systemName: "star.fill").symbolRenderingMode(.monochrome)),
-                    in: CGRect(x: 21, y: 40, width: 16, height: 16))
+        drawLabel(.rating, card: card, index: index, in: rating)
 
         var title = layer(period: 25 + Double(index) * 1.8, phase: 283, x: -3 * direction, y: 3, pointerX: 12, pointerY: 6)
         title.translateBy(x: card.heading.x, y: card.heading.y)
         title.rotate(by: .degrees(card.angles.2))
-        title.draw(Text(card.title).font(.custom(Self.typeface, fixedSize: card.typeSizes.1)),
-                   at: .zero, anchor: .topLeading)
+        drawLabel(.title, card: card, index: index, in: title)
     }
+
+    private func drawLabel(_ label: Label, card: Card, index: Int, in context: GraphicsContext) {
+        #if os(macOS)
+        if let labelCache, labelCache.request.colorScheme == colorScheme,
+           let image = labelCache.cards[index][label.rawValue] {
+            context.draw(Image(decorative: image, scale: 1), in: label.bounds)
+            return
+        }
+        #endif
+        label.draw(card, index: index, in: context)
+    }
+
+    #if os(macOS)
+    private struct LabelRequest: Equatable {
+        let pixelWidth: Int
+        let colorScheme: ColorScheme
+    }
+
+    private struct LabelCache {
+        let request: LabelRequest
+        let cards: [[CGImage?]]
+    }
+
+    static func renderLabels(pixelWidth: Int, colorScheme: ColorScheme) -> [[CGImage?]] {
+        // Keep shaping and symbol resolution out of the animation's display-list updates.
+        let rasterScale = CGFloat(pixelWidth) / 1440
+        return Self.cards.enumerated().map { index, card in
+            Label.allCases.map { label in
+                let bounds = label.bounds
+                let renderer = ImageRenderer(content: Canvas { context, _ in
+                    var context = context
+                    context.translateBy(x: -bounds.minX, y: -bounds.minY)
+                    label.draw(card, index: index, in: context)
+                }
+                .frame(width: bounds.width, height: bounds.height)
+                .environment(\.layoutDirection, .leftToRight)
+                .environment(\.colorScheme, colorScheme))
+                renderer.scale = rasterScale
+                return renderer.cgImage
+            }
+        }
+    }
+    #endif
 
     private static func orbitPath(_ coordinates: [(CGFloat, CGFloat)]) -> Path {
         let points = coordinates.map { CGPoint(x: $0.0 - 80, y: $0.1 - 320) }

@@ -1,0 +1,17 @@
+"Title" = "Nearby devices";
+"Subtitle" = "Mizon on your local network";
+"Close" = "Close";
+"Discoverability" = "Find devices and be visible";
+"Disclosure" = "Discovery is on by default. Nearby Mizon users can see your device and public profile details and download verified pieces of public media approved by the server. Turn discovery off to stop sharing.";
+"DiscoveredDevices" = "Discovered devices";
+"Off" = "Discovery is off";
+"OffDetail" = "With discovery off, Mizon stops looking for nearby devices and hides this device from their Nearby Devices list.";
+"Searching" = "Looking for devices";
+"SearchingDetail" = "Checking for Mizon devices on the same local network.";
+"Active" = "Discovery is on";
+"NoDevices" = "No nearby devices yet";
+"NoDevicesDetail" = "Keep Mizon open and enable visibility on another device on this network.";
+"PermissionDenied" = "Local network access needed";
+"PermissionDetail" = "Allow local network access when asked. If the prompt has closed, you can change the permission in Settings.";
+"Unavailable" = "Discovery unavailable";
+"UnavailableDetail" = "Check your local network connection, then turn visibility off and back on.";

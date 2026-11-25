@@ -20,13 +20,17 @@ struct GlobalSearchPage: View {
     var body: some View {
         NavigationStack {
             List(results) { result in
-                if result.kind == .music {
-                    Button { openTrack(result.publicID) } label: { label(for: result) }
-                        .buttonStyle(.plain)
-                } else {
-                    label(for: result)
+                Group {
+                    if result.kind == .music {
+                        Button { openTrack(result.publicID) } label: { label(for: result) }
+                            .buttonStyle(.plain)
+                    } else {
+                        label(for: result)
+                    }
                 }
+                .listRowBackground(AuthAppearance.cardFill)
             }
+            .scrollContentBackground(.hidden)
             .overlay {
                 if loading && results.isEmpty {
                     ProgressView()
@@ -59,6 +63,7 @@ struct GlobalSearchPage: View {
             Text(isPersian ? result.persianTitle.flatMap { $0.isEmpty ? nil : $0 } ?? result.title : result.title)
         } icon: {
             Image(systemName: result.kind == .music ? "music.note" : "person.crop.circle")
+                .foregroundStyle(MizonPalette.accent)
         }
     }
 

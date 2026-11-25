@@ -142,7 +142,7 @@ struct WindowsPresentationTests {
         #expect(abs(devEase(0.5) - 0.5) < 0.0001)
         #expect(abs(devEase(1) - 1) < 0.00001)
     }
-    @Test func englishPresentationRegistersTheBundledWeightsAndNativeFieldFace() throws {
+    @Test @MainActor func englishPresentationRegistersTheBundledWeightsAndNativeFieldFace() throws {
         let faces: [(Font.Weight, String)] = [
             (.light, "Selawik-Light"), (.regular, "Selawik-Regular"),
             (.semibold, "Selawik-Semibold"), (.bold, "Selawik-Bold"),

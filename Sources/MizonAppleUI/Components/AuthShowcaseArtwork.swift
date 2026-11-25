@@ -110,11 +110,11 @@ struct AuthShowcaseArtwork: View {
                 RoundedRectangle(cornerRadius: 23)
                     .fill(.linearGradient(stops: [
                         .init(color: purple.opacity(41.0 / 255), location: 0),
-                        .init(color: AuthAppearance.color(0x171B35).opacity(13.0 / 255), location: 0.65),
+                        .init(color: MizonPalette.surface.opacity(13.0 / 255), location: 0.65),
                         .init(color: warm.opacity(34.0 / 255), location: 1)
                     ], startPoint: .topTrailing, endPoint: .bottomLeading))
                 Rectangle()
-                    .fill(.linearGradient(colors: [.clear, .white.opacity(24.0 / 255), .clear],
+                    .fill(.linearGradient(colors: [.clear, MizonPalette.ink.opacity(24.0 / 255), .clear],
                                           startPoint: .leading, endPoint: .trailing))
                     .frame(width: 76, height: 220).rotationEffect(.degrees(-20))
                     .offset(x: moves ? -100 + time.truncatingRemainder(dividingBy: 6) * (440.0 / 6) : 0)

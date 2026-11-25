@@ -80,6 +80,7 @@ struct FilteredAuthField: NSViewRepresentable {
         let field = AuthTextField()
         field.delegate = context.coordinator
         field.onFocus = { [weak coordinator = context.coordinator] in coordinator?.reportFocus() }
+        field.textColor = NSColor(MizonPalette.ink)
         field.formatter = AuthInputFormatter(accepts: accepts)
         field.isBordered = false
         field.drawsBackground = false

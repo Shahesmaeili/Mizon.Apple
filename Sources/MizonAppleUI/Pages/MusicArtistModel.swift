@@ -1,8 +1,8 @@
 #if os(macOS) || os(iOS)
 import Foundation
 @preconcurrency import GLTFKit2
-import MizonAPIClient
 import MizonAppleCore
+import OSLog
 @preconcurrency import SceneKit
 import simd
 import SwiftUI
@@ -11,29 +11,41 @@ import UIKit
 #endif
 
 struct MusicArtistModel: View {
-    let artist: FeaturedPersonItem
+    struct Configuration: Equatable {
+        let mediaID: UUID
+        let portraitMediaID: UUID?
+        let yaw: Float
+        var zoom: Float = 1
+        var verticalFocus: Float = 0
+        var attribution: String? = nil
+    }
+
+    private static let logger = Logger(subsystem: "com.shahesmaeili.Mizon.Apple", category: "ArtistModel")
+    let configuration: Configuration
     let model: MusicHomeViewModel
     let rotateHint: String
     let resetLabel: String
     var showsRotationHint = true
+    var isInMusicFeed = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     private var localization = AuthLocalization()
     @State private var visible = false
-    @State private var scene: ArtistPreviewScene?
+    @State private var loaded: (mediaID: UUID, scene: ArtistPreviewScene)?
+    @State private var failedMediaID: UUID?
     @State private var dragOrigin: simd_quatf?
 
     private var rest: simd_quatf {
-        let yaw = artist.modelYawInDegrees.isFinite ? artist.modelYawInDegrees.truncatingRemainder(dividingBy: 360) : 0
+        let yaw = configuration.yaw.isFinite ? configuration.yaw.truncatingRemainder(dividingBy: 360) : 0
         return simd_quatf(angle: yaw * .pi / 180, axis: SIMD3(0, 1, 0))
             * simd_quatf(angle: -0.04, axis: SIMD3(1, 0, 0))
     }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            if let scene, visible, scenePhase == .active {
-                SceneView(scene: scene.scene, pointOfView: scene.camera, options: [.autoenablesDefaultLighting])
+            if let scene, showsLoadedScene, scenePhase == .active {
+                ArtistModelSceneView(preview: scene)
                     .allowsHitTesting(false)
                 rotationSurface(scene)
                     .accessibilityLabel(rotateHint)
@@ -56,27 +68,63 @@ struct MusicArtistModel: View {
                 .padding(.leading, 10)
                 .padding(.bottom, 9)
             } else if visible {
-                MusicArtwork(mediaID: artist.profileMediaPublicId, model: model, symbol: "person.fill")
+                MusicArtwork(mediaID: configuration.portraitMediaID, model: model, symbol: "person.fill")
                     .frame(width: showsRotationHint ? 118 : 96, height: showsRotationHint ? 118 : 96)
                     .clipShape(.circle)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
+                    .accessibilityLabel(localization.string(
+                        failedMediaID == configuration.mediaID ? "ArtistModelUnavailable" : "ArtistModelLoading",
+                        table: "MusicHome"
+                    ))
             } else {
                 Color.clear
             }
         }
         .onScrollVisibilityChange(threshold: 0.15) { visible = $0 }
         .task(id: activeModelID) {
-            guard scene == nil, let id = activeModelID else { return }
+            guard let id = activeModelID, scene == nil else { return }
+            dragOrigin = nil
+            failedMediaID = nil
             do {
-                let path = try await model.artwork.file(id, session: model.session, maximumBytes: 32 * 1024 * 1024)
+                let path = try await model.artwork.artistModelFile(id, session: model.session)
                 let decoded = try await ArtistPreviewScene.load(path)
                 try Task.checkCancellation()
-                scene = decoded
-                decoded.configure(orientation: rest, zoom: artist.modelViewScale, verticalFocus: artist.modelVerticalFocus)
-            } catch {}
+                configure(decoded)
+                loaded = (id, decoded)
+            } catch is CancellationError {
+            } catch {
+                guard !Task.isCancelled else { return }
+                failedMediaID = id
+                let failure = error as NSError
+                Self.logger.error("Artist model load failed (\(failure.domain, privacy: .public): \(failure.code)).")
+            }
         }
-        .help(artist.modelAttribution ?? rotateHint)
+        .onChange(of: configuration) {
+            if let scene { configure(scene) }
+        }
+        .help(failedMediaID == configuration.mediaID
+              ? localization.string("ArtistModelUnavailable", table: "MusicHome")
+              : configuration.attribution ?? rotateHint)
+    }
+
+    private var scene: ArtistPreviewScene? {
+        guard loaded?.mediaID == configuration.mediaID else { return nil }
+        return loaded?.scene
+    }
+
+    private var showsLoadedScene: Bool {
+        #if os(macOS)
+        // The feed owns the viewport clip. Retain the event-driven renderer with the
+        // lazy row so crossing its visibility threshold doesn't rebuild a Metal view.
+        visible || isInMusicFeed
+        #else
+        visible
+        #endif
+    }
+
+    private func configure(_ scene: ArtistPreviewScene) {
+        scene.configure(orientation: rest, zoom: configuration.zoom, verticalFocus: configuration.verticalFocus)
     }
 
     @ViewBuilder
@@ -105,7 +153,7 @@ struct MusicArtistModel: View {
     }
 
     private var activeModelID: UUID? {
-        visible && scenePhase == .active ? artist.modelMediaPublicId : nil
+        visible && scenePhase == .active ? configuration.mediaID : nil
     }
 
     private func reset(_ scene: ArtistPreviewScene) {
@@ -119,6 +167,69 @@ struct MusicArtistModel: View {
         SCNTransaction.commit()
     }
 }
+
+@MainActor
+private struct ArtistModelSceneView {
+    let preview: ArtistPreviewScene
+
+    func makeSceneView() -> ArtistViewportView {
+        let view = ArtistViewportView()
+        view.backgroundColor = .clear
+        #if os(macOS)
+        view.wantsLayer = true
+        view.layer?.backgroundColor = CGColor(gray: 0, alpha: 0)
+        view.layer?.isOpaque = false
+        #else
+        view.isOpaque = false
+        #endif
+        view.autoenablesDefaultLighting = true
+        return view
+    }
+
+    func updateScene(_ view: ArtistViewportView) {
+        view.show(preview)
+    }
+}
+
+@MainActor
+private final class ArtistViewportView: SCNView {
+    private var preview: ArtistPreviewScene?
+
+    func show(_ preview: ArtistPreviewScene) {
+        guard self.preview !== preview else { return }
+        self.preview = preview
+        preview.scene.background.contents = backgroundColor
+        scene = preview.scene
+        pointOfView = preview.camera
+        preview.resize(to: bounds.size)
+    }
+
+    #if os(macOS)
+    override var isOpaque: Bool { false }
+
+    override func layout() {
+        super.layout()
+        preview?.resize(to: bounds.size)
+    }
+    #else
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        preview?.resize(to: bounds.size)
+    }
+    #endif
+}
+
+#if os(macOS)
+extension ArtistModelSceneView: NSViewRepresentable {
+    func makeNSView(context: Context) -> ArtistViewportView { makeSceneView() }
+    func updateNSView(_ view: ArtistViewportView, context: Context) { updateScene(view) }
+}
+#else
+extension ArtistModelSceneView: UIViewRepresentable {
+    func makeUIView(context: Context) -> ArtistViewportView { makeSceneView() }
+    func updateUIView(_ view: ArtistViewportView, context: Context) { updateScene(view) }
+}
+#endif
 
 #if os(iOS)
 private struct MusicArtistPan: UIGestureRecognizerRepresentable {
@@ -165,6 +276,8 @@ private final class ArtistPreviewScene: @unchecked Sendable {
     let scene: SCNScene
     let pivot = SCNNode()
     let camera = SCNNode()
+    private var zoom: CGFloat = 1
+    private var viewport = CGSize(width: 1, height: 1)
 
     private init(scene source: SCNScene) throws {
         scene = SCNScene()
@@ -185,6 +298,7 @@ private final class ArtistPreviewScene: @unchecked Sendable {
 
         let lens = SCNCamera()
         lens.usesOrthographicProjection = true
+        lens.projectionDirection = .vertical
         lens.zNear = 0.1
         lens.zFar = 30
         camera.camera = lens
@@ -195,8 +309,23 @@ private final class ArtistPreviewScene: @unchecked Sendable {
     @MainActor
     func configure(orientation: simd_quatf, zoom: Float, verticalFocus: Float) {
         pivot.simdOrientation = orientation
-        camera.camera?.orthographicScale = 2.22 / Double(zoom.isFinite ? min(2.5, max(0.5, zoom)) : 1)
+        self.zoom = CGFloat(zoom.isFinite ? min(2.5, max(0.5, zoom)) : 1)
         pivot.simdPosition.y = verticalFocus.isFinite ? -min(1, max(-1, verticalFocus)) : 0
+        updateProjection()
+    }
+
+    @MainActor
+    func resize(to size: CGSize) {
+        guard size.width.isFinite, size.height.isFinite, min(size.width, size.height) >= 1, size != viewport else { return }
+        viewport = size
+        updateProjection()
+    }
+
+    @MainActor
+    private func updateProjection() {
+        // WinUI uses 45% of the shorter viewport side per world unit; SceneKit's scale is a vertical half-span.
+        let pointsPerUnit = min(viewport.width, viewport.height) * 0.45 * zoom
+        camera.camera?.orthographicScale = Double(viewport.height / (2 * pointsPerUnit))
     }
 
     @concurrent
