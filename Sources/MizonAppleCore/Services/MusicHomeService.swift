@@ -26,7 +26,7 @@ public struct MusicHomeService: Sendable {
     public var searchService: GlobalSearchService { GlobalSearchService(api: api) }
     public var nearbyProfileArtworkService: NearbyProfileArtworkService { NearbyProfileArtworkService(api: api) }
 
-    #if os(macOS)
+    #if os(macOS) || os(iOS)
     public func makeWindowPresenceSocket(session: AuthSession) -> MizonSocket {
         MizonSocket(mizonApi: api, hubURL: Endpoints(baseURL: session.server).mizonHubURL)
     }

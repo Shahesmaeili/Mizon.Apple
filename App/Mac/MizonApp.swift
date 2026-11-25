@@ -59,19 +59,7 @@ private struct MizonMacWindowContent: View {
                 shortcuts.reopenMainWindow = { [openWindow] in openWindow(id: "main") }
                 MacMenuBarProfile.shared.activateMainWindow = { [weak shortcuts] in shortcuts?.activateMainWindow() }
                 MizonDeepLinkRouter.shared.activateMainWindow = { [weak shortcuts] in shortcuts?.activateMainWindow() }
-                updateWindowActivity()
             }
-            .onDisappear { MacMenuBarProfile.shared.mainWindowClosed() }
-            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in updateWindowActivity() }
-            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in updateWindowActivity() }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in updateWindowActivity() }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in updateWindowActivity() }
-    }
-
-    private func updateWindowActivity() {
-        let window = NSApp.keyWindow
-        let active = NSApp.isActive && window?.identifier?.rawValue == "main" && window?.isVisible == true
-        MacMenuBarProfile.shared.setMainWindowActive(active)
     }
 }
 
@@ -131,11 +119,30 @@ private enum MizonSingleInstance {
 @MainActor
 final class MizonApplicationDelegate: NSObject, NSApplicationDelegate {
     let dockShortcuts = MizonDockShortcuts()
+    private var keyWindowObservers: [any NSObjectProtocol] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        keyWindowObservers = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { Self.updateWindowActivity() }
+            }
+        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        Self.updateWindowActivity()
     }
+
+    func applicationDidBecomeActive(_ notification: Notification) { Self.updateWindowActivity() }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        MacMenuBarProfile.shared.setAppWindowActive(false)
+    }
+
+    private static func updateWindowActivity() {
+        let active = NSApp.isActive && NSApp.keyWindow?.isVisible == true
+        MacMenuBarProfile.shared.setAppWindowActive(active)
+    }
+
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { dockShortcuts.menu() }
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where MizonDeepLinkRouter.shared.open(url) {
@@ -144,6 +151,8 @@ final class MizonApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        for observer in keyWindowObservers { NotificationCenter.default.removeObserver(observer) }
+        keyWindowObservers.removeAll()
         MizonDeepLinkRouter.shared.applicationWillClose()
     }
 

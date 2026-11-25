@@ -30,6 +30,8 @@ public struct MizonRootView: View {
     #if os(iOS)
     @Environment(\.scenePhase) private var scenePhase
     @State private var nearbyInForeground = false
+    @State private var accountPresence: AccountPresenceCoordinator?
+    @State private var presenceSessionID: UUID?
     #endif
 
     private struct HomeEntrance {
@@ -70,7 +72,10 @@ public struct MizonRootView: View {
                     nearbyInForeground = false
                     profileTransition.cancel()
                 }
+                updateAccountPresence()
             }
+            .onChange(of: home?.sessionID) { updateAccountPresence() }
+            .onChange(of: signingOut) { updateAccountPresence() }
             #endif
             #if os(macOS) || os(iOS)
             .task(id: home?.sessionID) { await profileTransition.play() }
@@ -81,6 +86,9 @@ public struct MizonRootView: View {
             .onDisappear {
                 profileTransition.cancel()
                 deepLinks.cancelDispatched()
+                #if os(iOS)
+                stopAccountPresence()
+                #endif
             }
             .onChange(of: shellContext, initial: true) { _, _ in
                 #if os(macOS)
@@ -112,6 +120,8 @@ public struct MizonRootView: View {
                 }
                 #if os(macOS)
                 MacMenuBarProfile.shared.retainOnlySession(model.session?.sessionPublicId)
+                #elseif os(iOS)
+                updateAccountPresence()
                 #endif
             }
             .sheet(item: $deepLinkSettings) { request in
@@ -261,6 +271,30 @@ public struct MizonRootView: View {
     #if os(macOS)
     private var showingAuthentication: Bool {
         home == nil || home?.sessionID != model.session?.sessionPublicId
+    }
+    #endif
+
+    #if os(iOS)
+    private func updateAccountPresence() {
+        guard scenePhase != .background, !signingOut, let session = model.session,
+              home?.sessionID == session.sessionPublicId else {
+            stopAccountPresence()
+            return
+        }
+        if presenceSessionID != session.sessionPublicId {
+            stopAccountPresence()
+            accountPresence = AccountPresenceCoordinator(socket: model.musicHomeService.makeWindowPresenceSocket(session: session),
+                                                         clientPublicID: session.clientPublicId)
+            presenceSessionID = session.sessionPublicId
+        }
+        accountPresence?.setWindowActive(scenePhase == .active)
+    }
+
+    private func stopAccountPresence() {
+        guard let presence = accountPresence else { return }
+        accountPresence = nil
+        presenceSessionID = nil
+        Task { await presence.stop() }
     }
     #endif
 

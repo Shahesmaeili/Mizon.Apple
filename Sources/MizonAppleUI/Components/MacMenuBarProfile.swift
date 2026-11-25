@@ -69,9 +69,9 @@ public final class MacMenuBarProfile {
     private var loopFile: URL?
     private var effectFile: URL?
     private var effectRequestDeadline: ContinuousClock.Instant?
-    private var presence: MacProfilePresence?
+    private var presence: AccountPresenceCoordinator?
     private var presenceGeneration = UUID()
-    private var mainWindowActive = false
+    private var appWindowActive = false
     private var accountBusy = false
     private var online = false
     private lazy var items = MacProfileStatusItems(
@@ -83,25 +83,14 @@ public final class MacMenuBarProfile {
         guard enabled != value else { return }
         enabled = value
         if !enabled { cancelProfileRequest() }
-        configurePresence()
         prepareMood()
         render()
     }
 
-    public func setMainWindowActive(_ active: Bool) {
-        guard mainWindowActive != active else { return }
-        mainWindowActive = active
-        if active, presence == nil {
-            configurePresence()
-        } else {
-            presence?.setWindowActive(active)
-        }
-    }
-
-    public func mainWindowClosed() {
-        mainWindowActive = false
-        disposePresence()
-        if account != nil { render() }
+    public func setAppWindowActive(_ active: Bool) {
+        guard appWindowActive != active else { return }
+        appWindowActive = active
+        presence?.setWindowActive(active)
     }
 
     func present(session: AuthSession, service: MusicHomeService, artwork: MusicArtworkStore,
@@ -186,16 +175,17 @@ public final class MacMenuBarProfile {
 
     private func configurePresence() {
         disposePresence()
-        guard enabled, mainWindowActive, let account else { return }
+        guard let account else { return }
         let generation = presenceGeneration
-        let observer = MacProfilePresence(socket: account.service.makeWindowPresenceSocket(session: account.session),
-                                          clientPublicID: account.session.clientPublicId) { [weak self] active in
+        let observer = AccountPresenceCoordinator(socket: account.service.makeWindowPresenceSocket(session: account.session),
+                                                  clientPublicID: account.session.clientPublicId) { [weak self] active in
             guard let self, self.presenceGeneration == generation else { return }
             self.online = active
             self.render()
         }
         presence = observer
-        observer.setWindowActive(mainWindowActive)
+        observer.setWindowActive(appWindowActive)
+        observer.observeAccount()
     }
 
     private func disposePresence() {
