@@ -19,6 +19,10 @@
     <array>
         <string>_mizon-peer._tcp</string>
     </array>
+    <key>MizonDevelopmentTLSOrigin</key>
+    <string>$(MIZON_DEVELOPMENT_TLS_ORIGIN)</string>
+    <key>MizonDevelopmentTLSLeafSHA256</key>
+    <string>$(MIZON_DEVELOPMENT_TLS_LEAF_SHA256)</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Mizon uses your local network to connect to your server and discover devices while you are signed in. Nearby Mizon users can see your device details and public profile. You can turn discovery off in Mizon.</string>
     <key>NSMotionUsageDescription</key>

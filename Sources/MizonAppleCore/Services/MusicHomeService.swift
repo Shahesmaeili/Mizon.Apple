@@ -20,8 +20,18 @@ public struct MusicHomeService: Sendable {
     }
 
     private let api: MizonApi
+    private let developmentTLS: DevelopmentServerTLS?
+    private let network: URLSession
 
-    public init(api: MizonApi = MizonApi()) { self.api = api }
+    public init(api: MizonApi = MizonApi()) {
+        self.init(api: api, developmentTLS: nil, network: .shared)
+    }
+
+    init(api: MizonApi, developmentTLS: DevelopmentServerTLS?, network: URLSession) {
+        self.api = api
+        self.developmentTLS = developmentTLS
+        self.network = network
+    }
 
     public var searchService: GlobalSearchService { GlobalSearchService(api: api) }
     public var nearbyProfileArtworkService: NearbyProfileArtworkService { NearbyProfileArtworkService(api: api) }
@@ -29,6 +39,20 @@ public struct MusicHomeService: Sendable {
     #if os(macOS) || os(iOS) || os(watchOS)
     public func makeWindowPresenceSocket(session: AuthSession) -> MizonSocket {
         MizonSocket(mizonApi: api, hubURL: Endpoints(baseURL: session.server).mizonHubURL)
+    }
+
+    @MainActor
+    public func makeAccountPresence(session: AuthSession,
+                                    onChange: @escaping @MainActor (Bool) -> Void) -> AccountPresenceCoordinator {
+        let hub = Endpoints(baseURL: session.server).mizonHubURL
+        let transport: any AccountPresenceTransport
+        if hub.scheme == "https", let host = hub.host,
+           developmentTLS?.matches(host: host, port: hub.port ?? 443) == true {
+            transport = PinnedAccountPresence(hub: hub, clientID: session.clientPublicId, api: api, network: network)
+        } else {
+            transport = makeWindowPresenceSocket(session: session)
+        }
+        return AccountPresenceCoordinator(transport: transport, clientPublicID: session.clientPublicId, onChange: onChange)
     }
     #endif
 

@@ -177,8 +177,7 @@ public final class MacMenuBarProfile: ObservableObject {
         disposePresence()
         guard let account else { return }
         let generation = presenceGeneration
-        let observer = AccountPresenceCoordinator(socket: account.service.makeWindowPresenceSocket(session: account.session),
-                                                  clientPublicID: account.session.clientPublicId) { [weak self] active in
+        let observer = account.service.makeAccountPresence(session: account.session) { [weak self] active in
             guard let self, self.presenceGeneration == generation else { return }
             self.online = active
             self.render()

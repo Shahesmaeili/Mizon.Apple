@@ -68,6 +68,17 @@ public struct MizonRootView: View {
             .tint(MizonPalette.accent)
             .preferredColorScheme(.dark)
             .background { WindowGlass().ignoresSafeArea() }
+            #if os(macOS)
+            .overlay {
+                let hasAuthError = model.error != nil || model.validationKey != nil
+                RoundedRectangle(cornerRadius: 18)
+                    .strokeBorder(hasAuthError ? MizonPalette.negative : MizonPalette.accent, lineWidth: 1)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: hasAuthError)
+            }
+            #endif
             #if os(iOS)
             .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active { nearbyInForeground = true }
@@ -294,8 +305,7 @@ public struct MizonRootView: View {
             stopAccountPresence()
             let id = session.sessionPublicId
             presenceSessionID = id
-            let observer = AccountPresenceCoordinator(socket: model.musicHomeService.makeWindowPresenceSocket(session: session),
-                                                      clientPublicID: session.clientPublicId) { active in
+            let observer = model.musicHomeService.makeAccountPresence(session: session) { active in
                 guard presenceSessionID == id, presenceSession?.sessionPublicId == id, scenePhase != .background else { return }
                 isProfileOnline = active
             }
@@ -469,6 +479,7 @@ private struct AuthenticationPage: View {
     @State private var entranceVisible = false
     @FocusState private var showcaseFocused: AuthScene?
     #if os(iOS)
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     private enum TapSpace { case authentication }
     @State private var showsSettings = false
     @State private var inputFrames: [Field: CGRect] = [:]
@@ -482,17 +493,20 @@ private struct AuthenticationPage: View {
             let width = geometry.size.width
             #if os(macOS)
             let height = geometry.size.height
+            let compactLandscape = false
             #else
-            let height = geometry.size.height - 48
+            let height = max(0, geometry.size.height - 48)
+            let compactLandscape = verticalSizeClass == .compact && width >= 520
             #endif
             let wide = width >= 900 && height >= 550
-            let split = wide || (width >= 680 && height >= 420)
+            let split = compactLandscape || wide || (width >= 680 && height >= 420)
             let bottomInset: CGFloat = wide ? 14 : 8
-            let sideInset: CGFloat = wide ? 40 : split ? 24 : 16
-            let columnSpacing: CGFloat = wide ? 32 : split ? 20 : 0
+            let sideInset: CGFloat = wide ? 40 : compactLandscape ? 12 : split ? 24 : 16
+            let columnSpacing: CGFloat = wide ? 32 : compactLandscape ? 12 : split ? 20 : 0
             let available = max(0, min(1040, width - sideInset * 2) - columnSpacing)
-            let artWidth = split ? available * (wide ? 1.1 / 2.1 : 0.9 / 1.9) : 0
+            let artWidth = split ? available * (wide ? 1.1 / 2.1 : compactLandscape ? 0.37 : 0.9 / 1.9) : 0
             let formWidth = available - artWidth
+            let illustrationHeight: CGFloat = wide ? 280 : compactLandscape ? min(132, max(0, height - 146)) : 160
 
             VStack(spacing: 0) {
                 #if os(iOS)
@@ -501,7 +515,7 @@ private struct AuthenticationPage: View {
                 if !split { wordmark.padding(.bottom, 6) }
                 HStack(spacing: columnSpacing) {
                     if split {
-                        showcase(wide: wide)
+                        showcase(illustrationHeight: illustrationHeight, compact: compactLandscape)
                             .frame(maxWidth: 430)
                             .frame(width: artWidth)
                     }
@@ -534,17 +548,6 @@ private struct AuthenticationPage: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        #if os(macOS)
-        .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .strokeBorder(MizonPalette.negative, lineWidth: 1)
-                .opacity(errorKey == nil ? 0 : 1)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: errorKey != nil)
-        }
-        #endif
         #if os(iOS)
         .contentShape(.rect)
         .coordinateSpace(.named(TapSpace.authentication))
@@ -1054,9 +1057,8 @@ private struct AuthenticationPage: View {
         }
     }
 
-    private func showcase(wide: Bool) -> some View {
-        let height: CGFloat = wide ? 280 : 160
-        return VStack(spacing: 14) {
+    private func showcase(illustrationHeight: CGFloat, compact: Bool) -> some View {
+        VStack(spacing: 14) {
             HStack(spacing: 12) {
                 Rectangle()
                     .fill(.linearGradient(colors: [.clear, AuthAppearance.accent.opacity(56.0 / 255)],
@@ -1066,8 +1068,10 @@ private struct AuthenticationPage: View {
                     .tracking(4.35).foregroundStyle(AuthAppearance.brand)
             }
 
-            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion || scenePhase != .active)) { context in
-                showcaseScene(height: height, time: context.date)
+            if illustrationHeight >= 32 {
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion || scenePhase != .active)) { context in
+                    showcaseScene(height: illustrationHeight, compact: compact, time: context.date)
+                }
             }
 
             HStack(spacing: 6) {
@@ -1115,7 +1119,7 @@ private struct AuthenticationPage: View {
         scene = next
     }
 
-    private func showcaseScene(height: CGFloat, time: Date) -> some View {
+    private func showcaseScene(height: CGFloat, compact: Bool, time: Date) -> some View {
         let elapsed = max(0, time.timeIntervalSince(showcaseStart))
         let outgoing = reduceMotion || elapsed >= 0.45 ? nil : previousScene
         let progress = outgoing == nil ? 1 : Self.showcaseEasing.value(at: elapsed / 0.45)
@@ -1145,11 +1149,13 @@ private struct AuthenticationPage: View {
             .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text(text(caption.key + "Title")).font(authFont(24, weight: .semibold))
-                Text(text(caption.key + "Description")).font(authFont(12)).foregroundStyle(MizonPalette.secondaryText)
+                Text(text(caption.key + "Title")).font(authFont(compact ? 20 : 24, weight: .semibold))
+                Text(text(caption.key + "Description")).font(authFont(12))
+                    .foregroundStyle(MizonPalette.secondaryText)
+                    .lineLimit(compact ? 2 : nil)
             }
             .opacity(captionOpacity)
-            .frame(maxWidth: .infinity, minHeight: 106, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: compact ? 66 : 106, alignment: .topLeading)
             .environment(\.layoutDirection, isPersian ? .rightToLeft : .leftToRight)
         }
     }

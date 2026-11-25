@@ -8,6 +8,8 @@ The [Swift SDK revision](https://github.com/Shahesmaeili/Mizon.API.Swift/commit/
 
 The server and Swift SDK were exercised together over a real authenticated loopback connection with two instances of one account and an unrelated account. Coverage includes inactive observers, overlapping active windows, the last window disconnecting, account isolation, and reconnect.
 
+An iOS build configured with a development certificate pin uses the same pinned `URLSession` for HTTPS requests and the account-presence SignalR WebSocket. This applies to the configured HTTPS origin and port. The regular Swift SDK connection uses system trust for all other origins. The green profile badge was verified in the signed-in music screen on an iPhone 16 Pro Max over Wi-Fi.
+
 ## Profile status indicators
 
 The Windows reference uses a filled green or gray point with a transparent gap at the lower-right corner of the portrait. The macOS in-app toolbar and system menu, iPhone header and signed-in Apple Watch screen use the same badge geometry and colors. The Mac toolbar uses its trailing placement for the radar, mood and profile group. Narrow windows continue to route secondary tabs through the three-dot menu.

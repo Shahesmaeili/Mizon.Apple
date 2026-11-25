@@ -8,7 +8,9 @@ public enum ApplicationServices {
         let key = "mizon.installationID"
         let identifier = defaults.string(forKey: key) ?? UUID().uuidString.lowercased()
         defaults.set(identifier, forKey: key)
-        let api = MizonApi(languageProvider: {
+        let developmentTLS = DevelopmentServerTLS(bundle: .main)
+        let network = developmentTLS?.makeSession() ?? .shared
+        let api = MizonApi(session: network, languageProvider: {
             switch UserDefaults.standard.string(forKey: "mizon.authLanguage") {
             case "fa": "fa-IR"
             case "en": "en-US"
@@ -18,6 +20,6 @@ public enum ApplicationServices {
         return LoginViewModel(authentication: MizonAuthenticationService(api: api, installationID: identifier),
             welcomeService: MizonWelcomeService(api: api),
             serverAddress: defaults.string(forKey: "mizon.serverAddress") ?? BackendConfiguration.defaultAddress,
-            musicHomeService: MusicHomeService(api: api))
+            musicHomeService: MusicHomeService(api: api, developmentTLS: developmentTLS, network: network))
     }
 }
