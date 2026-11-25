@@ -9,6 +9,21 @@ public final class MacMenuBarProfile {
     public static let shared = MacMenuBarProfile()
     static let preferenceKey = "mizon.menuBarProfile"
 
+    struct Avatar: Equatable {
+        let mediaID: UUID?
+        let image: CGImage?
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.mediaID == rhs.mediaID && lhs.image === rhs.image
+        }
+
+        mutating func update(_ incoming: Self) {
+            // A Welcome timeout says nothing about the last image for this media ID.
+            guard incoming.mediaID == nil || incoming.mediaID != mediaID || incoming.image != nil else { return }
+            self = incoming
+        }
+    }
+
     struct Presentation {
         struct Mood {
             let emoji: String
@@ -31,7 +46,7 @@ public final class MacMenuBarProfile {
         let service: MusicHomeService
         var artwork: MusicArtworkStore
         let displayName: String
-        var avatar: CGImage?
+        var avatar: Avatar
         var mood: ClientMoodItemResponse?
     }
 
@@ -90,11 +105,11 @@ public final class MacMenuBarProfile {
     }
 
     func present(session: AuthSession, service: MusicHomeService, artwork: MusicArtworkStore,
-                 displayName: String, avatar: CGImage?, mood: ClientMoodItemResponse?, isPersian: Bool) {
+                 displayName: String, avatar: Avatar, mood: ClientMoodItemResponse?, isPersian: Bool) {
         language = isPersian ? "fa" : "en"
         if account?.session.sessionPublicId == session.sessionPublicId {
             account?.artwork = artwork
-            account?.avatar = avatar
+            account?.avatar.update(avatar)
             updateMood(mood, sessionID: session.sessionPublicId)
             return
         }
@@ -113,9 +128,9 @@ public final class MacMenuBarProfile {
         }
     }
 
-    func updateAvatar(_ avatar: CGImage?, sessionID: UUID) {
+    func updateAvatar(_ avatar: Avatar, sessionID: UUID) {
         guard account?.session.sessionPublicId == sessionID else { return }
-        account?.avatar = avatar
+        account?.avatar.update(avatar)
         render()
     }
 
@@ -263,7 +278,7 @@ public final class MacMenuBarProfile {
             return Presentation.Mood(emoji: emoji, title: title,
                                      accessibilityTitle: String(format: text("PlayMood"), title), loop: loopFile)
         }
-        items.render(profile: Presentation(displayName: account.displayName, avatar: account.avatar,
+        items.render(profile: Presentation(displayName: account.displayName, avatar: account.avatar.image,
                                            profileTitle: text("OpenProfile"), profileStatus: text(status),
                                            isOnline: online, isOpening: openRequestID != nil, mood: mood))
     }

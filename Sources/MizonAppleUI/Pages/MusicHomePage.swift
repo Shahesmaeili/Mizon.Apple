@@ -153,6 +153,7 @@ struct MusicHomePage: View {
     let displayName: String?
     let nearby: NearbyDiscoveryModel
     let avatar: CGImage?
+    let avatarMediaID: UUID?
     let profileTransition: ProfilePictureTransition
     let initialMood: ClientMoodItemResponse?
     @Binding var shellRequest: ShellShortcutRequest?
@@ -160,7 +161,7 @@ struct MusicHomePage: View {
     let signOut: () -> Void
 
     init(session: AuthSession, service: MusicHomeService, displayName: String?, nearby: NearbyDiscoveryModel,
-         avatar: CGImage?, profileTransition: ProfilePictureTransition,
+         avatar: CGImage?, avatarMediaID: UUID?, profileTransition: ProfilePictureTransition,
          initialMood: ClientMoodItemResponse? = nil, shellRequest: Binding<ShellShortcutRequest?>,
          shellAccountOpen: Bool,
          signOut: @escaping () -> Void) {
@@ -168,6 +169,7 @@ struct MusicHomePage: View {
         self.displayName = displayName
         self.nearby = nearby
         self.avatar = avatar
+        self.avatarMediaID = avatarMediaID
         self.profileTransition = profileTransition
         self.initialMood = initialMood
         _shellRequest = shellRequest
@@ -278,11 +280,11 @@ struct MusicHomePage: View {
         #if os(macOS)
         .onAppear {
             MacMenuBarProfile.shared.present(session: model.session, service: model.service, artwork: model.artwork,
-                                             displayName: displayName ?? "", avatar: avatar,
+                                             displayName: displayName ?? "", avatar: menuBarAvatar,
                                              mood: initialMood, isPersian: localization.isPersian)
         }
-        .onChange(of: avatar.map(ObjectIdentifier.init)) {
-            MacMenuBarProfile.shared.updateAvatar(avatar, sessionID: model.session.sessionPublicId)
+        .onChange(of: menuBarAvatar) {
+            MacMenuBarProfile.shared.updateAvatar(menuBarAvatar, sessionID: model.session.sessionPublicId)
         }
         .onChange(of: localization.isPersian) {
             MacMenuBarProfile.shared.setLanguage(isPersian: localization.isPersian)
@@ -397,6 +399,12 @@ struct MusicHomePage: View {
         })
         .onDisappear { model.stop() }
     }
+
+    #if os(macOS)
+    private var menuBarAvatar: MacMenuBarProfile.Avatar {
+        .init(mediaID: avatarMediaID, image: avatar)
+    }
+    #endif
 
     private var controllerActive: Bool {
         #if os(macOS)

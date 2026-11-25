@@ -68,6 +68,32 @@ struct NearbyProfileArtworkServiceTests {
         #expect(NearbyArtworkProtocol.requests.count == requests.count)
     }
 
+    @Test func homeCanLoadAProfilePhotoAfterWelcomeTimesOut() async throws {
+        let fixture = try Fixture()
+        defer { fixture.close() }
+        NearbyArtworkProtocol.install { request in
+            if request.url?.path == "/api/Medias/Media" {
+                let media = MediaResponse(mediaPublicId: fixture.avatarID, totalChunks: 1, chunkSize: 0,
+                    fileName: "fixture.png", fileSize: Int64(fixture.imageData.count),
+                    storagePath: "file:///C:/Mizon/fixture.png")
+                return .init(body: try MizonJSON.encoder().encode(BaseApiResponse(content: media)))
+            }
+            var reply = try fixture.reply(request)
+            if request.url?.path == "/api/Medias/MediaContent" { reply.delay = 0.5 }
+            return reply
+        }
+        let service: any WelcomeService = MizonWelcomeService(api: fixture.api, cacheRoot: fixture.cacheRoot,
+                                                               welcomeAvatarTimeout: 0.25, homeAvatarTimeout: 2)
+        try await fixture.api.setToken(fixture.session.accessToken)
+        #expect(try await service.avatar(for: fixture.avatarID, session: fixture.session) == nil)
+        let image = try #require(await service.homeAvatar(for: fixture.avatarID, session: fixture.session))
+        #expect(image.width == 240)
+        #expect(image.height == 144)
+        let downloads = NearbyArtworkProtocol.requests.filter { $0.url?.path == "/api/Medias/MediaContent" }
+        #expect(downloads.count == 2)
+        #expect(downloads.allSatisfy { $0.value(forHTTPHeaderField: "Range") == "bytes=0-\(fixture.imageData.count - 1)" })
+    }
+
     @Test func sharesTheAuthenticatedGLBDownloadBetweenArtistPreviews() async throws {
         let fixture = try Fixture()
         defer { fixture.close() }
@@ -244,16 +270,19 @@ private extension URLRequest {
 }
 
 private final class NearbyArtworkProtocol: URLProtocol, @unchecked Sendable {
-    struct Reply {
+    struct Reply: Sendable {
         var status = 200
         let body: Data?
         var headers = ["Content-Type": "application/json"]
+        var delay: TimeInterval?
     }
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var handler: (@Sendable (URLRequest) throws -> Reply)?
     nonisolated(unsafe) private static var started: [URLRequest] = []
     nonisolated(unsafe) private static var stopped: [URLRequest] = []
+    private let deliveryLock = NSLock()
+    private var delayedDelivery: DispatchWorkItem?
 
     static var requests: [URLRequest] { lock.withLock { started } }
     static var cancelled: [URLRequest] { lock.withLock { stopped } }
@@ -275,14 +304,27 @@ private final class NearbyArtworkProtocol: URLProtocol, @unchecked Sendable {
             return Self.handler
         }
         do {
-            guard let reply = try handler?(request), let body = reply.body, let url = request.url,
-                  let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1",
-                                                  headerFields: reply.headers) else { return }
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: body)
-            client?.urlProtocolDidFinishLoading(self)
+            guard let reply = try handler?(request), let body = reply.body, let url = request.url else { return }
+            if let delay = reply.delay {
+                let delivery = DispatchWorkItem { [weak self] in self?.deliver(reply, url: url, body: body) }
+                deliveryLock.withLock { delayedDelivery = delivery }
+                DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: delivery)
+            } else {
+                deliver(reply, url: url, body: body)
+            }
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
 
-    override func stopLoading() { Self.lock.withLock { Self.stopped.append(request) } }
+    override func stopLoading() {
+        deliveryLock.withLock { delayedDelivery?.cancel(); delayedDelivery = nil }
+        Self.lock.withLock { Self.stopped.append(request) }
+    }
+
+    private func deliver(_ reply: Reply, url: URL, body: Data) {
+        guard let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1",
+                                             headerFields: reply.headers) else { return }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
 }

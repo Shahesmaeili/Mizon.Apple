@@ -1,9 +1,31 @@
 #if os(macOS)
 import CoreGraphics
+import Foundation
 import Testing
 @testable import MizonAppleUI
 
 struct MacMenuBarProfileTests {
+    @Test func retainsLoadedAvatarOnlyForTheSameMedia() throws {
+        let context = try #require(CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 0,
+                                             space: CGColorSpaceCreateDeviceRGB(),
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let image = try #require(context.makeImage())
+        let oldMedia = UUID()
+        let newMedia = UUID()
+        var avatar = MacMenuBarProfile.Avatar(mediaID: oldMedia, image: image)
+
+        avatar.update(.init(mediaID: oldMedia, image: nil))
+        #expect(avatar.image === image)
+        avatar.update(.init(mediaID: newMedia, image: nil))
+        #expect(avatar.mediaID == newMedia)
+        #expect(avatar.image == nil)
+        avatar.update(.init(mediaID: newMedia, image: image))
+        #expect(avatar.image === image)
+        avatar.update(.init(mediaID: nil, image: nil))
+        #expect(avatar.mediaID == nil)
+        #expect(avatar.image == nil)
+    }
+
     @Test func preservesTaskbarProportionsWithinTheSystemBar() {
         let compact = StatusArtworkMetrics(barHeight: 24)
         #expect(compact.control == 20)

@@ -251,7 +251,7 @@ public struct MizonRootView: View {
     private func loadMissingHomeAvatar() async {
         guard let session = model.session, let home, home.sessionID == session.sessionPublicId,
               home.avatar == nil, let avatarID = home.account?.avatarID,
-              let avatar = try? await model.welcomeService.avatar(for: avatarID, session: session),
+              let avatar = try? await model.welcomeService.homeAvatar(for: avatarID, session: session),
               !Task.isCancelled, model.session?.sessionPublicId == session.sessionPublicId,
               self.home?.sessionID == session.sessionPublicId else { return }
         self.home?.avatar = avatar
@@ -271,7 +271,8 @@ public struct MizonRootView: View {
         #else
         if let session = model.session, let home, home.sessionID == session.sessionPublicId {
             MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
-                          nearby: nearby, avatar: home.avatar, profileTransition: profileTransition,
+                          nearby: nearby, avatar: home.avatar, avatarMediaID: home.account?.avatarID,
+                          profileTransition: profileTransition,
                           initialMood: home.account?.mood, shellRequest: $sectionShortcut,
                           shellAccountOpen: accountSheet != nil || deepLinkSettings != nil || signingOut) {
                 guard !signingOut else { return }
