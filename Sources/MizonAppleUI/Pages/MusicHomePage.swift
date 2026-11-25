@@ -2,8 +2,10 @@
 import AVKit
 import GameController
 import ImageIO
+import MizonAPI
 import MizonAPIClient
 import MizonAppleCore
+import OSLog
 import SwiftUI
 import UniformTypeIdentifiers
 #if os(macOS)
@@ -106,7 +108,10 @@ struct MusicHomePage: View {
     @State private var heroArtwork: FeatureArtwork?
     @State private var outgoingHeroArtwork: FeatureArtwork?
     @State private var heroArtworkStatus = FeatureMediaStatus.waiting
-    @State private var heroVideoStatus = FeatureMediaStatus.waiting
+    @State private var heroVideoStatus = FeatureVideoStatus.waiting
+    @State private var heroVideoRequestID: UUID?
+    @State private var failedHeroVideoFile: URL?
+    @State private var heroVideoFileToReplace: URL?
     @State private var heroVideoEnded = false
     @State private var heroMediaRetry = 0
     @State private var featurePaused = false
@@ -183,7 +188,7 @@ struct MusicHomePage: View {
 
     private var heroMediaFailed: Bool {
         guard let feature = currentFeature else { return false }
-        return (isVideo(feature) ? heroVideoStatus : heroArtworkStatus) == .failed
+        return isVideo(feature) ? heroVideoStatus == .failed : heroArtworkStatus == .failed
     }
 
     private var currentArtist: FeaturedPersonItem? {
@@ -720,7 +725,8 @@ struct MusicHomePage: View {
         .environment(\.layoutDirection, .leftToRight)
         .onHover { heroHovered = $0 }
         .onScrollVisibilityChange { featureViewportChanged($0) }
-        .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: canPresentFeature, retry: heroMediaRetry)) {
+        .task(id: PreviewIdentity(id: currentFeature?.publicId, mediaID: currentFeature?.mediaPublicId,
+                                  visible: canPresentFeature, retry: heroMediaRetry)) {
             await presentFeatureVideo()
         }
         .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: canPresentFeature, retry: heroMediaRetry)) {
@@ -817,6 +823,7 @@ struct MusicHomePage: View {
     }
 
     private func presentFeatureVideo() async {
+        guard !Task.isCancelled else { return }
         previewPlayer?.pause()
         previewPlayer = nil
         #if os(macOS)
@@ -824,41 +831,81 @@ struct MusicHomePage: View {
         #endif
         heroVideoStatus = .waiting
         heroVideoEnded = false
+        heroVideoRequestID = nil
+        failedHeroVideoFile = nil
+        let invalidFile = heroVideoFileToReplace
+        heroVideoFileToReplace = nil
         guard canPresentFeature, let item = currentFeature, isVideo(item) else { return }
-        heroVideoStatus = .loading
+        let requestID = UUID()
+        heroVideoRequestID = requestID
+        heroVideoStatus = .preparing
+        var stage = "download"
+        var cachedFile: URL?
         do {
-            let url = try await model.artwork.playableURL(item.mediaPublicId, session: model.session)
+            let url = try await downloadFeatureVideo(item.mediaPublicId, requestID: requestID, replacing: invalidFile)
             try Task.checkCancellation()
+            guard heroVideoRequestID == requestID else { return }
+            heroVideoStatus = .preparing
+            cachedFile = url
+            stage = "open"
             let media = AVPlayerItem(url: url)
             let player = AVPlayer(playerItem: media)
-            player.isMuted = previewMuted
-            player.volume = Float(previewVolume)
-            previewPlayer = player
-            for await status in media.publisher(for: \.status, options: [.initial, .new]).values {
-                try Task.checkCancellation()
-                if status == .failed { throw media.error ?? CocoaError(.fileReadCorruptFile) }
-                if status == .readyToPlay, heroVideoStatus == .loading {
-                    heroVideoStatus = .ready
-                    if !featurePaused && !reduceMotion {
-                        #if os(macOS)
-                        if pendingHeroVisibility == false {
-                            resumePreviewAfterScroll = true
-                        } else {
-                            player.play()
-                        }
-                        #else
+            defer { if Task.isCancelled { player.pause() } }
+            try await MusicFeatureVideoReadiness.observe(media) {
+                guard heroVideoRequestID == requestID else { throw CancellationError() }
+                player.isMuted = previewMuted
+                player.volume = Float(previewVolume)
+                previewPlayer = player
+                heroVideoStatus = .ready
+                stage = "playback"
+                if !featurePaused && !reduceMotion {
+                    #if os(macOS)
+                    if pendingHeroVisibility == false {
+                        resumePreviewAfterScroll = true
+                    } else {
                         player.play()
-                        #endif
                     }
+                    #else
+                    player.play()
+                    #endif
                 }
             }
         } catch {
-            if !Task.isCancelled {
+            if !Task.isCancelled, heroVideoRequestID == requestID {
+                let code = (error as? BaseApiError)?.code ?? (error as NSError).code
+                Self.featureVideoLogger.error("Featured video \(stage, privacy: .public) failed (code \(code, privacy: .public))")
                 previewPlayer?.pause()
                 previewPlayer = nil
+                if stage == "open" { failedHeroVideoFile = cachedFile }
                 heroVideoStatus = .failed
             }
         }
+    }
+
+    private static let featureVideoLogger = Logger(subsystem: "com.shahesmaeili.Mizon.Apple", category: "FeatureVideo")
+
+    private func downloadFeatureVideo(_ mediaID: UUID, requestID: UUID, replacing invalidFile: URL?) async throws -> URL {
+        let artwork = model.artwork
+        let session = model.session
+        let (updates, output) = AsyncStream<Double?>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        async let file = Self.cacheFeatureVideo(artwork, mediaID: mediaID, session: session,
+                                               replacing: invalidFile, progress: output)
+        for await progress in updates {
+            try Task.checkCancellation()
+            guard heroVideoRequestID == requestID else { throw CancellationError() }
+            let rounded = progress.map { ($0 * 100).rounded(.down) / 100 }
+            let status = FeatureVideoStatus.downloading(rounded)
+            if heroVideoStatus != status { heroVideoStatus = status }
+        }
+        try Task.checkCancellation()
+        return try await file
+    }
+
+    nonisolated private static func cacheFeatureVideo(_ artwork: MusicArtworkStore, mediaID: UUID, session: AuthSession,
+                                                      replacing invalidFile: URL?,
+                                                      progress: AsyncStream<Double?>.Continuation) async throws -> URL {
+        defer { progress.finish() }
+        return try await artwork.featuredVideo(mediaID, session: session, replacing: invalidFile) { progress.yield($0) }
     }
 
     private func advanceFinishedVideo() {
@@ -940,7 +987,7 @@ struct MusicHomePage: View {
                 if heroMediaFailed || heroMediaLoading(item) {
                     HStack(spacing: 8) {
                         Text(text(heroMediaFailed ? (isVideo(item) ? "VideoFailed" : "FeatureImageFailed")
-                                                  : (isVideo(item) ? "DownloadingVideo" : "DownloadingImage")))
+                                                  : (isVideo(item) ? heroVideoStatus.loadingLabel : "DownloadingImage")))
                             .font(localization.font(11))
                         Spacer(minLength: 4)
                         if heroMediaFailed {
@@ -959,17 +1006,23 @@ struct MusicHomePage: View {
         }
         .foregroundStyle(.white)
         .overlay(alignment: .top) {
-            if isVideo(item), heroVideoStatus == .loading {
-                ProgressView().progressViewStyle(.linear).tint(musicColor("A1E8EE"))
+            if isVideo(item), heroVideoStatus.isLoading {
+                featureVideoProgress
+                    .progressViewStyle(.linear).tint(musicColor("A1E8EE"))
                     .frame(height: 2).clipped()
-                    .accessibilityLabel(text("DownloadingVideo"))
+                    .accessibilityLabel(text(heroVideoStatus.loadingLabel))
                     .allowsHitTesting(false)
             }
         }
     }
 
     private func heroMediaLoading(_ item: MusicFeatureItemResponse) -> Bool {
-        (isVideo(item) ? heroVideoStatus : heroArtworkStatus) == .loading
+        isVideo(item) ? heroVideoStatus.isLoading : heroArtworkStatus == .loading
+    }
+
+    @ViewBuilder private var featureVideoProgress: some View {
+        if case .downloading(let progress?) = heroVideoStatus { ProgressView(value: progress) }
+        else { ProgressView() }
     }
 
     @ViewBuilder
@@ -1229,11 +1282,28 @@ struct MusicHomePage: View {
 
     private struct PreviewIdentity: Equatable {
         let id: UUID?
+        var mediaID: UUID?
         let visible: Bool
         var retry = 0
     }
 
     private enum FeatureMediaStatus { case waiting, loading, ready, failed }
+
+    private enum FeatureVideoStatus: Equatable {
+        case waiting, preparing, downloading(Double?), ready, failed
+
+        var isLoading: Bool {
+            switch self {
+            case .preparing, .downloading: true
+            default: false
+            }
+        }
+
+        var loadingLabel: String {
+            if case .downloading = self { return "DownloadingVideo" }
+            return "PreparingVideo"
+        }
+    }
 
     private struct FeatureArtwork {
         static let revealDuration = 0.430
@@ -1749,7 +1819,9 @@ struct MusicHomePage: View {
         case .ownProfile: destination = .client(model.session.clientPublicId)
         case .featureControls: showingPreviewControls = true
         case .featureThumbnail(let index): selectFeature(index)
-        case .retryFeatureMedia: heroMediaRetry += 1
+        case .retryFeatureMedia:
+            heroVideoFileToReplace = failedHeroVideoFile
+            heroMediaRetry += 1
         case .previousFeature: selectFeature(featureIndex - 1)
         case .nextFeature: selectFeature(featureIndex + 1)
         case .rotateFeatures:

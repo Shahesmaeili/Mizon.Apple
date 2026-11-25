@@ -1,0 +1,7 @@
+# Featured video playback on Apple
+
+The Apple Music Home playback owner started from `a7c26bf50a43c027c1822b58cff58928bd18bfab` for chat `01a1f8c4-a871-7fd0-9b52-1159ac1caef1`. The Windows reference is `FeaturedMediaPlaybackSession` at `c2ec123f172b7b3903d031c48ee7e58f38d17838`. Apple now caches the complete featured video through `MusicArtworkStore` before `MusicHomePage` hands the file to AVPlayer. Swift SDK `7d2a0f929be283654bd313fd3d0cd777f9e4e810` handles HTTPS origins that return the complete file for a range request. A trusted manifest still requires a complete SHA-256 match before playback. Server-local media uses authenticated ranges.
+
+The hero shows download progress when the SDK reports bytes and uses the existing localized preparing and failure states. The preview has up to 45 seconds to resolve and cache the source and 10 seconds to open it in AVPlayer. Buffered observation keeps readiness and failure delivery independent of the consumer's timing. The existing pointer, keyboard, touch and controller Retry action refreshes a failed local cache entry when AVPlayer could not open it. Scrolling away or changing the selected video cancels the superseded work. The next request waits for cache cleanup before writing again.
+
+Swift tests use authenticated range and direct HTTPS fixtures, a stalled download followed by Retry, a same-size failed cache file and an AVPlayerItem that never becomes ready. Native macOS smoke coverage uses the six Windows-reference H.264 videos. Device UI and signed-in production playback require separate verification.

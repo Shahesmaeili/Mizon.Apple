@@ -142,13 +142,64 @@ public struct MusicHomeService: Sendable {
     }
 
     fileprivate func cacheMedia(_ info: MediaResponse, session: AuthSession, downloader: MediaDownloader,
-                                maximumBytes: Int64, peerNetwork: NearbyDiscoveryService? = nil) async throws -> URL {
+                                maximumBytes: Int64, peerNetwork: NearbyDiscoveryService? = nil,
+                                progress: (@Sendable (MediaDownloadProgress) -> Void)? = nil) async throws -> URL {
         guard info.fileSize > 0, info.fileSize <= maximumBytes else { throw LoginFailure.invalidResponse }
         if let peerNetwork,
            let manifest = try await peerManifest(info, session: session, downloader: downloader, network: peerNetwork) {
             return try await downloadVerified(info, manifest: manifest, session: session, downloader: downloader, network: peerNetwork)
         }
-        return try await downloader.downloadToCache(info, api: api, endpoints: .init(baseURL: session.server))
+        return try await downloader.downloadToCache(info, api: api, endpoints: .init(baseURL: session.server), progress: progress)
+    }
+
+    fileprivate func cacheFeaturedVideo(_ id: UUID, session: AuthSession, downloader: MediaDownloader,
+                                        peerNetwork: NearbyDiscoveryService?, replacing invalidFile: URL?,
+                                        progress: @escaping @Sendable (Double?) -> Void) async throws -> URL {
+        try await checkMediaSession(session)
+        var info = try await media(id, session: session)
+        try await checkMediaSession(session)
+        let maximumBytes = PeerMediaTransfer.maximumFileSize
+        guard info.mediaPublicId == id, info.fileSize > 0, info.fileSize <= maximumBytes else {
+            throw LoginFailure.invalidResponse
+        }
+        if let invalidFile, try await downloader.getCachedFilePath(info) == invalidFile {
+            try await checkMediaSession(session)
+            try await downloader.invalidateCachedDownload(info)
+        }
+        progress(nil)
+        var wholeResponseManifest: VerifiedMediaManifest?
+        if let peerNetwork,
+           let manifest = try await peerManifest(info, session: session, downloader: downloader, network: peerNetwork) {
+            do {
+                let path = try await downloadVerified(info, manifest: manifest, session: session,
+                                                      downloader: downloader, network: peerNetwork)
+                try await checkMediaSession(session)
+                return path
+            } catch let error as BaseApiError where error.code == 200 && (try? Self.storageURL(info.storagePath)) != nil {
+                // The origin can return the entire HTTPS file. Verify that file before opening it.
+                wholeResponseManifest = manifest
+            }
+        }
+        // Take the Windows legacy default for the normal download without changing manifest matching.
+        if info.chunkSize <= 0 { info.chunkSize = 81_920 }
+        try await checkMediaSession(session)
+        let path = try await cacheMedia(info, session: session, downloader: downloader, maximumBytes: maximumBytes) {
+            progress($0.percentage / 100)
+        }
+        try await checkMediaSession(session)
+        if let wholeResponseManifest, try await !PeerMediaFileIntegrity.matches(path, manifest: wholeResponseManifest) {
+            try await checkMediaSession(session)
+            try await downloader.invalidateCachedDownload(info)
+            throw PeerMediaTransferError.fileIntegrityMismatch
+        }
+        try await checkMediaSession(session)
+        return path
+    }
+
+    private func checkMediaSession(_ session: AuthSession) async throws {
+        try Task.checkCancellation()
+        guard !session.accessToken.isEmpty, await api.getToken() == session.accessToken else { throw CancellationError() }
+        try Task.checkCancellation()
     }
 
     fileprivate func peerManifest(_ info: MediaResponse, session: AuthSession, downloader: MediaDownloader,
@@ -218,15 +269,22 @@ public actor MusicArtworkStore {
     private let profileThumbnails = NSCache<NSUUID, CGImage>()
     private var requests: [UUID: Task<CachedArtwork, Error>] = [:]
     private var artistModelRequests: [UUID: ArtistModelRequest] = [:]
+    private var featuredVideoRequest: Task<URL, Error>?
 
     public init(service: MusicHomeService, session: AuthSession, cacheRoot: URL? = nil,
                 peerNetwork: NearbyDiscoveryService? = nil) {
+        self.init(service: service, session: session, cacheRoot: cacheRoot, peerNetwork: peerNetwork,
+                  downloadSession: .shared)
+    }
+
+    init(service: MusicHomeService, session: AuthSession, cacheRoot: URL?, peerNetwork: NearbyDiscoveryService?,
+         downloadSession: URLSession) {
         self.service = service
         self.peerNetwork = peerNetwork
         accountID = session.clientPublicId
         server = session.server
         let directory = cacheRoot ?? Self.cacheDirectory(for: session)
-        downloader = MediaDownloader(cacheRoot: directory)
+        downloader = MediaDownloader(session: downloadSession, cacheRoot: directory)
         cache.totalCostLimit = 32 * 1024 * 1024
         profileThumbnails.totalCostLimit = 2 * 1024 * 1024
     }
@@ -353,6 +411,54 @@ public actor MusicArtworkStore {
         return try MusicHomeService.storageURL(media.storagePath)
     }
 
+    public func featuredVideo(_ id: UUID, session: AuthSession, replacing invalidFile: URL? = nil,
+                              progress: @escaping @Sendable (Double?) -> Void) async throws -> URL {
+        try await featuredVideo(id, session: session, timeout: .seconds(45), replacing: invalidFile, progress: progress)
+    }
+
+    func featuredVideo(_ id: UUID, session: AuthSession, timeout: Duration, replacing invalidFile: URL? = nil,
+                       progress: @escaping @Sendable (Double?) -> Void) async throws -> URL {
+        try Task.checkCancellation()
+        guard id != UUID.emptyPublicIdentifier else { throw LoginFailure.invalidResponse }
+        guard session.clientPublicId == accountID, session.server == server else { throw CancellationError() }
+        // A viewport change can start the next request before cancellation frees the previous file lease.
+        while let previous = featuredVideoRequest {
+            _ = await previous.result
+            try Task.checkCancellation()
+        }
+        let request = Task {
+            defer { featuredVideoRequest = nil }
+            return try await prepareFeaturedVideo(id, session: session, timeout: timeout,
+                                                  replacing: invalidFile, progress: progress)
+        }
+        featuredVideoRequest = request
+        return try await withTaskCancellationHandler {
+            let path = try await request.value
+            try Task.checkCancellation()
+            return path
+        } onCancel: {
+            request.cancel()
+        }
+    }
+
+    private func prepareFeaturedVideo(_ id: UUID, session: AuthSession, timeout: Duration, replacing invalidFile: URL?,
+                                      progress: @escaping @Sendable (Double?) -> Void) async throws -> URL {
+        try await withThrowingTaskGroup(of: URL.self) { group in
+            group.addTask { [service, downloader, peerNetwork] in
+                try await service.cacheFeaturedVideo(id, session: session, downloader: downloader,
+                                                     peerNetwork: peerNetwork, replacing: invalidFile, progress: progress)
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw URLError(.timedOut)
+            }
+            defer { group.cancelAll() }
+            guard let file = try await group.next() else { throw CancellationError() }
+            try Task.checkCancellation()
+            return file
+        }
+    }
+
     public func playableTrack(_ file: MusicFileResponse, session: AuthSession) async throws -> URL {
         let info = file.registeredMedia
         if info.fileSize > 0, (try? await downloader.isCached(info)) == true {
@@ -382,6 +488,7 @@ public actor MusicArtworkStore {
     public func cancel() {
         for request in requests.values { request.cancel() }
         requests.removeAll()
+        featuredVideoRequest?.cancel()
     }
 }
 
