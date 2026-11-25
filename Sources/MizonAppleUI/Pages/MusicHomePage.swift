@@ -459,7 +459,14 @@ struct MusicHomePage: View {
                     .padding(.bottom, 48)
                 }
                 .scrollClipDisabled()
-                #if os(iOS)
+                #if os(macOS)
+                .onScrollPhaseChange { oldPhase, newPhase in
+                    if oldPhase.isScrolling != newPhase.isScrolling {
+                        pointer.setScrolling(newPhase.isScrolling)
+                    }
+                }
+                .onDisappear { pointer.setScrolling(false) }
+                #else
                 .contentMargins(.top, scrollTopMargin, for: .scrollContent)
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     usesPhoneHeader && geometry.contentOffset.y + geometry.contentInsets.top > 1

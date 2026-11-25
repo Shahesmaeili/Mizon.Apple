@@ -5,23 +5,46 @@ import SwiftUI
 final class MusicHomePointer {
     static let coordinateSpace = "MusicHomePointer"
     var location: CGPoint?
+
+    #if os(macOS)
+    private(set) var scrollStartedAt: Date?
+    private(set) var timeSpentScrolling: TimeInterval = 0
+
+    func setScrolling(_ isScrolling: Bool) {
+        if isScrolling {
+            if scrollStartedAt == nil { scrollStartedAt = .now }
+        } else if let scrollStartedAt {
+            timeSpentScrolling += max(0, Date.now.timeIntervalSince(scrollStartedAt))
+            self.scrollStartedAt = nil
+        }
+    }
+    #endif
 }
 
 struct MusicPointerSample: Equatable {
+    static let inactive = Self(nil, in: .zero)
+
     let point: CGPoint?
     let size: CGSize
+    let opacity: Double
 
     init(_ location: CGPoint?, in frame: CGRect) {
-        point = location.map { CGPoint(x: $0.x - frame.minX, y: $0.y - frame.minY) }
-        size = frame.size
-    }
-
-    var opacity: Double {
-        guard let point, point.x.isFinite, point.y.isFinite, size.width > 0, size.height > 0 else { return 0 }
-        let dx = point.x - min(max(0, point.x), size.width)
-        let dy = point.y - min(max(0, point.y), size.height)
-        let strength = max(0, 1 - hypot(dx, dy) / 76)
-        return strength * strength * (3 - 2 * strength)
+        if let location, frame.width > 0, frame.height > 0 {
+            let local = CGPoint(x: location.x - frame.minX, y: location.y - frame.minY)
+            let dx = local.x - min(max(0, local.x), frame.width)
+            let dy = local.y - min(max(0, local.y), frame.height)
+            let distance = hypot(dx, dy)
+            if distance < 76 {
+                let strength = 1 - distance / 76
+                point = local
+                size = frame.size
+                opacity = strength * strength * (3 - 2 * strength)
+                return
+            }
+        }
+        point = nil
+        size = .zero
+        opacity = 0
     }
 }
 
@@ -37,8 +60,10 @@ struct MusicWidgetPointerGlow: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let sample = MusicPointerSample(enabled && isVisible && contrast != .increased ? pointer.location : nil,
-                in: geometry.frame(in: .named(MusicHomePointer.coordinateSpace)))
+            let location = enabled && isVisible && contrast != .increased ? pointer.location : nil
+            let sample = location.map {
+                MusicPointerSample($0, in: geometry.frame(in: .named(MusicHomePointer.coordinateSpace)))
+            } ?? .inactive
             let unitCenter = UnitPoint(x: center.x / max(1, geometry.size.width), y: center.y / max(1, geometry.size.height))
             RoundedRectangle(cornerRadius: 16, style: .circular)
                 .strokeBorder(RadialGradient(stops: [

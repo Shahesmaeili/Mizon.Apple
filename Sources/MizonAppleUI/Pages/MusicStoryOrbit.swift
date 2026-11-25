@@ -21,6 +21,9 @@ struct MusicStoryOrbit: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.displayScale) private var displayScale
     @Environment(\.scenePhase) private var scenePhase
+    #if os(macOS)
+    @Environment(MusicHomePointer.self) private var homePointer
+    #endif
     @State private var visible = false
     @State private var pointer: CGPoint?
     @State private var pixelWidth = 512
@@ -36,14 +39,25 @@ struct MusicStoryOrbit: View {
 
     var body: some View {
         let animating = visible && !reduceMotion && scenePhase == .active
+        #if os(macOS)
+        let scrollStartedAt = animating ? homePointer.scrollStartedAt : nil
+        let timeSpentScrolling = animating ? homePointer.timeSpentScrolling : 0
+        let drawsAsynchronously = true
+        #else
+        let scrollStartedAt: Date? = nil
+        let timeSpentScrolling: TimeInterval = 0
+        let drawsAsynchronously = false
+        #endif
         let displayScale = displayScale
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !animating)) { time in
-            Canvas { context, size in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !animating || scrollStartedAt != nil)) { time in
+            let elapsed = animating
+                ? (scrollStartedAt ?? time.date).timeIntervalSinceReferenceDate - timeSpentScrolling
+                : nil
+            Canvas(rendersAsynchronously: drawsAsynchronously) { context, size in
                 guard size.width > 0 else { return }
                 var context = context
                 let scale = size.width / 1440
                 context.scaleBy(x: scale, y: scale)
-                let elapsed = animating ? time.date.timeIntervalSinceReferenceDate : nil
                 let hover = animating ? pointer.map { CGPoint(x: $0.x / scale, y: $0.y / scale) } : nil
                 for (index, card) in Self.cards.enumerated() {
                     draw(card, index: index, context: context, elapsed: elapsed, pointer: hover)
@@ -65,11 +79,20 @@ struct MusicStoryOrbit: View {
         .frame(maxWidth: .infinity)
         .onScrollVisibilityChange(threshold: 0.1) { visible = $0 }
         .onContinuousHover { phase in
+            #if os(macOS)
+            guard homePointer.scrollStartedAt == nil else { return }
+            #endif
             switch phase {
-            case .active(let location): pointer = location
+            case .active(let location):
+                if pointer != location { pointer = location }
             case .ended: pointer = nil
             }
         }
+        #if os(macOS)
+        .onChange(of: scrollStartedAt) { _, current in
+            if current == nil { pointer = nil }
+        }
+        #endif
         .environment(\.layoutDirection, .leftToRight)
         .accessibilityHidden(true)
     }

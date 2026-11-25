@@ -27,5 +27,13 @@ struct MusicPointerProximityTests {
         #expect(MusicPointerSample(nil, in: card).opacity == 0)
         #expect(MusicPointerSample(position, in: .zero).opacity == 0)
     }
+
+    @Test func offscreenMotionKeepsAnInactiveSampleStable() {
+        let location = CGPoint(x: 180, y: 100)
+        let card = CGRect(x: 120, y: 220, width: 280, height: 190)
+        #expect(MusicPointerSample(location, in: card) == .inactive)
+        #expect(MusicPointerSample(location, in: card.offsetBy(dx: 0, dy: -44)) == .inactive)
+        #expect(MusicPointerSample(location, in: card.offsetBy(dx: 0, dy: -45)) != .inactive)
+    }
 }
 #endif
