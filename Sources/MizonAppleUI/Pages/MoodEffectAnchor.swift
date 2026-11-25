@@ -146,73 +146,95 @@ struct MoodEffectAnchor: UIViewRepresentable {
         private var effect: MoodEffectPresentation?
         private var onCompletion: ((UUID) -> Void)?
         private var displayed: MoodEffectPresentation?
+        private var pendingUpdate: Task<Void, Never>?
+        private var synchronizing = false
 
         func update(effect: MoodEffectPresentation?, onCompletion: @escaping (UUID) -> Void) {
             self.effect = effect
             self.onCompletion = onCompletion
-            synchronize()
+            updateOverlay()
         }
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
-            synchronize()
+            updateOverlay()
         }
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            synchronize()
+            updateOverlay()
+        }
+
+        private func updateOverlay() {
+            guard !synchronizing else { return }
+            guard effect != nil, window != nil else {
+                pendingUpdate?.cancel()
+                pendingUpdate = nil
+                removeOverlay()
+                return
+            }
+            guard pendingUpdate == nil else { return }
+            // SwiftUI calls didMoveToWindow while updating its display list.
+            // Wait for that update to finish before changing UIKit containment.
+            pendingUpdate = Task { @MainActor [weak self] in
+                guard !Task.isCancelled, let self else { return }
+                self.pendingUpdate = nil
+                self.synchronize()
+            }
         }
 
         private func synchronize() {
-            guard let owner = window, let effect, !bounds.isEmpty else {
+            synchronizing = true
+            defer { synchronizing = false }
+
+            guard let owner = window, let parent = owner.rootViewController,
+                  let container = parent.viewIfLoaded, container.window === owner,
+                  let effect, !bounds.isEmpty else {
                 removeOverlay()
                 return
             }
 
+            let center = convert(CGPoint(x: bounds.midX, y: bounds.midY), to: container)
+            let frame = CGRect(x: center.x - moodEffectSize / 2, y: center.y - moodEffectSize / 2,
+                               width: moodEffectSize, height: moodEffectSize)
             let current: UIHostingController<MoodEffectSurface>
-            if let hosting, hosting.view.superview === owner {
+            if let hosting, hosting.parent === parent, hosting.viewIfLoaded?.superview === container {
                 current = hosting
-                if displayed != effect { current.rootView = makeSurface(effect) }
+                if displayed != effect {
+                    displayed = effect
+                    current.rootView = makeSurface(effect)
+                }
             } else {
                 removeOverlay()
                 current = UIHostingController(rootView: makeSurface(effect))
+                hosting = current
+                displayed = effect
+                // Mount the child in the same controller's view tree. The anchor
+                // may belong to a nested SwiftUI host or a presentation controller.
+                parent.addChild(current)
                 current.view.backgroundColor = .clear
                 current.view.isUserInteractionEnabled = false
                 current.view.accessibilityElementsHidden = true
-                let parent = owningController() ?? owner.rootViewController
-                parent?.addChild(current)
-                owner.addSubview(current.view)
+                current.view.frame = frame
+                container.addSubview(current.view)
                 current.didMove(toParent: parent)
-                hosting = current
             }
-            displayed = effect
-
-            let center = convert(CGPoint(x: bounds.midX, y: bounds.midY), to: owner)
-            current.view.frame = CGRect(x: center.x - moodEffectSize / 2, y: center.y - moodEffectSize / 2,
-                                        width: moodEffectSize, height: moodEffectSize)
+            if current.view.frame != frame { current.view.frame = frame }
         }
 
         private func makeSurface(_ effect: MoodEffectPresentation) -> MoodEffectSurface {
             MoodEffectSurface(effect: effect) { [weak self] in self?.onCompletion?($0) }
         }
 
-        private func owningController() -> UIViewController? {
-            var responder = next
-            while let current = responder {
-                if let controller = current as? UIViewController { return controller }
-                responder = current.next
-            }
-            return nil
-        }
-
         private func removeOverlay() {
-            if let hosting {
-                hosting.willMove(toParent: nil)
-                hosting.view.removeFromSuperview()
-                hosting.removeFromParent()
-            }
+            let previous = hosting
             hosting = nil
             displayed = nil
+            if let previous {
+                previous.willMove(toParent: nil)
+                previous.viewIfLoaded?.removeFromSuperview()
+                previous.removeFromParent()
+            }
         }
     }
 }
