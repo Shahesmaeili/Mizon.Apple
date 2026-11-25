@@ -18,6 +18,12 @@ public struct MizonRootView: View {
     @State private var home: HomeEntrance?
     @State private var nearby = NearbyDiscoveryModel()
     @State private var nearbyIdentity: NearbyIdentity?
+    @ObservedObject private var shellShortcuts = MizonShellShortcuts.shared
+    @State private var authShortcut: ShellShortcutRequest?
+    @State private var accountSheet: ShellShortcutRequest?
+    @State private var sectionShortcut: ShellShortcutRequest?
+    @State private var signingOut = false
+    private var localization = AuthLocalization()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #if os(iOS)
     @Environment(\.scenePhase) private var scenePhase
@@ -71,6 +77,31 @@ public struct MizonRootView: View {
                 if enabled { profileTransition.cancel() }
             }
             .onDisappear { profileTransition.cancel() }
+            .onChange(of: shellContext, initial: true) { _, _ in
+                updateShortcutMenu()
+                openPendingShortcut()
+            }
+            .onChange(of: shellShortcuts.pending) { openPendingShortcut() }
+            .onChange(of: localization.isPersian) { updateShortcutMenu() }
+            .onChange(of: model.session?.sessionPublicId) {
+                accountSheet = nil
+                authShortcut = nil
+            }
+            .sheet(item: $accountSheet, onDismiss: model.dismissError) { request in
+                AuthenticationPage(model: model, shellRequest: request) { accountSheet = nil }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        Button(localization["AuthDone"]) { accountSheet = nil }
+                            .buttonStyle(.glass)
+                            .keyboardShortcut(.cancelAction)
+                            .disabled(model.isLoading)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .padding(12)
+                    }
+                    .interactiveDismissDisabled(model.isLoading)
+                    #if os(macOS)
+                    .frame(minWidth: 410, idealWidth: 490, minHeight: 520, idealHeight: 650)
+                    #endif
+            }
             .task(id: discoverableIdentity) { [identity = discoverableIdentity] in
                 let mediaAccess: NearbyMediaAccess?
                 if let identity, let session = model.session, identity.sessionID == session.sessionPublicId {
@@ -99,6 +130,45 @@ public struct MizonRootView: View {
     }
 
     #if os(macOS) || os(iOS)
+    private var shellContext: ShellShortcutContext {
+        if signingOut { return .signingOut }
+        if model.isLoading { return .busy }
+        guard let session = model.session else { return checkedStartup ? .signedOut : .restoring }
+        return home?.sessionID == session.sessionPublicId ? .home : .preparingHome
+    }
+
+    private func updateShortcutMenu() {
+        guard checkedStartup || model.session != nil else { return }
+        shellShortcuts.configure(signedIn: model.session != nil, language: localization.isPersian ? "fa" : "en")
+    }
+
+    private func openPendingShortcut() {
+        guard let request = shellShortcuts.pending else { return }
+        switch shellContext.action(for: request.destination) {
+        case .wait:
+            return
+        case .showSignIn:
+            // Keep the requested section until the existing Welcome flow validates the session.
+            if authShortcut?.id != request.id {
+                authShortcut = ShellShortcutRequest(id: request.id, destination: .login)
+            }
+            return
+        case .discard:
+            break
+        case .account:
+            if model.session == nil {
+                authShortcut = request
+                checkedStartup = true
+            } else {
+                accountSheet = request
+            }
+        case .section:
+            accountSheet = nil
+            sectionShortcut = request
+        }
+        shellShortcuts.complete(request)
+    }
+
     private func loadMissingHomeAvatar() async {
         guard let session = model.session, let home, home.sessionID == session.sessionPublicId,
               home.avatar == nil, let avatarID = home.account?.avatarID,
@@ -123,14 +193,18 @@ public struct MizonRootView: View {
         if let session = model.session, let home, home.sessionID == session.sessionPublicId {
             MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
                           nearby: nearby, avatar: home.avatar, profileTransition: profileTransition,
-                          initialMood: home.account?.mood) {
+                          initialMood: home.account?.mood, shellRequest: $sectionShortcut,
+                          shellAccountOpen: accountSheet != nil) {
+                guard !signingOut else { return }
+                signingOut = true
                 Task {
+                    defer { signingOut = false }
                     await model.signOut()
                     if model.session == nil { self.home = nil }
                 }
             }
             .alert(model.error?.errorDescription ?? "Sign out failed", isPresented: Binding(
-                get: { model.error != nil },
+                get: { accountSheet == nil && model.error != nil },
                 set: { if !$0 { model.dismissError() } }
             )) {
                 Button(model.error?.closeButtonText ?? "OK") { model.dismissError() }
@@ -163,7 +237,7 @@ public struct MizonRootView: View {
                 }
             )
         } else {
-            AuthenticationPage(model: model)
+            AuthenticationPage(model: model, shellRequest: authShortcut)
         }
         #endif
     }
@@ -204,6 +278,8 @@ private struct AuthenticationPage: View {
     }
 
     @Bindable var model: LoginViewModel
+    var shellRequest: ShellShortcutRequest? = nil
+    var closeShortcut: (() -> Void)? = nil
     private var localization = AuthLocalization()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -360,6 +436,9 @@ private struct AuthenticationPage: View {
         }
         .task(id: scenePhase) {
             if scenePhase == .active { await observeGamepad() }
+        }
+        .onChange(of: shellRequest, initial: true) {
+            if let shellRequest, registration != (shellRequest.destination == .register) { switchMode() }
         }
         .environment(\.layoutDirection, .leftToRight)
         .onAppear {
@@ -787,7 +866,11 @@ private struct AuthenticationPage: View {
         }
         switch action {
         case .back:
-            if registration { switchMode() }
+            if let closeShortcut {
+                if focus == nil { closeShortcut() }
+                else { focus = nil; revealPassword = false }
+            }
+            else if registration { switchMode() }
             else { focus = nil; revealPassword = false }
         case .help:
             showsControllerHelp = true

@@ -2,6 +2,9 @@
 import CoreGraphics
 import Testing
 @testable import MizonAppleUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct MusicHomeNavigationLayoutTests {
     private let widths: [MusicHomeNavigationSection: CGFloat] = [
@@ -40,5 +43,22 @@ struct MusicHomeNavigationLayoutTests {
         #expect(restored.visible == [.movies, .apps, .vpn])
         #expect(restored.hidden.isEmpty)
     }
+
+    #if os(macOS)
+    @MainActor @Test func musicHomeUsesAndRestoresTheWindowToolbarStyle() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 340, height: 350),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.toolbarStyle = .unifiedCompact
+        let content = try #require(window.contentView)
+        let header = MusicHomeToolbarStyle.ToolbarView()
+
+        content.addSubview(header)
+        #expect(window.toolbarStyle == .unified)
+
+        header.removeFromSuperview()
+        #expect(window.toolbarStyle == .unifiedCompact)
+    }
+    #endif
 }
 #endif

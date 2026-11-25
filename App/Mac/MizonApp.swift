@@ -22,11 +22,13 @@ struct MizonApp: App {
     @State private var model = ApplicationServices.makeLoginViewModel()
     #if os(macOS)
     @NSApplicationDelegateAdaptor(MizonApplicationDelegate.self) private var appDelegate
+    #elseif os(iOS)
+    @UIApplicationDelegateAdaptor(MizonIOSApplicationDelegate.self) private var appDelegate
     #endif
     var body: some Scene {
         #if os(macOS)
         Window("Mizon", id: "main") {
-            MizonRootView(model: model)
+            MizonMacWindowContent(model: model, shortcuts: appDelegate.dockShortcuts)
                 .frame(minWidth: 340, minHeight: 350)
         }
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))
@@ -38,11 +40,27 @@ struct MizonApp: App {
         #else
         WindowGroup("Mizon") {
             MizonRootView(model: model)
+                #if os(iOS)
+                .onReceive(MizonShellShortcuts.shared.$entries) { MizonIOSQuickActions.publish($0) }
+                #endif
         }
         #endif
     }
 }
 #if os(macOS)
+private struct MizonMacWindowContent: View {
+    let model: LoginViewModel
+    let shortcuts: MizonDockShortcuts
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        MizonRootView(model: model)
+            .onAppear {
+                shortcuts.reopenMainWindow = { [openWindow] in openWindow(id: "main") }
+            }
+    }
+}
+
 @MainActor
 private enum MizonSingleInstance {
     private static let bundleID = "com.shahesmaeili.Mizon.Apple"
@@ -96,11 +114,15 @@ private enum MizonSingleInstance {
     }
 }
 
+@MainActor
 final class MizonApplicationDelegate: NSObject, NSApplicationDelegate {
+    let dockShortcuts = MizonDockShortcuts()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { dockShortcuts.menu() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 #endif

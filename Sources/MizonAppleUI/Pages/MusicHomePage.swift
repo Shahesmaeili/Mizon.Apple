@@ -53,6 +53,7 @@ private struct MusicHomePhoneHeaderGlass: View {
 
 enum MusicDestination: Hashable, Identifiable {
     case track(UUID), artist(UUID), client(UUID), playlist(UUID), story(UUID)
+    case section(ShellShortcutDestination)
 
     var id: Self { self }
 }
@@ -134,17 +135,23 @@ struct MusicHomePage: View {
     let avatar: CGImage?
     let profileTransition: ProfilePictureTransition
     let initialMood: ClientMoodItemResponse?
+    @Binding var shellRequest: ShellShortcutRequest?
+    let shellAccountOpen: Bool
     let signOut: () -> Void
 
     init(session: AuthSession, service: MusicHomeService, displayName: String?, nearby: NearbyDiscoveryModel,
          avatar: CGImage?, profileTransition: ProfilePictureTransition,
-         initialMood: ClientMoodItemResponse? = nil, signOut: @escaping () -> Void) {
+         initialMood: ClientMoodItemResponse? = nil, shellRequest: Binding<ShellShortcutRequest?>,
+         shellAccountOpen: Bool,
+         signOut: @escaping () -> Void) {
         _model = State(initialValue: MusicHomeViewModel(session: session, service: service, peerNetwork: nearby.peerNetwork))
         self.displayName = displayName
         self.nearby = nearby
         self.avatar = avatar
         self.profileTransition = profileTransition
         self.initialMood = initialMood
+        _shellRequest = shellRequest
+        self.shellAccountOpen = shellAccountOpen
         self.signOut = signOut
     }
 
@@ -216,11 +223,14 @@ struct MusicHomePage: View {
                 #if os(macOS)
                 .background {
                     MusicHomeFocusInput(input: navigationFocus).frame(width: 0, height: 0)
+                    MusicHomeToolbarStyle().frame(width: 0, height: 0)
                 }
                 .onGeometryChange(for: CGSize.self, of: \.size) { headerViewport = $0 }
                 .toolbar {
                     ToolbarItem(placement: .principal) {
                         header(viewport: headerViewport, width: min(1120, max(230, headerViewport.width - 168)))
+                            .padding(.top, 5)
+                            .padding(.bottom, 3)
                     }
                     .sharedBackgroundVisibility(.hidden)
                 }
@@ -240,6 +250,11 @@ struct MusicHomePage: View {
                 }
         }
         .preferredColorScheme(.dark)
+        .onChange(of: shellRequest, initial: true) {
+            guard let request = shellRequest else { return }
+            openShellSection(request.destination)
+            shellRequest = nil
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if model.playingTrack != nil || model.requestingPlayback { transport }
         }
@@ -252,8 +267,8 @@ struct MusicHomePage: View {
                 try await service.image(for: username, session: session, artwork: artwork)
             }
         }
-        .task(id: scenePhase) {
-            if scenePhase == .active { await observeGamepad() }
+        .task(id: controllerActive) {
+            if controllerActive { await observeGamepad() }
         }
         .sheet(isPresented: $showingLibrary) {
             MusicLibraryBrowser(model: model) { id in
@@ -321,6 +336,22 @@ struct MusicHomePage: View {
         .onDisappear { model.stop() }
     }
 
+    private var controllerActive: Bool { scenePhase == .active && !shellAccountOpen }
+
+    private func openShellSection(_ section: ShellShortcutDestination) {
+        guard !section.isAccount else { return }
+        showingSearch = false
+        showingNavigationOverflow = false
+        showingLibrary = false
+        showingAllMusicActivity = false
+        showingPreviewControls = false
+        showingNearby = false
+        showingMoodPicker = false
+        fullWindowVideo = false
+        article = nil
+        destination = section == .music ? nil : .section(section)
+    }
+
     private func header(viewport: CGSize, width: CGFloat) -> some View {
         let accountShape = UnevenRoundedRectangle(
             topLeadingRadius: 8, bottomLeadingRadius: 8, bottomTrailingRadius: 16, topTrailingRadius: 16)
@@ -377,6 +408,7 @@ struct MusicHomePage: View {
                 .accessibilityLabel(displayName ?? text("Profile"))
                 .accessibilityIdentifier("music.home.profile")
             }
+            .padding(.vertical, (MusicHomeChrome.controlHeight - 32) / 2)
             .background(MusicHomeChrome.controlFill, in: accountShape)
             .overlay { accountShape.strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }
         }

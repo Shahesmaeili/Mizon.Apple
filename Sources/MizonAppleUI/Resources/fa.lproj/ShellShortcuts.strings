@@ -1,0 +1,16 @@
+"MainGroup" = "بخش‌های میزون";
+"AccountGroup" = "حساب میزون";
+"MusicTitle" = "موسیقی";
+"MusicDescription" = "آهنگ‌ها، موزیک‌ویدیوها و پلی‌لیست‌ها";
+"MoviesTitle" = "فیلم و سریال";
+"MoviesDescription" = "بخش فیلم‌ها و سریال‌ها";
+"AppsTitle" = "برنامه‌ها";
+"AppsDescription" = "بخش برنامه‌ها";
+"VpnTitle" = "VPN";
+"VpnDescription" = "باز کردن بخش VPN";
+"LoginTitle" = "ورود به حساب";
+"LoginDescription" = "ورود به میزون";
+"RegisterTitle" = "ساخت حساب";
+"RegisterDescription" = "ساخت حساب در میزون";
+"SectionEmpty" = "هنوز محتوایی برای نمایش در این بخش وجود ندارد.";
+"VpnUnavailable" = "VPN هنوز در نسخهٔ اپل میزون در دسترس نیست.";

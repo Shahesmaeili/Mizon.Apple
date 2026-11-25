@@ -32,11 +32,15 @@ struct MusicHomeDestinationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if let details { content(details) }
-                if loading { ProgressView().accessibilityLabel(text("LoadingMusic")) }
-                if failed {
-                    Text(text("FeatureServiceFailed")).foregroundStyle(.secondary)
-                    Button(text("Retry")) { loadID += 1 }.buttonStyle(.glass)
+                if case .section(let section) = route {
+                    sectionLanding(section)
+                } else {
+                    if let details { content(details) }
+                    if loading { ProgressView().accessibilityLabel(text("LoadingMusic")) }
+                    if failed {
+                        Text(text("FeatureServiceFailed")).foregroundStyle(.secondary)
+                        Button(text("Retry")) { loadID += 1 }.buttonStyle(.glass)
+                    }
                 }
             }
             .frame(maxWidth: contentWidth, alignment: .leading)
@@ -71,14 +75,38 @@ struct MusicHomeDestinationView: View {
     }
 
     private var title: String {
-        switch details {
-        case .track(_, let item): localized(item.title, item.persianTitle)
-        case .artist(let item): "\(item.firstName) \(item.lastName)"
-        case .client(let item): item.nickName ?? [item.firstName, item.lastName].filter { !$0.isEmpty }.joined(separator: " ")
-        case .playlist(let item): item.title
-        case .story(let item): item.title ?? text("Story")
-        case nil: text("PageName")
+        if case .section(let section) = route {
+            return localization.string(section.resourceKey + "Title", table: "ShellShortcuts")
         }
+        switch details {
+        case .track(_, let item): return localized(item.title, item.persianTitle)
+        case .artist(let item): return "\(item.firstName) \(item.lastName)"
+        case .client(let item): return item.nickName ?? [item.firstName, item.lastName].filter { !$0.isEmpty }.joined(separator: " ")
+        case .playlist(let item): return item.title
+        case .story(let item): return item.title ?? text("Story")
+        case nil: return text("PageName")
+        }
+    }
+
+    private func sectionLanding(_ section: ShellShortcutDestination) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Image(systemName: section.symbol)
+                .font(.system(size: 44))
+                .foregroundStyle(MizonPalette.accent)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(localization.font(24, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
+            Text(localization.string(section == .vpn ? "VpnUnavailable" : "SectionEmpty", table: "ShellShortcuts"))
+                .font(localization.font(13))
+                .foregroundStyle(MizonPalette.secondaryText)
+        }
+        .padding(28)
+        .frame(maxWidth: 480, alignment: .leading)
+        .background(MusicHomeChrome.controlFill, in: .rect(cornerRadius: 20))
+        .frame(maxWidth: .infinity)
+        .environment(\.layoutDirection, localization.isPersian ? .rightToLeft : .leftToRight)
+        .accessibilityIdentifier("mizon.section.\(section.rawValue)")
     }
 
     @ViewBuilder private func content(_ details: Details) -> some View {
@@ -252,6 +280,8 @@ struct MusicHomeDestinationView: View {
         defer { if !Task.isCancelled { loading = false } }
         do {
             switch route {
+            case .section:
+                return
             case .track(let id):
                 details = .track(id, try await model.service.track(id, session: model.session))
             case .client(let id):

@@ -30,3 +30,11 @@ Codex repaired artist-model loading from Apple base `53c471a0d4d2e25560b685ca246
 The registered-media endpoint needs Mizon.Server.API `9832f13d7b1cc17a11f08f200848acec4e1e9092` or later and the existing Mizon.API.Swift pin `9c7f4621e276f07d48fb960ae44a202dc3b018a0`. The server serves `App_Data/PersonProfileFixtures` by default. For existing featured artists registered against files elsewhere, configure the exact artist-model directory in `Media:LocalContentRoots` on the server.
 
 Validation covered authenticated GLB ranges in the server diagnostics, one shared content request for two Swift artist previews, and reference GLB decoding on macOS and iPhone simulator. The display fixture used local copies of reference models and synthetic sessions.
+
+## System shortcuts and the Mac toolbar
+
+The reference is [Windows JumpListService](https://github.com/Shahesmaeili/Mizon.Windows/blob/e1dc09e7db05d7227bbdaf0d40ee5525c121f3c1/Services/JumpListService.cs). Mizon publishes Sign in and Create an account while signed out, and Music, Movies and TV, Apps, and VPN while signed in. Menus follow the app language. The latest section request waits for Welcome to validate the session. A request received during sign-out is discarded. Opening an account form preserves the current session until an explicit account action succeeds.
+
+macOS provides these commands through the running app’s Dock menu. iPhone provides dynamic Home Screen quick actions after the first launch and accepts them on warm and cold launches. Movies and TV and Apps open section landings. Apple VPN opens its availability page. The Apple app has no live MCP host or shortcut consent scope. The existing Mac application remains single-instance.
+
+Music Home uses a 52-point native macOS toolbar with 44-point tabs and 38-point search and account controls. The previous toolbar style returns when Music Home is removed. The Swift tests cover compact overflow, AppKit toolbar switching, shortcut ordering and localization, authentication gates, and replacement of pending requests.

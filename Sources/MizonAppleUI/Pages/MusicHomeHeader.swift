@@ -2,11 +2,54 @@
 import MizonAPIClient
 import MizonAppleCore
 import SwiftUI
+#if os(macOS)
+import AppKit
+
+struct MusicHomeToolbarStyle: NSViewRepresentable {
+    func makeNSView(context: Context) -> ToolbarView { ToolbarView() }
+    func updateNSView(_ view: ToolbarView, context: Context) {}
+
+    static func dismantleNSView(_ view: ToolbarView, coordinator: ()) {
+        view.restoreToolbarStyle()
+    }
+
+    final class ToolbarView: NSView {
+        private weak var styledWindow: NSWindow?
+        private var originalStyle: NSWindow.ToolbarStyle?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window !== styledWindow else { return }
+            restoreToolbarStyle()
+            guard let window else { return }
+            styledWindow = window
+            originalStyle = window.toolbarStyle
+            window.toolbarStyle = .unified
+        }
+
+        func restoreToolbarStyle() {
+            if let styledWindow, let originalStyle, styledWindow.toolbarStyle == .unified {
+                styledWindow.toolbarStyle = originalStyle
+            }
+            styledWindow = nil
+            originalStyle = nil
+        }
+    }
+}
+#endif
 
 enum MusicHomeChrome {
     static let controlFill = MizonPalette.ink.opacity(0.07)
     static let hairline = MizonPalette.ink.opacity(0.14)
     static let hint = MizonPalette.ink.opacity(0.62)
+
+    #if os(macOS)
+    static let tabHeight: CGFloat = 44
+    static let controlHeight: CGFloat = 38
+    #else
+    static let tabHeight: CGFloat = 40
+    static let controlHeight: CGFloat = 32
+    #endif
 }
 
 enum MusicHomeNavigationSection: String, CaseIterable, Identifiable {
@@ -51,7 +94,7 @@ struct MusicHomeNavigationLabel: View {
         MusicHomeNavigationTitle(section: section, showsText: !compact)
             .padding(.horizontal, compact ? 0 : 16)
             .frame(width: compact ? MusicHomeNavigationLayout.compactMusicWidth : nil,
-                   height: compact ? 40 : max(40, titleHeight + 10))
+                   height: compact ? MusicHomeChrome.tabHeight : max(MusicHomeChrome.tabHeight, titleHeight + 10))
             .contentShape(Rectangle())
     }
 }
@@ -83,7 +126,7 @@ struct MusicHomeOverflowNavigationLabel: View {
         FluentIcon(symbol: .moreHorizontal, size: 16)
             .dynamicTypeSize(.large)
             .foregroundStyle(MizonPalette.ink)
-            .frame(width: MusicHomeNavigationLayout.overflowWidth(compact: compact), height: 40)
+            .frame(width: MusicHomeNavigationLayout.overflowWidth(compact: compact), height: MusicHomeChrome.tabHeight)
             .contentShape(Rectangle())
     }
 }
@@ -349,7 +392,7 @@ struct MusicHomeSearch: View {
                     .foregroundStyle(MizonPalette.accent)
             }
             .padding(.horizontal, compact ? 8 : 10)
-            .frame(height: 32)
+            .frame(height: MusicHomeChrome.controlHeight)
             .background(MusicHomeChrome.controlFill, in: .rect(cornerRadius: 9))
             .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(MusicHomeChrome.hairline).allowsHitTesting(false) }
         }

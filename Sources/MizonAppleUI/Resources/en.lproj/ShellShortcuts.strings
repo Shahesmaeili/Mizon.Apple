@@ -1,0 +1,16 @@
+"MainGroup" = "Mizon sections";
+"AccountGroup" = "Mizon account";
+"MusicTitle" = "Music";
+"MusicDescription" = "Songs, music videos and playlists";
+"MoviesTitle" = "Movies and TV";
+"MoviesDescription" = "Browse movies and TV series";
+"AppsTitle" = "Apps";
+"AppsDescription" = "Browse apps";
+"VpnTitle" = "VPN";
+"VpnDescription" = "Open the VPN section";
+"LoginTitle" = "Sign in";
+"LoginDescription" = "Sign in to Mizon";
+"RegisterTitle" = "Create an account";
+"RegisterDescription" = "Create a Mizon account";
+"SectionEmpty" = "There is no content to show in this section yet.";
+"VpnUnavailable" = "VPN is not available in Mizon for Apple devices yet.";
