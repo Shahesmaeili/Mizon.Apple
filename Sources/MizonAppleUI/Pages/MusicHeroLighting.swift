@@ -1,4 +1,5 @@
 #if os(macOS) || os(iOS)
+import AVFoundation
 import CoreGraphics
 import SwiftUI
 #if os(macOS)
@@ -11,6 +12,45 @@ struct MusicHeroPalette: Equatable, Sendable {
     fileprivate let base: RGB
     fileprivate let accent: RGB
     fileprivate let highlight: RGB
+
+    @concurrent
+    static func extract(fromVideo file: URL) async -> MusicHeroPalette? {
+        guard file.isFileURL, !Task.isCancelled else { return nil }
+        let request = VideoFrameRequest(file: file)
+        let frame = try? await withTaskCancellationHandler {
+            try await request.frame()
+        } onCancel: {
+            Task { await request.cancel() }
+        }
+        guard let frame, !Task.isCancelled else { return nil }
+        return await extract(from: frame)
+    }
+
+    private actor VideoFrameRequest {
+        private let generator: AVAssetImageGenerator
+        private var cancelled = false
+
+        init(file: URL) {
+            generator = AVAssetImageGenerator(asset: AVURLAsset(url: file))
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 640, height: 640)
+        }
+
+        func frame() async throws -> CGImage {
+            guard !cancelled else { throw CancellationError() }
+            return try await withCheckedThrowingContinuation { continuation in
+                generator.generateCGImageAsynchronously(for: .zero) { image, _, error in
+                    if let image { continuation.resume(returning: image) }
+                    else { continuation.resume(throwing: error ?? CocoaError(.fileReadCorruptFile)) }
+                }
+            }
+        }
+
+        func cancel() {
+            cancelled = true
+            generator.cancelAllCGImageGeneration()
+        }
+    }
 
     @concurrent
     static func extract(from image: CGImage) async -> MusicHeroPalette? {
@@ -133,9 +173,7 @@ struct MusicHeroLighting: ViewModifier {
     @State private var inputSize = CGSize.zero
     #endif
 
-    private static let haloPadding: CGFloat = 20
-    private static let corner: CGFloat = 12
-    private static let stroke: CGFloat = 0.75
+    private static let corner = MusicFeaturedArtworkShadow.cornerRadius
     private static let proximityRadius: CGFloat = 76
     nonisolated private static let restCurve = UnitCurve.bezier(
         startControlPoint: UnitPoint(x: 0.3, y: 0.7), endControlPoint: UnitPoint(x: 0.9, y: 0.5)
@@ -154,15 +192,19 @@ struct MusicHeroLighting: ViewModifier {
                         let time = max(timeline.date, settledThrough)
                         ZStack {
                             if motion {
-                                Canvas { canvas, size in renderSpotlights(canvas, size: size, at: time) }
+                                Canvas(colorMode: .nonLinear) { canvas, size in renderSpotlights(canvas, size: size, at: time) }
                                     .blendMode(.overlay)
                             }
-                            if showSpectrum {
-                                Canvas { canvas, size in renderSpectrum(canvas, size: size, at: time) }
+                            if showSpectrum, let palette {
+                                let opacity = edge.opacity(at: time)
+                                if opacity > 0 {
+                                    MusicHeroSpectrum(center: edge.center,
+                                                      palette: paletteBlend?.value(toward: palette, at: time) ?? palette,
+                                                      opacity: opacity)
+                                }
                             }
                         }
                     }
-                    .padding(-Self.haloPadding)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
                 }
@@ -288,17 +330,15 @@ struct MusicHeroLighting: ViewModifier {
     }
 
     private func renderSpotlights(_ context: GraphicsContext, size: CGSize, at time: Date) {
-        let bounds = CGRect(origin: .zero, size: size).insetBy(dx: Self.haloPadding, dy: Self.haloPadding)
+        let bounds = CGRect(origin: .zero, size: size)
         guard bounds.width > 0, bounds.height > 0 else { return }
         var surface = context
-        surface.clip(to: Path(roundedRect: bounds, cornerRadius: Self.corner))
+        surface.clip(to: Path(roundedRect: bounds, cornerRadius: Self.corner, style: .circular))
         surface.blendMode = .screen
         let light = spotReturn?.value(at: time) ?? spot
-        let distance = light.height / 100
-        let attenuation = 1 / (1 + 0.253 * distance + 0.58 * distance * distance)
         spotGradient(in: surface, bounds: bounds, center: light.center, height: light.height,
                      angles: (20, 50), color: Color(red: 1, green: 250.0 / 255, blue: 240.0 / 255),
-                     intensity: attenuation)
+                     intensity: 1, attenuation: (0.253, 0.58))
         if let ripple, time < ripple.motion.end {
             let progress = ripple.motion.progress(at: time)
             let final = min(max(max(bounds.width, bounds.height) * 2, 240), 1400)
@@ -306,62 +346,26 @@ struct MusicHeroLighting: ViewModifier {
             let fade = min(progress / 0.09, (1 - progress) / 0.91)
             spotGradient(in: surface, bounds: bounds, center: ripple.center, height: height,
                          angles: (44, 68), color: Color(red: 143.0 / 255, green: 135.0 / 255, blue: 124.0 / 255),
-                         intensity: fade / (1 + 0.006 * height / 100))
+                         intensity: fade, attenuation: (0.006, 0))
         }
     }
 
-    private func renderSpectrum(_ context: GraphicsContext, size: CGSize, at time: Date) {
-        let bounds = CGRect(origin: .zero, size: size).insetBy(dx: Self.haloPadding, dy: Self.haloPadding)
-        let opacity = edge.opacity(at: time)
-        if bounds.width > 0, bounds.height > 0, opacity > 0, let palette {
-            let color = paletteBlend?.value(toward: palette, at: time) ?? palette
-            let strokeBounds = bounds.insetBy(dx: Self.stroke / 2, dy: Self.stroke / 2)
-            let stroke = Path(roundedRect: strokeBounds, cornerRadius: Self.corner - Self.stroke / 2)
-            let radius = min(max(min(strokeBounds.width, strokeBounds.height) * 0.8, 130), 250)
-            let gradient = GraphicsContext.Shading.radialGradient(Gradient(stops: [
-                .init(color: color.highlight.color(opacity: opacity), location: 0),
-                .init(color: color.accent.color(opacity: opacity * 230 / 255), location: 0.30),
-                .init(color: color.base.color(opacity: opacity * 150 / 255), location: 0.67),
-                .init(color: color.base.color(opacity: 0), location: 1)
-            ]), center: center(edge.center, in: bounds), startRadius: 0, endRadius: radius)
-
-            var halo = context
-            var exterior = Path(CGRect(origin: .zero, size: size))
-            exterior.addPath(Path(roundedRect: bounds, cornerRadius: Self.corner))
-            halo.clip(to: exterior, style: FillStyle(eoFill: true))
-            var gain = ColorMatrix()
-            gain.r1 = 3
-            gain.g2 = 3
-            gain.b3 = 3
-            gain.a4 = 3
-            halo.drawLayer { layer in
-                // Amplify the blurred premultiplied stroke without widening its source.
-                layer.addFilter(.colorMatrix(gain, isPremultiplied: true))
-                layer.drawLayer { source in
-                    source.addFilter(.blur(radius: 5.5))
-                    source.stroke(stroke, with: gradient, lineWidth: Self.stroke)
-                }
-            }
-            context.stroke(stroke, with: gradient, lineWidth: Self.stroke)
-        }
-    }
-
-    private func spotGradient(in context: GraphicsContext, bounds: CGRect, center point: CGPoint,
+    private func spotGradient(in context: GraphicsContext, bounds: CGRect, center: CGPoint,
                               height: CGFloat, angles: (inner: Double, outer: Double),
-                              color: Color, intensity: Double) {
+                              color: Color, intensity: Double, attenuation: (linear: Double, quadratic: Double)) {
         let inner = tan(angles.inner * .pi / 180)
         let outer = tan(angles.outer * .pi / 180)
-        let gradient = Gradient(stops: [
-            .init(color: color.opacity(intensity), location: 0),
-            .init(color: color.opacity(intensity), location: inner / outer),
-            .init(color: color.opacity(0), location: 1)
-        ])
-        context.fill(Path(bounds), with: .radialGradient(gradient, center: center(point, in: bounds),
-                                                      startRadius: 0, endRadius: height * outer))
-    }
-
-    private func center(_ point: CGPoint, in bounds: CGRect) -> CGPoint {
-        CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y)
+        let innerFraction = inner / outer
+        let radius = height * outer
+        let samples = [0, innerFraction / 2, innerFraction, (innerFraction + 1) / 2, 1]
+        let gradient = Gradient(stops: samples.map { position in
+            // WinUI attenuation is based on the distance to this point on the target plane.
+            let distance = hypot(height, radius * position) / 100
+            let falloff = 1 / (1 + attenuation.linear * distance + attenuation.quadratic * distance * distance)
+            let cone = min(1, (1 - position) / (1 - innerFraction))
+            return .init(color: color.opacity(intensity * falloff * cone), location: position)
+        })
+        context.fill(Path(bounds), with: .radialGradient(gradient, center: center, startRadius: 0, endRadius: radius))
     }
 
     private struct Spot: Equatable {
@@ -423,6 +427,69 @@ struct MusicHeroLighting: ViewModifier {
         func value(toward target: MusicHeroPalette, at time: Date) -> MusicHeroPalette {
             source.blended(toward: target, amount: UnitCurve.easeInOut.value(at: motion.progress(at: time)))
         }
+    }
+}
+
+struct MusicHeroSpectrum: View {
+    let center: CGPoint
+    let palette: MusicHeroPalette
+    let opacity: Double
+
+    private static let padding: CGFloat = 20
+    private static let strokeWidth: CGFloat = 0.75
+    private static let gain = premultipliedScale(3)
+
+    private static func premultipliedScale(_ amount: Float) -> ColorMatrix {
+        var matrix = ColorMatrix()
+        matrix.r1 = amount
+        matrix.g2 = amount
+        matrix.b3 = amount
+        matrix.a4 = amount
+        return matrix
+    }
+
+    var body: some View {
+        Canvas(colorMode: .nonLinear) { context, size in
+            if opacity == 1 {
+                render(context, size: size)
+            } else {
+                var group = context
+                // Apply the pointer falloff to the completed premultiplied result.
+                group.addFilter(.colorMatrix(Self.premultipliedScale(Float(opacity)), isPremultiplied: true))
+                group.drawLayer { layer in render(layer, size: size) }
+            }
+        }
+        .padding(-Self.padding)
+    }
+
+    private func render(_ context: GraphicsContext, size: CGSize) {
+        let bounds = CGRect(origin: .zero, size: size).insetBy(dx: Self.padding, dy: Self.padding)
+        let strokeBounds = bounds.insetBy(dx: Self.strokeWidth / 2, dy: Self.strokeWidth / 2)
+        let shortest = min(strokeBounds.width, strokeBounds.height)
+        guard shortest > 0 else { return }
+        let corner = MusicFeaturedArtworkShadow.cornerRadius
+        let stroke = Path(roundedRect: strokeBounds, cornerRadius: min(corner - Self.strokeWidth / 2, shortest / 2), style: .circular)
+        let gradient = GraphicsContext.Shading.radialGradient(Gradient(stops: [
+            .init(color: palette.highlight.color(), location: 0),
+            .init(color: palette.accent.color(opacity: 230.0 / 255), location: 0.30),
+            .init(color: palette.base.color(opacity: 150.0 / 255), location: 0.67),
+            .init(color: palette.base.color(opacity: 0), location: 1)
+        ]), center: CGPoint(x: bounds.minX + center.x, y: bounds.minY + center.y),
+            startRadius: 0, endRadius: min(max(shortest * 0.8, 130), 250))
+
+        var halo = context
+        var exterior = Path(CGRect(origin: .zero, size: size))
+        let cornerRadius = min(corner, min(bounds.width, bounds.height) / 2)
+        exterior.addPath(Path(roundedRect: bounds, cornerRadius: cornerRadius, style: .circular))
+        halo.clip(to: exterior, style: FillStyle(eoFill: true))
+        halo.drawLayer { layer in
+            layer.addFilter(.colorMatrix(Self.gain, isPremultiplied: true))
+            layer.drawLayer { source in
+                source.addFilter(.blur(radius: 5.5))
+                source.stroke(stroke, with: gradient, lineWidth: Self.strokeWidth)
+            }
+        }
+        context.stroke(stroke, with: gradient, lineWidth: Self.strokeWidth)
     }
 }
 

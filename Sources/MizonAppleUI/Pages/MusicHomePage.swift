@@ -112,6 +112,8 @@ struct MusicHomePage: View {
     @State private var heroVideoRequestID: UUID?
     @State private var failedHeroVideoFile: URL?
     @State private var heroVideoFileToReplace: URL?
+    @State private var heroVideoFile: URL?
+    @State private var heroVideoPalette: (file: URL, colors: MusicHeroPalette?)?
     @State private var heroVideoEnded = false
     @State private var heroMediaRetry = 0
     @State private var featurePaused = false
@@ -194,6 +196,12 @@ struct MusicHomePage: View {
     private var heroMediaFailed: Bool {
         guard let feature = currentFeature else { return false }
         return isVideo(feature) ? heroVideoStatus == .failed : heroArtworkStatus == .failed
+    }
+
+    private var heroPalette: MusicHeroPalette? {
+        if heroVideoStatus == .ready, let heroVideoPalette, heroVideoPalette.file == heroVideoFile,
+           let colors = heroVideoPalette.colors { return colors }
+        return heroArtwork?.palette
     }
 
     private var currentArtist: FeaturedPersonItem? {
@@ -716,7 +724,7 @@ struct MusicHomePage: View {
                             MusicFeaturedArtworkShadow(color: heroArtwork.edgeColor?.color ?? .black)
                         }
                     }
-                    .modifier(MusicHeroLighting(active: canPresentFeature && !fullWindowVideo, palette: heroArtwork?.palette))
+                    .modifier(MusicHeroLighting(active: canPresentFeature && !fullWindowVideo, palette: heroPalette))
             } else if model.loading.contains(.features) {
                 MusicHomeSkeleton(height: 300, label: text("LoadingFeatures"))
             } else {
@@ -748,6 +756,7 @@ struct MusicHomePage: View {
         .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: canPresentFeature, retry: heroMediaRetry)) {
             await presentFeatureArtwork()
         }
+        .task(id: heroVideoFile) { await sampleFeatureVideoColors() }
         .task(id: FeatureTimer(index: featureIndex, count: model.features.count, canRotate: canRotateImage)) {
             guard canRotateImage, model.features.count > 1, let currentFeature else { return }
             do {
@@ -764,6 +773,7 @@ struct MusicHomePage: View {
             guard let item = event.object as? AVPlayerItem, item === previewPlayer?.currentItem else { return }
             previewPlayer?.pause()
             previewPlayer = nil
+            heroVideoFile = nil
             heroVideoStatus = .failed
         }
         .onChange(of: canRotateFeatures) { _, canRotate in
@@ -809,13 +819,11 @@ struct MusicHomePage: View {
                 let artwork = try await model.artwork.imageWithSource(id, session: model.session)
                 let image = artwork.image
                 try Task.checkCancellation()
-                async let palette = MusicHeroPalette.extract(from: image)
-                let edgeColor = await Self.featureArtworkEdgeColor(at: artwork.source)
-                let colors = await palette
+                let colors = await Self.featureArtworkColors(at: artwork.source, fallback: image)
                 try Task.checkCancellation()
                 let animate = !reduceMotion && !fullWindowVideo
                 outgoingHeroArtwork = animate ? heroArtwork : nil
-                heroArtwork = FeatureArtwork(id: item.publicId, image: image, palette: colors, edgeColor: edgeColor,
+                heroArtwork = FeatureArtwork(id: item.publicId, image: image, palette: colors.palette, edgeColor: colors.edge,
                                              stretch: !isVideo(item), direction: featureDirection,
                                              revealStart: animate ? Date() : nil)
                 heroArtworkStatus = .ready
@@ -828,20 +836,26 @@ struct MusicHomePage: View {
     }
 
     @concurrent
-    private static func featureArtworkEdgeColor(at url: URL) async -> MusicArtworkEdgeColor? {
+    private static func featureArtworkColors(at url: URL, fallback: CGImage) async
+        -> (palette: MusicHeroPalette?, edge: MusicArtworkEdgeColor?) {
         guard !Task.isCancelled, let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let dimensions = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
               let width = dimensions[kCGImagePropertyPixelWidth as String] as? Int,
               let height = dimensions[kCGImagePropertyPixelHeight as String] as? Int,
               width > 0, height > 0, width <= 16_777_216 / height,
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
-        return await MusicArtworkEdgeColor.extract(from: image)
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return (await MusicHeroPalette.extract(from: fallback), nil)
+        }
+        async let palette = MusicHeroPalette.extract(from: image)
+        async let edge = MusicArtworkEdgeColor.extract(from: image)
+        return await (palette, edge)
     }
 
     private func presentFeatureVideo() async {
         guard !Task.isCancelled else { return }
         previewPlayer?.pause()
         previewPlayer = nil
+        heroVideoFile = nil
         #if os(macOS)
         resumePreviewAfterScroll = false
         #endif
@@ -872,6 +886,7 @@ struct MusicHomePage: View {
                 player.isMuted = previewMuted
                 player.volume = Float(previewVolume)
                 previewPlayer = player
+                heroVideoFile = url
                 heroVideoStatus = .ready
                 stage = "playback"
                 if !featurePaused && !reduceMotion {
@@ -892,10 +907,18 @@ struct MusicHomePage: View {
                 Self.featureVideoLogger.error("Featured video \(stage, privacy: .public) failed (code \(code, privacy: .public))")
                 previewPlayer?.pause()
                 previewPlayer = nil
+                heroVideoFile = nil
                 if stage == "open" { failedHeroVideoFile = cachedFile }
                 heroVideoStatus = .failed
             }
         }
+    }
+
+    private func sampleFeatureVideoColors() async {
+        guard let file = heroVideoFile, heroVideoPalette?.file != file else { return }
+        let colors = await MusicHeroPalette.extract(fromVideo: file)
+        guard !Task.isCancelled, heroVideoFile == file else { return }
+        heroVideoPalette = (file, colors)
     }
 
     private static let featureVideoLogger = Logger(subsystem: "com.shahesmaeili.Mizon.Apple", category: "FeatureVideo")
@@ -1837,6 +1860,7 @@ struct MusicHomePage: View {
         case .featureThumbnail(let index): selectFeature(index)
         case .retryFeatureMedia:
             heroVideoFileToReplace = failedHeroVideoFile
+            if failedHeroVideoFile != nil { heroVideoPalette = nil }
             heroMediaRetry += 1
         case .previousFeature: selectFeature(featureIndex - 1)
         case .nextFeature: selectFeature(featureIndex + 1)

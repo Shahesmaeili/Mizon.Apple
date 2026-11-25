@@ -27,6 +27,39 @@ struct MusicFeaturedArtworkShadowTests {
         }
     }
 
+    @MainActor @Test func keepsThePlayerHaloOnTheOutsideAndDampsItAsOneLayer() async throws {
+        let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        let sample = try #require(CGContext(data: nil, width: 24, height: 24, bitsPerComponent: 8, bytesPerRow: 0,
+                                            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        sample.setFillColor(red: 0.17, green: 0.38, blue: 0.92, alpha: 1)
+        sample.fill(CGRect(x: 0, y: 0, width: 24, height: 24))
+        let source = try #require(sample.makeImage())
+        let palette = try #require(await MusicHeroPalette.extract(from: source))
+        func render(opacity: Double) throws -> CGImage {
+            let renderer = ImageRenderer(content: Color.clear.frame(width: 500, height: 400).overlay {
+                MusicHeroSpectrum(center: CGPoint(x: 0, y: 100), palette: palette, opacity: opacity)
+                    .frame(width: 300, height: 200)
+            })
+            renderer.scale = 1
+            return try #require(renderer.cgImage)
+        }
+
+        let full = try render(opacity: 1)
+        let half = try render(opacity: 0.5)
+        let near = try pixel(in: full, x: 99, y: 200)
+        let midway = try pixel(in: full, x: 94, y: 200)
+        let outside = try pixel(in: full, x: 79, y: 200)
+        let inside = try pixel(in: full, x: 104, y: 200)
+        let opposite = try pixel(in: full, x: 401, y: 200)
+        let dimmed = try pixel(in: half, x: 99, y: 200)
+
+        #expect((28...55).contains(near[3]))
+        #expect(midway[3] > 0 && midway[3] < near[3])
+        #expect(near[2] > near[1] && near[1] > near[0])
+        #expect(outside[3] == 0 && inside[3] == 0 && opposite[3] == 0)
+        #expect(abs(Int(near[3]) - 2 * Int(dimmed[3])) <= 2, "Full alpha \(near[3]), half alpha \(dimmed[3])")
+    }
+
     private func pixel(in image: CGImage, x: Int, y: Int) throws -> [UInt8] {
         let sample = try #require(image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)))
         let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))
