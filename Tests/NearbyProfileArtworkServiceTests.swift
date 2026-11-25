@@ -94,6 +94,60 @@ struct NearbyProfileArtworkServiceTests {
         #expect(downloads.allSatisfy { $0.value(forHTTPHeaderField: "Range") == "bytes=0-\(fixture.imageData.count - 1)" })
     }
 
+    @Test func replacesCorruptAvatarCacheWithTheAuthenticatedImage() async throws {
+        let fixture = try Fixture()
+        defer { fixture.close() }
+        NearbyArtworkProtocol.install(fixture.reply)
+        try await fixture.api.setToken(fixture.session.accessToken)
+        let media = fixture.avatarMedia(storagePath: "file:///C:/Mizon/fixture.png", chunkSize: fixture.imageData.count)
+        let downloader = MediaDownloader(cacheRoot: fixture.cacheRoot)
+        let cached = try await downloader.getCachedFilePath(media)
+        let wrongBytes = Data(repeating: 0, count: fixture.imageData.count)
+        try wrongBytes.write(to: cached)
+        try wrongBytes.write(to: cached.appendingPathExtension("part"))
+
+        let service = MizonWelcomeService(api: fixture.api, cacheRoot: fixture.cacheRoot)
+        let image = try #require(await service.homeAvatar(for: fixture.avatarID, session: fixture.session))
+        #expect(image.width == 240)
+        #expect(try Data(contentsOf: cached) == fixture.imageData)
+        #expect(!FileManager.default.fileExists(atPath: cached.appendingPathExtension("part").path))
+        #expect(NearbyArtworkProtocol.requests.filter { $0.url?.path == "/api/Medias/MediaContent" }.count == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func loadsFullHTTPSAvatarWhenStorageIgnoresRange(_ resumePartial: Bool) async throws {
+        let fixture = try Fixture()
+        defer { fixture.close() }
+        let media = fixture.avatarMedia(storagePath: "https://avatar.fixture.test/current.png", chunkSize: 16)
+        NearbyArtworkProtocol.install { request in
+            switch request.url?.path {
+            case "/api/Medias/Media":
+                #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-access")
+                return .init(body: try MizonJSON.encoder().encode(BaseApiResponse(content: media)))
+            case "/current.png":
+                #expect(request.url?.host == "avatar.fixture.test")
+                #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+                return .init(body: fixture.imageData, headers: ["Content-Type": "image/png"])
+            default:
+                return try fixture.reply(request)
+            }
+        }
+        if resumePartial {
+            let downloader = MediaDownloader(cacheRoot: fixture.cacheRoot)
+            let cached = try await downloader.getCachedFilePath(media)
+            try fixture.imageData.prefix(16).write(to: cached.appendingPathExtension("part"))
+        }
+        let service = MizonWelcomeService(api: fixture.api, cacheRoot: fixture.cacheRoot,
+                                          welcomeAvatarTimeout: 4, homeAvatarTimeout: 4, downloadSession: fixture.http)
+        try await fixture.api.setToken(fixture.session.accessToken)
+        let image = try #require(await service.homeAvatar(for: fixture.avatarID, session: fixture.session))
+        #expect(image.width == 240)
+        let lastByte = fixture.imageData.count - 1
+        let ranges = NearbyArtworkProtocol.requests.filter { $0.url?.path == "/current.png" }
+            .compactMap { $0.value(forHTTPHeaderField: "Range") }
+        #expect(ranges == (resumePartial ? ["bytes=16-\(lastByte)", "bytes=0-\(lastByte)"] : ["bytes=0-\(lastByte)"]))
+    }
+
     @Test func sharesTheAuthenticatedGLBDownloadBetweenArtistPreviews() async throws {
         let fixture = try Fixture()
         defer { fixture.close() }
@@ -193,7 +247,7 @@ struct NearbyProfileArtworkServiceTests {
         let imageData: Data
         let profileUsername: String
         let stallAvatar: Bool
-        private let http: URLSession
+        let http: URLSession
 
         init(profileUsername: String = "Target.User", stallAvatar: Bool = false) throws {
             self.profileUsername = profileUsername
@@ -220,6 +274,12 @@ struct NearbyProfileArtworkServiceTests {
         func close() {
             http.invalidateAndCancel()
             try? FileManager.default.removeItem(at: cacheRoot)
+        }
+
+        func avatarMedia(storagePath: String, chunkSize: Int) -> MediaResponse {
+            MediaResponse(mediaPublicId: avatarID, totalChunks: (imageData.count + chunkSize - 1) / chunkSize,
+                          chunkSize: chunkSize, fileName: "fixture.png", fileSize: Int64(imageData.count),
+                          storagePath: storagePath)
         }
 
         func reply(_ request: URLRequest) throws -> NearbyArtworkProtocol.Reply {

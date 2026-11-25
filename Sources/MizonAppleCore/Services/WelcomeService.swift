@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import MizonAPI
 import MizonAPIClient
+import OSLog
 
 public enum WelcomeFailure: Error, Equatable {
     case sessionExpired
@@ -47,6 +48,7 @@ public extension WelcomeService {
 
 public struct MizonWelcomeService: WelcomeService {
     private static let legacyMediaChunkSize = 81_920
+    private static let logger = Logger(subsystem: "com.shahesmaeili.Mizon.Apple", category: "ProfileAvatar")
     private let api: MizonApi
     private let downloader: MediaDownloader
     private let welcomeAvatarTimeout: TimeInterval
@@ -56,9 +58,10 @@ public struct MizonWelcomeService: WelcomeService {
         self.init(api: api, cacheRoot: cacheRoot, welcomeAvatarTimeout: 4, homeAvatarTimeout: 10)
     }
 
-    init(api: MizonApi, cacheRoot: URL, welcomeAvatarTimeout: TimeInterval, homeAvatarTimeout: TimeInterval) {
+    init(api: MizonApi, cacheRoot: URL, welcomeAvatarTimeout: TimeInterval, homeAvatarTimeout: TimeInterval,
+         downloadSession: URLSession = .shared) {
         self.api = api
-        downloader = MediaDownloader(cacheRoot: cacheRoot)
+        downloader = MediaDownloader(session: downloadSession, cacheRoot: cacheRoot)
         self.welcomeAvatarTimeout = welcomeAvatarTimeout
         self.homeAvatarTimeout = homeAvatarTimeout
     }
@@ -90,22 +93,18 @@ public struct MizonWelcomeService: WelcomeService {
                 let response = await api.sendRequest(operation)
                 try await checkAvatarSession(session)
                 guard response.isSuccess, var media = response.content, media.mediaPublicId == mediaID,
-                      media.fileSize > 0, media.fileSize <= 24 * 1024 * 1024 else { return nil }
-                // Match the Windows downloader's default for older registered media.
-                if media.chunkSize <= 0 { media.chunkSize = Self.legacyMediaChunkSize }
-                let path = try await downloader.downloadToCache(media, api: api, endpoints: endpoints)
-                try await checkAvatarSession(session)
-                guard let source = CGImageSourceCreateWithURL(path as CFURL, [
-                    kCGImageSourceShouldCache: false
-                ] as CFDictionary) else { return nil }
-                let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                    kCGImageSourceCreateThumbnailFromImageAlways: true,
-                    kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 240,
-                    kCGImageSourceShouldCacheImmediately: true
-                ] as CFDictionary)
-                try await checkAvatarSession(session)
-                return image
+                      media.fileSize > 0, media.fileSize <= 24 * 1024 * 1024 else {
+                    Self.logger.error("Profile image metadata unavailable (API code \(response.error?.code ?? 0, privacy: .public))")
+                    return nil
+                }
+                let directHTTPS = URL(string: media.storagePath)?.scheme?.caseInsensitiveCompare("https") == .orderedSame
+                if directHTTPS {
+                    // A complete range also works with storage that responds with the entire image.
+                    media.chunkSize = Int(media.fileSize)
+                } else if media.chunkSize <= 0 {
+                    media.chunkSize = Self.legacyMediaChunkSize
+                }
+                return try await downloadAvatar(media, directHTTPS: directHTTPS, endpoints: endpoints, session: session)
             }
             group.addTask {
                 try await Task.sleep(for: .seconds(timeout))
@@ -114,6 +113,43 @@ public struct MizonWelcomeService: WelcomeService {
             defer { group.cancelAll() }
             return try await group.next() ?? nil
         }
+    }
+
+    private func downloadAvatar(_ media: MediaResponse, directHTTPS: Bool, endpoints: Endpoints,
+                                session: AuthSession) async throws -> CGImage? {
+        for attempt in 0..<2 {
+            do {
+                let path = try await downloader.downloadToCache(media, api: api, endpoints: endpoints)
+                try await checkAvatarSession(session)
+                let image = Self.decodeAvatar(at: path)
+                try await checkAvatarSession(session)
+                if let image { return image }
+                Self.logger.error("Downloaded profile image could not be decoded")
+            } catch let error as BaseApiError where directHTTPS && error.code == 200 && attempt == 0 {
+                // An origin that ignores Range cannot resume an incomplete cached image.
+                Self.logger.notice("Restarting profile image download from the beginning")
+            } catch let error as BaseApiError {
+                try await checkAvatarSession(session)
+                Self.logger.error("Profile image download failed (API code \(error.code, privacy: .public))")
+                throw error
+            }
+            try await checkAvatarSession(session)
+            try await downloader.invalidateCachedDownload(media)
+            try await checkAvatarSession(session)
+        }
+        return nil
+    }
+
+    private static func decodeAvatar(at path: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(path as CFURL, [
+            kCGImageSourceShouldCache: false
+        ] as CFDictionary) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 240,
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary)
     }
 
     private func checkAvatarSession(_ session: AuthSession) async throws {

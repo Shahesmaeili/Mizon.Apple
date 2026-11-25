@@ -54,3 +54,9 @@ The [Windows taskbar companion](https://github.com/Shahesmaeili/Mizon.Windows/tr
 Mac status items remain available when the main window closes. The Mizon process retains the verified presentation and the authenticated account-presence subscription until sign-out or Quit. Settings can hide the items. The badge represents [account presence](AccountPresence.md) across active devices. The loop and click effect share Music Home’s authenticated artwork cache. This feature has no Apple MCP transport or grant.
 
 In the active Mizon window, the Xbox controller opens the focused account profile with A and plays the menu bar effect with X when the mood control is focused. The status items themselves use macOS keyboard and accessibility navigation.
+
+### Profile image recovery on macOS and iPhone
+
+The Apple integration for chat `01a1f8c4-a871-7fd0-9b52-1159ac1caef1` started at `a7c26bf` and owns `WelcomeService`, the profile image fixtures, and the two Swift SDK lockfiles. The [Swift SDK change](https://github.com/Shahesmaeili/Mizon.API.Swift/commit/8c84513fafa3e0f8ec4f5b69d5db28a682ca8ea9) owns cache invalidation and download cleanup. Server file media still uses the authenticated content endpoint. Direct HTTPS image storage can return a complete response without range support. A failed decode invalidates the affected cache entry and its partial file and allows one fresh download. Metadata, rejected downloads, and decode failures log stages without account or storage identifiers.
+
+The fixtures verify signed-in file media, a Welcome timeout followed by Home recovery, replacement of a same-size corrupt cached image, and HTTPS origins with and without a pending partial download. The deployed profile image requires its own check in a signed-in app.
