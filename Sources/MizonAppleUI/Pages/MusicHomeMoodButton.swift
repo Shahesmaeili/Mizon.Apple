@@ -24,6 +24,7 @@ struct MusicHomeMoodButton: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     #if os(macOS)
     @Environment(\.appearsActive) private var appearsActive
+    @Environment(MusicHomeFocus.self) private var navigationFocus
     #endif
     @State private var mood: ClientMoodItemResponse?
     @State private var catalog: [ClientMoodItemResponse]?
@@ -74,6 +75,14 @@ struct MusicHomeMoodButton: View {
 
     private var pickerWidth: CGFloat { max(1, min(344, viewport.width - 32)) }
     private var pickerHeight: CGFloat { max(180, min(390, viewport.height - 100)) }
+    private var selectedMoodFill: Color {
+        #if os(macOS)
+        MizonPalette.ink.opacity(0.14)
+        #else
+        Color.accentColor.opacity(0.18)
+        #endif
+    }
+
     private var pickerBinding: Binding<Bool> {
         Binding(get: { pickerMode != nil }, set: { if !$0 { pickerMode = nil } })
     }
@@ -175,6 +184,11 @@ struct MusicHomeMoodButton: View {
             }
             .popover(isPresented: pickerBinding, arrowEdge: .top) {
                 picker
+                    #if os(macOS)
+                    .background {
+                        MusicHomeFocusInput(input: navigationFocus).frame(width: 0, height: 0)
+                    }
+                    #endif
                     .presentationCompactAdaptation(.popover)
                     .onAppear {
                         if pickerMode == .direct { searchFocused = true }
@@ -332,18 +346,27 @@ struct MusicHomeMoodButton: View {
                             Button { choose(item) } label: {
                                 MoodTilePreview(item: item, model: model, selected: item.publicId == mood?.publicId)
                                     .frame(width: 44, height: 44)
-                                    .background(item.publicId == mood?.publicId ? Color.accentColor.opacity(0.18) : .clear,
+                                    .background(item.publicId == mood?.publicId ? selectedMoodFill : .clear,
                                                 in: .rect(cornerRadius: 12))
                                     .overlay {
+                                        #if os(macOS)
+                                        MusicHomeFocusOutline(
+                                            isFocused: selectedTile == item.publicId, cornerRadius: 12, input: navigationFocus
+                                        )
+                                        #else
                                         if selectedTile == item.publicId {
                                             RoundedRectangle(cornerRadius: 12)
                                                 .strokeBorder(Color.accentColor, lineWidth: 2)
                                         }
+                                        #endif
                                     }
                             }
                             .buttonStyle(MusicHomeButtonStyle(corner: 12))
                             .padding(2)
                             .focused($selectedTile, equals: item.publicId)
+                            #if os(macOS)
+                            .focusEffectDisabled()
+                            #endif
                             .accessibilityIdentifier("music.home.mood.option")
                             .accessibilityLabel(title(item))
                             .accessibilityAddTraits(item.publicId == mood?.publicId ? .isSelected : [])
@@ -545,6 +568,9 @@ struct MusicHomeMoodButton: View {
     private func moveFocus(by offset: Int) {
         let visible = matches
         guard !visible.isEmpty else { return }
+        #if os(macOS)
+        navigationFocus.updateForNavigation(true)
+        #endif
         searchFocused = false
         guard let index = visible.firstIndex(where: { $0.publicId == selectedTile }) else {
             selectedTile = visible.first?.publicId

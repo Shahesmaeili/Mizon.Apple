@@ -123,6 +123,7 @@ struct MusicHomePage: View {
     @State private var nearbyAvatars = NearbyAvatarModel()
     @State private var showingNearby = false
     @State private var nearbyPress: UInt = 0
+    @State private var navigationFocus = MusicHomeFocus()
     @FocusState private var controlFocus: Action?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -213,6 +214,9 @@ struct MusicHomePage: View {
                 .environment(pointer)
                 .navigationTitle("")
                 #if os(macOS)
+                .background {
+                    MusicHomeFocusInput(input: navigationFocus).frame(width: 0, height: 0)
+                }
                 .onGeometryChange(for: CGSize.self, of: \.size) { headerViewport = $0 }
                 .toolbar {
                     ToolbarItem(placement: .principal) {
@@ -322,12 +326,12 @@ struct MusicHomePage: View {
             topLeadingRadius: 8, bottomLeadingRadius: 8, bottomTrailingRadius: 16, topTrailingRadius: 16)
         return MusicHomeHeader(width: width, showingOverflow: $showingNavigationOverflow,
                                onOverflowAvailabilityChange: setNavigationOverflowAvailability) { compactSearch in
-            MusicHomeSearch(model: model, viewportWidth: viewport.width, compact: compactSearch,
-                            focusRequest: $searchFocusRequest, showingSearch: $showingSearch) { result in
-                destination = result.kind == .music ? .track(result.publicID) : .client(result.publicID)
+            focusableControl(.search, cornerRadius: 8) {
+                MusicHomeSearch(model: model, viewportWidth: viewport.width, compact: compactSearch,
+                                focusRequest: $searchFocusRequest, showingSearch: $showingSearch) { result in
+                    destination = result.kind == .music ? .track(result.publicID) : .client(result.publicID)
+                }
             }
-            .focusable()
-            .focused($controlFocus, equals: .search)
         } home: { compactTab in
             control(.home) {
                 MusicHomeNavigationLabel(section: .music, compact: compactTab)
@@ -344,16 +348,13 @@ struct MusicHomePage: View {
         } account: {
             HStack(spacing: 0) {
                 nearbyControl(viewport: viewport)
-                MusicHomeMoodButton(model: model, initialMood: initialMood, viewport: viewport,
-                                    controllerPress: moodPress) { showingMoodPicker = $0 }
-                    .focusable()
-                    .focused($controlFocus, equals: .mood)
-                    .overlay {
-                        if controlFocus == .mood {
-                            RoundedRectangle(cornerRadius: 8).strokeBorder(MizonPalette.accent, lineWidth: 2)
-                                .allowsHitTesting(false)
-                        }
-                    }
+                focusableControl(.mood, cornerRadius: 8) {
+                    MusicHomeMoodButton(model: model, initialMood: initialMood, viewport: viewport,
+                                        controllerPress: moodPress) { showingMoodPicker = $0 }
+                        #if os(macOS)
+                        .environment(navigationFocus)
+                        #endif
+                }
                 Menu {
                     if let displayName, !displayName.isEmpty { Text(displayName) }
                     Button(text("Profile")) { destination = .client(model.session.clientPublicId) }
@@ -391,16 +392,10 @@ struct MusicHomePage: View {
 
     private func nearbyControl(viewport: CGSize) -> some View {
         @Bindable var model = nearby
-        return NearbyDevicesControl(peers: model.peers, avatars: nearbyAvatars.images, enabled: $model.enabled, status: model.status,
-                                    viewport: viewport, controllerPress: nearbyPress) { showingNearby = $0 }
-            .focusable()
-            .focused($controlFocus, equals: .nearby)
-            .overlay {
-                if controlFocus == .nearby {
-                    RoundedRectangle(cornerRadius: 8).strokeBorder(MizonPalette.accent, lineWidth: 2)
-                        .allowsHitTesting(false)
-                }
-            }
+        return focusableControl(.nearby, cornerRadius: 8) {
+            NearbyDevicesControl(peers: model.peers, avatars: nearbyAvatars.images, enabled: $model.enabled,
+                                 status: model.status, viewport: viewport, controllerPress: nearbyPress) { showingNearby = $0 }
+        }
     }
 
     private var nearbyAvatarUsernames: [String] {
@@ -493,7 +488,8 @@ struct MusicHomePage: View {
                 .frame(width: feedWidth)
                 .scrollIndicators(.hidden)
                 .onChange(of: controlFocus) { _, target in
-                    if let target, target != .search, target != .home, target != .navigationOverflow, target != .nearby,
+                    if navigationFocus.showsNavigationFocus, let target,
+                       target != .search, target != .home, target != .navigationOverflow, target != .nearby,
                        target != .mood, target != .recent {
                         reader.scrollTo(target, anchor: .center)
                     }
@@ -884,8 +880,7 @@ struct MusicHomePage: View {
                             .clipShape(.rect(cornerRadius: 7)).padding(1)
                             .frame(width: size, height: size)
                     }
-                    .buttonStyle(MusicHomeButtonStyle(stroke: index == featureIndex ? musicColor("0697EA") : musicColor("4E555D").opacity(80.0 / 255),
-                                                      corner: 8))
+                    .buttonStyle(featureThumbnailStyle(selected: index == featureIndex))
                     .accessibilityLabel(localized(preview.title, preview.persianTitle))
                     .accessibilityAddTraits(index == featureIndex ? .isSelected : [])
                     .help(localized(preview.title, preview.persianTitle))
@@ -899,6 +894,15 @@ struct MusicHomePage: View {
         let count = min(3, model.features.count)
         let start = min(max(0, featureIndex - 1), max(0, model.features.count - count))
         return start..<(start + count)
+    }
+
+    private func featureThumbnailStyle(selected: Bool) -> MusicHomeButtonStyle {
+        let stroke = musicColor("4E555D").opacity(80.0 / 255)
+        #if os(macOS)
+        return MusicHomeButtonStyle(fill: selected ? MizonPalette.ink.opacity(0.17) : .clear, stroke: stroke, corner: 8)
+        #else
+        return MusicHomeButtonStyle(stroke: selected ? musicColor("0697EA") : stroke, corner: 8)
+        #endif
     }
 
     private func heroArrow(_ action: Action, icon: FluentSymbol, label: String) -> some View {
@@ -1546,17 +1550,33 @@ struct MusicHomePage: View {
     }
 
     func control<Label: View>(_ action: Action, @ViewBuilder label: () -> Label) -> some View {
-        Button { activate(action) } label: { label() }
+        focusableControl(action, cornerRadius: 9) {
+            Button { activate(action) } label: { label() }
+        }
+        .id(action)
+        .authHandPointer(enabled: true)
+    }
+
+    private func focusableControl<Content: View>(_ action: Action, cornerRadius: CGFloat,
+                                                 @ViewBuilder content: () -> Content) -> some View {
+        content()
             .focusable()
             .focused($controlFocus, equals: action)
-            .id(action)
-            .authHandPointer(enabled: true)
+            #if os(macOS)
+            .focusEffectDisabled()
+            #endif
             .overlay {
-                if controlFocus == action {
-                    let focusColor = action == .home || action == .navigationOverflow || action == .transport
-                        ? MizonPalette.accent : Color.accentColor
-                    RoundedRectangle(cornerRadius: 9).strokeBorder(focusColor, lineWidth: 2).allowsHitTesting(false)
+                #if os(macOS)
+                MusicHomeFocusOutline(isFocused: controlFocus == action, cornerRadius: cornerRadius, input: navigationFocus)
+                #else
+                if action != .search, controlFocus == action {
+                    let themed = action == .home || action == .navigationOverflow || action == .transport
+                        || action == .mood || action == .nearby
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .strokeBorder(themed ? MizonPalette.accent : Color.accentColor, lineWidth: 2)
+                        .allowsHitTesting(false)
                 }
+                #endif
             }
     }
 
@@ -1701,6 +1721,9 @@ struct MusicHomePage: View {
                     : vertical < -0.65 || horizontal > 0.65 ? 3 : vertical > 0.65 || horizontal < -0.65 ? 4 : 0
                 if control == 0 { armed = true }
                 if armed, control != 0, control != previous {
+                    #if os(macOS)
+                    navigationFocus.updateForNavigation(true)
+                    #endif
                     if showingNavigationOverflow {
                         if control == 2 {
                             showingNavigationOverflow = false
