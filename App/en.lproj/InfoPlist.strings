@@ -1,1 +1,2 @@
 "NSLocalNetworkUsageDescription" = "Mizon uses your local network to connect to your server and discover devices while you are signed in. Nearby Mizon users can see your device details and public profile. You can turn discovery off in Mizon.";
+"NSMotionUsageDescription" = "Mizon uses your phone’s motion sensor to move the three Music Home images as you tilt your phone.";

@@ -55,6 +55,12 @@ Mac status items remain available when the main window closes. The Mizon process
 
 In the active Mizon window, the Xbox controller opens the focused account profile with A and plays the menu bar effect with X when the mood control is focused. The status items themselves use macOS keyboard and accessibility navigation.
 
+## Story collage motion
+
+Apple base `da2cb75` uses the Windows `StoryOrbitMotion` pointer normalization and ease curve for the decorative three-image collage. The Mac uses one stationary pointer surface for the whole collage. Each artwork and label keeps its existing travel, and the panel eases from its current pose when the pointer enters or leaves. Scroll updates pause the animation without resetting the pointer pose.
+
+iPhone uses the fused device attitude through Core Motion for the same layer travel. One 30 Hz source runs while the collage is in the active viewport and Reduce Motion is off. The first sample establishes a neutral pose after activation or interface rotation. A 15-degree tilt covers the full range with a 120 ms smoothing constant. The interface axes follow the attached window scene in portrait and both landscape directions. The app keeps samples in memory and uses them only for drawing.
+
 ### Profile image recovery on macOS and iPhone
 
 The Apple integration for chat `01a1f8c4-a871-7fd0-9b52-1159ac1caef1` started at `a7c26bf` and owns `WelcomeService`, the profile image fixtures, and the two Swift SDK lockfiles. The [Swift SDK change](https://github.com/Shahesmaeili/Mizon.API.Swift/commit/8c84513fafa3e0f8ec4f5b69d5db28a682ca8ea9) owns cache invalidation and download cleanup. Server file media still uses the authenticated content endpoint. Direct HTTPS image storage can return a complete response without range support. A failed decode invalidates the affected cache entry and its partial file and allows one fresh download. Metadata, rejected downloads, and decode failures log stages without account or storage identifiers.

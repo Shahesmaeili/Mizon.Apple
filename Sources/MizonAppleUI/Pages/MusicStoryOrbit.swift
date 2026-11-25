@@ -52,11 +52,14 @@ struct MusicStoryOrbit: View {
     @Environment(\.scenePhase) private var scenePhase
     #if os(macOS)
     @Environment(MusicHomePointer.self) private var homePointer
+    @Environment(\.appearsActive) private var windowActive
     @Environment(\.colorScheme) private var colorScheme
     @State private var labelCache: LabelCache?
+    @State private var pointerMotion = MusicStoryOrbitPointerMotion()
+    #else
+    @State private var deviceMotion = MusicStoryOrbitDeviceMotion()
     #endif
     @State private var visible = false
-    @State private var pointer: CGPoint?
     @State private var pixelWidth = 512
     @State private var artwork: [String: CGImage] = [:]
 
@@ -69,8 +72,9 @@ struct MusicStoryOrbit: View {
     }()
 
     var body: some View {
-        let animating = visible && !reduceMotion && scenePhase == .active
+        let permitsMotion = visible && !reduceMotion && scenePhase == .active
         #if os(macOS)
+        let animating = permitsMotion && windowActive
         let scrollStartedAt = animating ? homePointer.scrollStartedAt : nil
         let timeSpentScrolling = animating ? homePointer.timeSpentScrolling : 0
         let drawsAsynchronously = true
@@ -78,28 +82,42 @@ struct MusicStoryOrbit: View {
             ? LabelRequest(pixelWidth: pixelWidth, colorScheme: colorScheme)
             : nil
         #else
+        let animating = permitsMotion
         let scrollStartedAt: Date? = nil
         let timeSpentScrolling: TimeInterval = 0
         let drawsAsynchronously = false
         #endif
         let displayScale = displayScale
         TimelineView(.animation(minimumInterval: 1 / 30, paused: !animating || scrollStartedAt != nil)) { time in
-            let elapsed = animating
-                ? (scrollStartedAt ?? time.date).timeIntervalSinceReferenceDate - timeSpentScrolling
-                : nil
+            let clock = (scrollStartedAt ?? time.date).timeIntervalSinceReferenceDate - timeSpentScrolling
+            let elapsed = animating ? clock : nil
+            #if os(macOS)
+            let influence = animating ? pointerMotion.position(at: clock) : .zero
+            #else
+            let influence = animating ? deviceMotion.position() : .zero
+            #endif
             Canvas(rendersAsynchronously: drawsAsynchronously) { context, size in
                 guard size.width > 0 else { return }
                 var context = context
                 let scale = size.width / 1440
                 context.scaleBy(x: scale, y: scale)
-                let hover = animating ? pointer.map { CGPoint(x: $0.x / scale, y: $0.y / scale) } : nil
                 for (index, card) in Self.cards.enumerated() {
-                    draw(card, index: index, context: context, elapsed: elapsed, pointer: hover)
+                    draw(card, index: index, context: context, elapsed: elapsed, influence: influence)
                 }
             }
         }
         .aspectRatio(1440 / 560.0, contentMode: .fit)
         .frame(maxWidth: 1130)
+        #if os(macOS)
+        .background { pointerSurface(enabled: animating, scrolling: scrollStartedAt != nil) }
+        .onChange(of: animating) { _, enabled in
+            if !enabled { pointerMotion.reset() }
+        }
+        #else
+        .background { MusicStoryOrbitWindowProbe(motion: deviceMotion).allowsHitTesting(false) }
+        .onChange(of: animating, initial: true) { _, enabled in deviceMotion.setActive(enabled) }
+        .onDisappear { deviceMotion.setActive(false) }
+        #endif
         .onGeometryChange(for: Int.self) { geometry in
             // Quantize resize requests to avoid decoding again for every window-size change.
             let width = min(4096, max(0, geometry.size.width * displayScale))
@@ -112,16 +130,6 @@ struct MusicStoryOrbit: View {
         }
         .frame(maxWidth: .infinity)
         .onScrollVisibilityChange(threshold: 0.1) { visible = $0 }
-        .onContinuousHover { phase in
-            #if os(macOS)
-            guard homePointer.scrollStartedAt == nil else { return }
-            #endif
-            switch phase {
-            case .active(let location):
-                if pointer != location { pointer = location }
-            case .ended: pointer = nil
-            }
-        }
         #if os(macOS)
         .task(id: labelRequest) {
             guard let labelRequest, labelCache?.request != labelRequest else { return }
@@ -129,13 +137,30 @@ struct MusicStoryOrbit: View {
                 pixelWidth: labelRequest.pixelWidth, colorScheme: labelRequest.colorScheme
             ))
         }
-        .onChange(of: scrollStartedAt) { _, current in
-            if current == nil { pointer = nil }
-        }
         #endif
         .environment(\.layoutDirection, .leftToRight)
         .accessibilityHidden(true)
     }
+
+    #if os(macOS)
+    private enum PointerSample: Equatable {
+        case suspended, position(CGPoint?)
+    }
+
+    private func pointerSurface(enabled: Bool, scrolling: Bool) -> some View {
+        GeometryReader { geometry in
+            let sample: PointerSample = enabled && !scrolling
+                ? .position(MusicStoryOrbitInput.pointer(homePointer.location, in: geometry.frame(in: .named(MusicHomePointer.coordinateSpace))))
+                : .suspended
+            Color.clear.onChange(of: sample, initial: true) { _, sample in
+                guard case .position(let target) = sample else { return }
+                let clock = Date.now.timeIntervalSinceReferenceDate - homePointer.timeSpentScrolling
+                pointerMotion.update(target, at: clock)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+    #endif
 
     private func loadArtwork(pixelWidth: Int) async {
         let requests = Self.cards.map { card in
@@ -155,14 +180,9 @@ struct MusicStoryOrbit: View {
         }
     }
 
-    private func draw(_ card: Card, index: Int, context: GraphicsContext, elapsed: Double?, pointer: CGPoint?) {
+    private func draw(_ card: Card, index: Int, context: GraphicsContext, elapsed: Double?, influence: CGPoint) {
         let direction = index == 1 ? -1.0 : 1.0
         let phase = Double(index) * 113
-        let center = CGPoint(x: 260 + 440 * index, y: index == 1 ? 302 : 248)
-        let influence = pointer.flatMap { point -> CGPoint? in
-            guard abs(point.x - center.x) < 225 else { return nil }
-            return CGPoint(x: (point.x - center.x) / 225, y: min(1, max(-1, (point.y - center.y) / 210)))
-        } ?? .zero
 
         func layer(period: Double, phase offset: Double = 0, x: Double, y: Double,
                    pointerX: Double = 0, pointerY: Double = 0) -> GraphicsContext {
