@@ -4,8 +4,20 @@ import SwiftUI
 struct MusicHomeProfilePicture: View {
     let avatar: CGImage?
     let displayName: String?
+    var isOnline: Bool? = nil
 
     var body: some View {
+        Group {
+            if let isOnline {
+                ProfilePresenceBadge(size: 32, isOnline: isOnline) { portrait }
+            } else {
+                portrait
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var portrait: some View {
         ZStack {
             if let avatar {
                 Image(decorative: avatar, scale: 1)
@@ -28,7 +40,6 @@ struct MusicHomeProfilePicture: View {
         }
         .frame(width: 32, height: 32)
         .clipShape(Circle())
-        .accessibilityHidden(true)
     }
 
     private var initials: String? {

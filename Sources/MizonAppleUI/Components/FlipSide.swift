@@ -1,3 +1,4 @@
+#if os(macOS) || os(iOS)
 import QuartzCore
 import SwiftUI
 
@@ -145,3 +146,4 @@ private nonisolated struct FlipProjection: GeometryEffect {
         return ProjectionTransform(CATransform3DConcat(projected, CATransform3DMakeTranslation(x, y, 0)))
     }
 }
+#endif

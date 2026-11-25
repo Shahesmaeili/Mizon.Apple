@@ -5,7 +5,7 @@ import MizonAppleCore
 import SwiftUI
 
 @MainActor
-public final class MacMenuBarProfile {
+public final class MacMenuBarProfile: ObservableObject {
     public static let shared = MacMenuBarProfile()
     static let preferenceKey = "mizon.menuBarProfile"
 
@@ -73,7 +73,7 @@ public final class MacMenuBarProfile {
     private var presenceGeneration = UUID()
     private var appWindowActive = false
     private var accountBusy = false
-    private var online = false
+    @Published private(set) var online = false
     private lazy var items = MacProfileStatusItems(
         openProfile: { [weak self] in self?.requestProfile() },
         playMood: { [weak self] in self?.playEffect() }
@@ -192,7 +192,7 @@ public final class MacMenuBarProfile {
         let previous = presence
         presence = nil
         presenceGeneration = UUID()
-        online = false
+        if online { online = false }
         if let previous { Task { await previous.stop() } }
     }
 

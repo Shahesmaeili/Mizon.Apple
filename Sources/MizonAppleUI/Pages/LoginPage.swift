@@ -12,6 +12,12 @@ import AppKit
 
 public struct MizonRootView: View {
     @State private var model: LoginViewModel
+    #if os(iOS) || os(watchOS)
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var accountPresence: AccountPresenceCoordinator?
+    @State private var presenceSessionID: UUID?
+    @State private var isProfileOnline = false
+    #endif
     #if !os(watchOS)
     @State private var profileTransition = ProfilePictureTransition()
     @State private var checkedStartup = false
@@ -28,10 +34,7 @@ public struct MizonRootView: View {
     private var localization = AuthLocalization()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #if os(iOS)
-    @Environment(\.scenePhase) private var scenePhase
     @State private var nearbyInForeground = false
-    @State private var accountPresence: AccountPresenceCoordinator?
-    @State private var presenceSessionID: UUID?
     #endif
 
     private struct HomeEntrance {
@@ -72,10 +75,12 @@ public struct MizonRootView: View {
                     nearbyInForeground = false
                     profileTransition.cancel()
                 }
-                updateAccountPresence()
             }
-            .onChange(of: home?.sessionID) { updateAccountPresence() }
-            .onChange(of: signingOut) { updateAccountPresence() }
+            #endif
+            #if os(iOS) || os(watchOS)
+            .onChange(of: scenePhase, initial: true) { updateAccountPresence() }
+            .onChange(of: presenceSession?.sessionPublicId) { updateAccountPresence() }
+            .onDisappear { stopAccountPresence() }
             #endif
             #if os(macOS) || os(iOS)
             .task(id: home?.sessionID) { await profileTransition.play() }
@@ -86,9 +91,6 @@ public struct MizonRootView: View {
             .onDisappear {
                 profileTransition.cancel()
                 deepLinks.cancelDispatched()
-                #if os(iOS)
-                stopAccountPresence()
-                #endif
             }
             .onChange(of: shellContext, initial: true) { _, _ in
                 #if os(macOS)
@@ -120,8 +122,6 @@ public struct MizonRootView: View {
                 }
                 #if os(macOS)
                 MacMenuBarProfile.shared.retainOnlySession(model.session?.sessionPublicId)
-                #elseif os(iOS)
-                updateAccountPresence()
                 #endif
             }
             .sheet(item: $deepLinkSettings) { request in
@@ -274,26 +274,42 @@ public struct MizonRootView: View {
     }
     #endif
 
-    #if os(iOS)
+    #if os(iOS) || os(watchOS)
+    private var presenceSession: AuthSession? {
+        guard let session = model.session else { return nil }
+        #if os(iOS)
+        guard !signingOut, home?.sessionID == session.sessionPublicId else { return nil }
+        #else
+        guard !model.isLoading else { return nil }
+        #endif
+        return session
+    }
+
     private func updateAccountPresence() {
-        guard scenePhase != .background, !signingOut, let session = model.session,
-              home?.sessionID == session.sessionPublicId else {
+        guard scenePhase != .background, let session = presenceSession else {
             stopAccountPresence()
             return
         }
         if presenceSessionID != session.sessionPublicId {
             stopAccountPresence()
-            accountPresence = AccountPresenceCoordinator(socket: model.musicHomeService.makeWindowPresenceSocket(session: session),
-                                                         clientPublicID: session.clientPublicId)
-            presenceSessionID = session.sessionPublicId
+            let id = session.sessionPublicId
+            presenceSessionID = id
+            let observer = AccountPresenceCoordinator(socket: model.musicHomeService.makeWindowPresenceSocket(session: session),
+                                                      clientPublicID: session.clientPublicId) { active in
+                guard presenceSessionID == id, presenceSession?.sessionPublicId == id, scenePhase != .background else { return }
+                isProfileOnline = active
+            }
+            accountPresence = observer
+            observer.observeAccount()
         }
         accountPresence?.setWindowActive(scenePhase == .active)
     }
 
     private func stopAccountPresence() {
+        isProfileOnline = false
+        presenceSessionID = nil
         guard let presence = accountPresence else { return }
         accountPresence = nil
-        presenceSessionID = nil
         Task { await presence.stop() }
     }
     #endif
@@ -301,14 +317,20 @@ public struct MizonRootView: View {
     @ViewBuilder
     private var content: some View {
         #if os(watchOS)
-        WatchLoginPage(model: model)
+        WatchLoginPage(model: model, isProfileOnline: isProfileOnline)
         #else
         if let session = model.session, let home, home.sessionID == session.sessionPublicId {
+            #if os(iOS)
+            let online = isProfileOnline
+            #else
+            let online = false
+            #endif
             MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
                           nearby: nearby, avatar: home.avatar, avatarMediaID: home.account?.avatarID,
                           profileTransition: profileTransition,
                           initialMood: home.account?.mood, shellRequest: $sectionShortcut,
-                          shellAccountOpen: accountSheet != nil || deepLinkSettings != nil || signingOut) {
+                          shellAccountOpen: accountSheet != nil || deepLinkSettings != nil || signingOut,
+                          isProfileOnline: online) {
                 guard !signingOut else { return }
                 signingOut = true
                 deepLinks.cancelActive(code: "cancelled", message: "The account was signed out.")

@@ -29,6 +29,18 @@ struct MusicHomeNavigationLayoutTests {
         #expect(layout.width == 68)
     }
 
+    @Test func usesTheSameProfileBadgeGeometryAsWindows() {
+        let header = ProfilePresenceBadgeMetrics(size: 32)
+        #expect(header.badge == 9)
+        #expect(header.center == 27)
+        #expect(header.cutoutRadius == 7)
+
+        let compact = ProfilePresenceBadgeMetrics(size: 24)
+        #expect(compact.badge == 6.75)
+        #expect(compact.center == 20.25)
+        #expect(compact.cutoutRadius == 5.25)
+    }
+
     @Test func waitsForExtraRoomBeforeReturningAllTabsToTheHeader() {
         let exactFit = MusicHomeNavigationLayout(budget: 369, widths: widths, compactOverflow: false)
         let stillOverflowing = MusicHomeNavigationLayout(

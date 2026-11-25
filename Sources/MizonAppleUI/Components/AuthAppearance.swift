@@ -80,7 +80,9 @@ struct AuthActionStyle: ButtonStyle {
             .animation(animation, value: over)
             .animation(animation, value: pressed)
             .contentShape(.rect)
+            #if os(macOS) || os(iOS)
             .onHover { hovered = $0 }
+            #endif
             .authHandPointer(enabled: enabled)
     }
 }
@@ -121,7 +123,9 @@ struct AuthSceneButtonStyle: ButtonStyle {
             .animation(moves ? .timingCurve(0.2, 0.8, 1, 1, duration: 0.18) : nil, value: pressed)
             .frame(height: 44)
             .contentShape(.rect)
+            #if os(macOS) || os(iOS)
             .onHover { hovered = $0 }
+            #endif
             .authHandPointer(enabled: enabled)
     }
 }
@@ -152,7 +156,9 @@ struct AuthFieldActionStyle: ButtonStyle {
             .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: over)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: pressed)
             .contentShape(.rect)
+            #if os(macOS) || os(iOS)
             .onHover { hovered = $0 }
+            #endif
             .authHandPointer(enabled: enabled)
     }
 }

@@ -153,12 +153,16 @@ struct MusicHomePage: View {
     @FocusState private var controlFocus: Action?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    #if os(macOS)
+    @ObservedObject private var menuBarProfile = MacMenuBarProfile.shared
+    #endif
     var localization = AuthLocalization()
 
     let displayName: String?
     let nearby: NearbyDiscoveryModel
     let avatar: CGImage?
     let avatarMediaID: UUID?
+    let isProfileOnline: Bool
     let profileTransition: ProfilePictureTransition
     let initialMood: ClientMoodItemResponse?
     @Binding var shellRequest: ShellShortcutRequest?
@@ -168,13 +172,14 @@ struct MusicHomePage: View {
     init(session: AuthSession, service: MusicHomeService, displayName: String?, nearby: NearbyDiscoveryModel,
          avatar: CGImage?, avatarMediaID: UUID?, profileTransition: ProfilePictureTransition,
          initialMood: ClientMoodItemResponse? = nil, shellRequest: Binding<ShellShortcutRequest?>,
-         shellAccountOpen: Bool,
+         shellAccountOpen: Bool, isProfileOnline: Bool = false,
          signOut: @escaping () -> Void) {
         _model = State(initialValue: MusicHomeViewModel(session: session, service: service, peerNetwork: nearby.peerNetwork))
         self.displayName = displayName
         self.nearby = nearby
         self.avatar = avatar
         self.avatarMediaID = avatarMediaID
+        self.isProfileOnline = isProfileOnline
         self.profileTransition = profileTransition
         self.initialMood = initialMood
         _shellRequest = shellRequest
@@ -258,7 +263,8 @@ struct MusicHomePage: View {
                 }
                 .onGeometryChange(for: CGSize.self, of: \.size) { headerViewport = $0 }
                 .toolbar {
-                    ToolbarItem(placement: .principal) {
+                    ToolbarSpacer(.flexible, placement: .primaryAction)
+                    ToolbarItem(placement: .primaryAction) {
                         header(viewport: headerViewport, width: min(1120, max(230, headerViewport.width - 168)))
                             .padding(.top, 5)
                             .padding(.bottom, 3)
@@ -522,7 +528,13 @@ struct MusicHomePage: View {
     }
 
     private var profileMenu: some View {
-        Menu {
+        #if os(macOS)
+        let online = menuBarProfile.online
+        #else
+        let online = isProfileOnline
+        #endif
+        let status = localization.string(online ? "Online" : "Offline", table: "MenuBarProfile")
+        return Menu {
             if let displayName, !displayName.isEmpty { Text(displayName) }
             Button(text("Profile")) { activate(.ownProfile) }
             Button(localization.string("SignOut", table: "Settings"), action: signOut)
@@ -536,12 +548,16 @@ struct MusicHomePage: View {
         .frame(width: 32, height: 32)
         // The native Mac menu can snapshot its label. Keep the portrait live as the session photo loads.
         .overlay {
-            MusicHomeProfilePicture(avatar: avatar, displayName: displayName)
+            MusicHomeProfilePicture(avatar: avatar, displayName: displayName, isOnline: online)
                 .opacity(profileTransition.isInFlight ? 0 : 1)
                 .allowsHitTesting(false)
         }
         .background { profileTransition.anchor(.header) }
         .accessibilityLabel(displayName ?? text("Profile"))
+        .accessibilityValue(status)
+        #if os(macOS)
+        .help(status)
+        #endif
         .accessibilityIdentifier("music.home.profile")
     }
 

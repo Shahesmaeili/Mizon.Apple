@@ -177,9 +177,10 @@ struct StatusArtworkMetrics {
     var itemWidth: CGFloat { control + 8 }
     var scale: CGFloat { control / 36 }
     var avatar: CGFloat { 32 * scale }
-    var badge: CGFloat { avatar * 9 / 32 }
-    var badgeOffset: CGFloat { avatar * 11 / 32 }
-    var cutoutRadius: CGFloat { avatar * 7 / 32 }
+    private var presenceBadge: ProfilePresenceBadgeMetrics { .init(size: avatar) }
+    var badge: CGFloat { presenceBadge.badge }
+    var badgeOffset: CGFloat { presenceBadge.center - avatar / 2 }
+    var cutoutRadius: CGFloat { presenceBadge.cutoutRadius }
 
     init(barHeight: CGFloat) {
         control = min(36, max(1, barHeight - 4))
@@ -275,8 +276,7 @@ private struct StatusArtwork: View {
                             .frame(width: metrics.avatar, height: metrics.avatar)
                             .mask { cutoutMask }
                         Circle()
-                            .fill(online ? Color(red: 48 / 255, green: 201 / 255, blue: 127 / 255)
-                                         : Color(red: 141 / 255, green: 150 / 255, blue: 168 / 255))
+                            .fill(ProfilePresenceBadgeMetrics.color(isOnline: online))
                             .frame(width: metrics.badge, height: metrics.badge)
                             .offset(x: metrics.badgeOffset, y: metrics.badgeOffset)
                     }

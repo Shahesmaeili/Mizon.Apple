@@ -26,7 +26,7 @@ public struct MusicHomeService: Sendable {
     public var searchService: GlobalSearchService { GlobalSearchService(api: api) }
     public var nearbyProfileArtworkService: NearbyProfileArtworkService { NearbyProfileArtworkService(api: api) }
 
-    #if os(macOS) || os(iOS)
+    #if os(macOS) || os(iOS) || os(watchOS)
     public func makeWindowPresenceSocket(session: AuthSession) -> MizonSocket {
         MizonSocket(mizonApi: api, hubURL: Endpoints(baseURL: session.server).mizonHubURL)
     }
@@ -293,10 +293,12 @@ public actor MusicArtworkStore {
         URL.cachesDirectory.appending(path: "Mizon/Music/\(session.clientPublicId)", directoryHint: .isDirectory)
     }
 
+    #if os(macOS) || os(iOS)
     public func moodAnimationURL(_ id: UUID, session: AuthSession) async throws -> URL {
         let source = try await file(id, session: session, maximumBytes: Int64(MoodAnimationAsset.maximumBytes))
         return try await MoodAnimationAsset.jsonFile(for: source)
     }
+    #endif
 
     public func image(_ id: UUID, session: AuthSession) async throws -> CGImage {
         try await imageWithSource(id, session: session).image
