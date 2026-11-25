@@ -50,6 +50,15 @@ final class MizonIOSShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
         if let item = options.shortcutItem {
             MizonIOSQuickActions.activate(item)
         }
+        openURLContexts(options.urlContexts)
+    }
+
+    func scene(_ scene: UIScene, openURLContexts contexts: Set<UIOpenURLContext>) {
+        openURLContexts(contexts)
+    }
+
+    private func openURLContexts(_ contexts: Set<UIOpenURLContext>) {
+        for context in contexts { MizonDeepLinkRouter.shared.open(context.url) }
     }
 
     func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem) async -> Bool {

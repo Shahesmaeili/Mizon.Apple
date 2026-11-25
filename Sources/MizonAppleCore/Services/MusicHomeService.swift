@@ -60,12 +60,26 @@ public struct MusicHomeService: Sendable {
     }
 
     public func activity(after cursor: String?, session: AuthSession) async throws -> FollowingActivitiesResponse {
-        try await request(FollowingActivitiesOperation(.init(scope: "music", pageSize: 20, cursor: cursor),
+        try await followingActivity(scope: "music", after: cursor, session: session)
+    }
+
+    public func allFollowingActivity(after cursor: String?, session: AuthSession) async throws -> FollowingActivitiesResponse {
+        try await followingActivity(scope: "all", after: cursor, session: session)
+    }
+
+    private func followingActivity(scope: String, after cursor: String?, session: AuthSession) async throws -> FollowingActivitiesResponse {
+        try await request(FollowingActivitiesOperation(.init(scope: scope, pageSize: 20, cursor: cursor),
                                                        endpoints: .init(baseURL: session.server)))
     }
 
     public func track(_ id: UUID, session: AuthSession) async throws -> MusicResponse {
         try await request(MusicOperation(.init(musicPublicId: id), endpoints: .init(baseURL: session.server)))
+    }
+
+    public func trackComment(_ commentID: UUID, musicID: UUID, session: AuthSession) async throws -> MusicCommentItemResponse? {
+        let request = MusicCommentsRequest(musicPublicId: musicID, musicCommentPublicId: commentID, pageSize: 1)
+        let response = try await self.request(MusicCommentsOperation(request, endpoints: .init(baseURL: session.server)))
+        return response.musicComments.first { $0.publicId == commentID }
     }
 
     public func client(_ id: UUID, session: AuthSession) async throws -> ClientProfileResponse {
@@ -115,6 +129,7 @@ public struct MusicHomeService: Sendable {
     }
 
     public func recordPlayback(_ id: UUID, playbackID: UUID, session: AuthSession) async throws {
+        guard await api.getToken() == session.accessToken else { throw CancellationError() }
         _ = try await request(MusicPlayOperation(.init(musicPublicId: id, playbackPublicId: playbackID), endpoints: .init(baseURL: session.server)))
     }
 
@@ -339,9 +354,10 @@ public actor MusicArtworkStore {
     }
 
     public func playableTrack(_ file: MusicFileResponse, session: AuthSession) async throws -> URL {
-        let info = MediaResponse(mediaPublicId: file.mediaPublicId, totalChunks: file.totalChunks, chunkSize: file.chunkSize,
-                                 fileHash: file.fileHash, fileName: file.fileName, fileSize: file.fileSize,
-                                 storagePath: file.storagePath)
+        let info = file.registeredMedia
+        if info.fileSize > 0, (try? await downloader.isCached(info)) == true {
+            return try await downloader.getCachedFilePath(info)
+        }
         if let peerNetwork,
            let manifest = try await service.peerManifest(info, session: session, downloader: downloader, network: peerNetwork) {
             let media = try await service.media(file.mediaPublicId, session: session)
@@ -355,8 +371,23 @@ public actor MusicArtworkStore {
         return try MusicHomeService.storageURL(file.storagePath)
     }
 
+    public func cacheTrack(_ musicID: UUID, session: AuthSession) async throws {
+        let track = try await service.trackFile(musicID, session: session)
+        guard track.mediaPublicId != UUID.emptyPublicIdentifier else { throw LoginFailure.invalidResponse }
+        _ = try await service.cacheMedia(track.registeredMedia, session: session, downloader: downloader,
+                                         maximumBytes: PeerMediaTransfer.maximumFileSize, peerNetwork: peerNetwork)
+        try Task.checkCancellation()
+    }
+
     public func cancel() {
         for request in requests.values { request.cancel() }
         requests.removeAll()
+    }
+}
+
+private extension MusicFileResponse {
+    var registeredMedia: MediaResponse {
+        MediaResponse(mediaPublicId: mediaPublicId, totalChunks: totalChunks, chunkSize: chunkSize,
+                      fileHash: fileHash, fileName: fileName, fileSize: fileSize, storagePath: storagePath)
     }
 }

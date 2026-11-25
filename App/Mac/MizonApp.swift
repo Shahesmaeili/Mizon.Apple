@@ -58,6 +58,7 @@ private struct MizonMacWindowContent: View {
             .onAppear {
                 shortcuts.reopenMainWindow = { [openWindow] in openWindow(id: "main") }
                 MacMenuBarProfile.shared.activateMainWindow = { [weak shortcuts] in shortcuts?.activateMainWindow() }
+                MizonDeepLinkRouter.shared.activateMainWindow = { [weak shortcuts] in shortcuts?.activateMainWindow() }
                 updateWindowActivity()
             }
             .onDisappear { MacMenuBarProfile.shared.mainWindowClosed() }
@@ -136,6 +137,16 @@ final class MizonApplicationDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { dockShortcuts.menu() }
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where MizonDeepLinkRouter.shared.open(url) {
+            dockShortcuts.activateMainWindow()
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MizonDeepLinkRouter.shared.applicationWillClose()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         !MacMenuBarProfile.shared.keepsApplicationRunning
     }

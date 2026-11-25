@@ -5,7 +5,7 @@ import MizonAppleCore
 import SwiftUI
 
 @MainActor
-public final class MacMenuBarProfile: ObservableObject {
+public final class MacMenuBarProfile {
     public static let shared = MacMenuBarProfile()
     static let preferenceKey = "mizon.menuBarProfile"
 
@@ -26,11 +26,6 @@ public final class MacMenuBarProfile: ObservableObject {
         let mood: Mood?
     }
 
-    struct ProfileRequest: Equatable {
-        let id = UUID()
-        let sessionID: UUID
-    }
-
     private struct Account {
         let session: AuthSession
         let service: MusicHomeService
@@ -40,7 +35,6 @@ public final class MacMenuBarProfile: ObservableObject {
         var mood: ClientMoodItemResponse?
     }
 
-    @Published private(set) var profileRequest: ProfileRequest?
     public var activateMainWindow: (() -> Void)?
     public var keepsApplicationRunning: Bool { enabled && account != nil }
 
@@ -54,7 +48,8 @@ public final class MacMenuBarProfile: ObservableObject {
     private var account: Account?
     private var language = "en"
     private var openFailed = false
-    private var openDeadline: Task<Void, Never>?
+    private var openRequestID: UUID?
+    private var openTask: Task<Void, Never>?
     private var moodLoad: Task<Void, Never>?
     private var loopFile: URL?
     private var effectFile: URL?
@@ -142,30 +137,28 @@ public final class MacMenuBarProfile: ObservableObject {
         if account != nil { render() }
     }
 
-    func finishProfileRequest(_ request: ProfileRequest, succeeded: Bool) {
-        guard profileRequest == request else { return }
-        cancelProfileRequest()
-        openFailed = !succeeded
-        render()
-    }
-
     private func requestProfile() {
-        guard enabled, !accountBusy, let account, profileRequest == nil, let activateMainWindow else { return }
-        let request = ProfileRequest(sessionID: account.session.sessionPublicId)
+        guard enabled, !accountBusy, let account, openRequestID == nil, let activateMainWindow else { return }
+        let id = UUID()
+        let route: MizonDeepLink = account.session.clientPublicId == .emptyMediaID ? .music : .client(account.session.clientPublicId)
         openFailed = false
-        profileRequest = request
+        openRequestID = id
         render()
         activateMainWindow()
-        openDeadline = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(60)) } catch { return }
-            self?.finishProfileRequest(request, succeeded: false)
+        openTask = Task { [weak self] in
+            let response = await MizonDeepLinkRouter.shared.result(for: route, requestID: id)
+            guard let self, self.openRequestID == id, !Task.isCancelled else { return }
+            self.openRequestID = nil
+            self.openTask = nil
+            self.openFailed = !response.success
+            self.render()
         }
     }
 
     private func cancelProfileRequest() {
-        openDeadline?.cancel()
-        openDeadline = nil
-        profileRequest = nil
+        openRequestID = nil
+        openTask?.cancel()
+        openTask = nil
         openFailed = false
     }
 
@@ -260,7 +253,7 @@ public final class MacMenuBarProfile: ObservableObject {
             items.render(profile: nil)
             return
         }
-        let status = profileRequest != nil ? "Opening" : openFailed ? "OpenFailed" : online ? "Online" : "Offline"
+        let status = openRequestID != nil ? "Opening" : openFailed ? "OpenFailed" : online ? "Online" : "Offline"
         let mood: Presentation.Mood? = currentMood.map { mood in
             let emoji = mood.emoji.trimmingCharacters(in: .whitespacesAndNewlines)
             let persian = mood.persianTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -272,7 +265,7 @@ public final class MacMenuBarProfile: ObservableObject {
         }
         items.render(profile: Presentation(displayName: account.displayName, avatar: account.avatar,
                                            profileTitle: text("OpenProfile"), profileStatus: text(status),
-                                           isOnline: online, isOpening: profileRequest != nil, mood: mood))
+                                           isOnline: online, isOpening: openRequestID != nil, mood: mood))
     }
 
     private func text(_ key: String) -> String {

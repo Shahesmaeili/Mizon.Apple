@@ -6,16 +6,25 @@ import MizonAppleCore
 import SwiftUI
 
 struct MusicHomeDestinationView: View {
+    private struct LoadIdentity: Equatable {
+        let requestID: UUID?
+        let retry: Int
+        let cancelled: Bool
+    }
+
     private enum Details {
         case track(UUID, MusicResponse)
         case artist(PersonProfileResponse)
         case client(ClientProfileResponse)
         case playlist(MusicPlaylistDetailsResponse)
         case story(StoryResponse)
+        case musicComment(UUID, MusicResponse, MusicCommentItemResponse)
+        case musicVideo(MusicResponse)
     }
 
     let route: MusicDestination
     let model: MusicHomeViewModel
+    let deepLink: MizonDeepLinkRouter.AuthorizedLink?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var details: Details?
@@ -27,7 +36,16 @@ struct MusicHomeDestinationView: View {
     @State private var video: AVPlayer?
     @State private var loadID = 0
     @State private var artistHeaderWidth: CGFloat = 0
+    @State private var resolvedDeepLink: UUID?
+    @State private var cancelledDeepLink: UUID?
+    @State private var downloadCompleted = false
     private var localization = AuthLocalization()
+
+    init(route: MusicDestination, model: MusicHomeViewModel, deepLink: MizonDeepLinkRouter.AuthorizedLink? = nil) {
+        self.route = route
+        self.model = model
+        self.deepLink = deepLink
+    }
 
     var body: some View {
         ScrollView {
@@ -62,44 +80,32 @@ struct MusicHomeDestinationView: View {
                 .keyboardShortcut(.cancelAction)
             }
         }
-        .task(id: loadID) { await load() }
-        #if os(macOS)
-        .onReceive(MacMenuBarProfile.shared.$profileRequest) { request in
-            guard let request else { return }
-            Task { finishMenuBarRequest(request) }
+        .task(id: loadIdentity) {
+            if !loadIdentity.cancelled { await load() }
         }
-        .onChange(of: loading) {
-            finishMenuBarRequest(MacMenuBarProfile.shared.profileRequest)
-        }
-        .onDisappear {
-            if let request = matchingMenuBarRequest(MacMenuBarProfile.shared.profileRequest) {
-                MacMenuBarProfile.shared.finishProfileRequest(request, succeeded: false)
+        .onReceive(MizonDeepLinkRouter.shared.$authorized) { authorized in
+            if let deepLink, resolvedDeepLink != deepLink.id, authorized != deepLink {
+                cancelledDeepLink = deepLink.id
+                loading = false
             }
         }
-        #endif
         .task(id: scenePhase) {
             if scenePhase == .active { await observeBack() }
         }
-        .onDisappear { video?.pause() }
-    }
-
-    #if os(macOS)
-    private func matchingMenuBarRequest(_ request: MacMenuBarProfile.ProfileRequest?) -> MacMenuBarProfile.ProfileRequest? {
-        guard let request, request.sessionID == model.session.sessionPublicId,
-              route == .client(model.session.clientPublicId) else { return nil }
-        return request
-    }
-
-    private func finishMenuBarRequest(_ request: MacMenuBarProfile.ProfileRequest?) {
-        guard !loading, let request = matchingMenuBarRequest(request),
-              request == MacMenuBarProfile.shared.profileRequest else { return }
-        if case .client = details, !failed {
-            MacMenuBarProfile.shared.finishProfileRequest(request, succeeded: true)
-        } else if failed {
-            loadID += 1
+        .onDisappear {
+            video?.pause()
+            if let deepLink, resolvedDeepLink != deepLink.id {
+                resolvedDeepLink = deepLink.id
+                MizonDeepLinkRouter.shared.fail(deepLink, code: "page_changed",
+                                               message: "The active page changed before navigation completed.")
+            }
         }
     }
-    #endif
+
+    private var loadIdentity: LoadIdentity {
+        LoadIdentity(requestID: deepLink?.id, retry: loadID,
+                     cancelled: deepLink.map { cancelledDeepLink == $0.id } ?? false)
+    }
 
     private var contentWidth: CGFloat {
         if case .artist(let artist)? = details, artist.modelMediaPublicId != nil { return .infinity }
@@ -111,7 +117,8 @@ struct MusicHomeDestinationView: View {
             return localization.string(section.resourceKey + "Title", table: "ShellShortcuts")
         }
         switch details {
-        case .track(_, let item): return localized(item.title, item.persianTitle)
+        case .track(_, let item), .musicComment(_, let item, _), .musicVideo(let item):
+            return localized(item.title, item.persianTitle)
         case .artist(let item): return "\(item.firstName) \(item.lastName)"
         case .client(let item): return item.nickName ?? [item.firstName, item.lastName].filter { !$0.isEmpty }.joined(separator: " ")
         case .playlist(let item): return item.title
@@ -144,20 +151,20 @@ struct MusicHomeDestinationView: View {
     @ViewBuilder private func content(_ details: Details) -> some View {
         switch details {
         case .track(let id, let track):
-            MusicArtwork(mediaID: track.musicCover?.mediaPublicId, model: model, symbol: "music.note")
-                .frame(height: 280).clipShape(.rect(cornerRadius: 12))
-            Text(localized(track.title, track.persianTitle)).font(localization.font(27, weight: .semibold))
-                .accessibilityAddTraits(.isHeader)
-            Text(track.musicGenres.map { localized($0.title, $0.persianTitle) }.joined(separator: " · "))
-                .foregroundStyle(.secondary)
-            HStack {
-                Button { model.play(id, title: title) } label: { Label(text("PlayInMizon"), systemImage: "play.fill") }
-                Button { Task { await like(track, id: id) } } label: {
-                    Label(text(track.likedByMe ? "UnlikeTrack" : "LikeTrack"), systemImage: track.likedByMe ? "heart.fill" : "heart")
-                }
-                .disabled(updating)
+            trackDetails(track, id: id)
+        case .musicComment(let id, let track, let comment):
+            highlightedComment(comment)
+            trackDetails(track, id: id)
+        case .musicVideo(let track):
+            if let video {
+                VideoPlayer(player: video)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(.rect(cornerRadius: 12))
+                    .accessibilityIdentifier("music.destination.video")
             }
-            .buttonStyle(.glass)
+            Text(localized(track.title, track.persianTitle))
+                .font(localization.font(27, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
         case .artist(let artist):
             if let mediaID = artist.modelMediaPublicId {
                 artistModelHeader(artist, mediaID: mediaID)
@@ -212,6 +219,52 @@ struct MusicHomeDestinationView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder private func trackDetails(_ track: MusicResponse, id: UUID) -> some View {
+        MusicArtwork(mediaID: track.musicCover?.mediaPublicId, model: model, symbol: "music.note")
+            .frame(height: 280).clipShape(.rect(cornerRadius: 12))
+        Text(localized(track.title, track.persianTitle)).font(localization.font(27, weight: .semibold))
+            .accessibilityAddTraits(.isHeader)
+        Text(track.musicGenres.map { localized($0.title, $0.persianTitle) }.joined(separator: " · "))
+            .foregroundStyle(.secondary)
+        HStack {
+            Button { model.play(id, title: title) } label: { Label(text("PlayInMizon"), systemImage: "play.fill") }
+            Button { Task { await like(track, id: id) } } label: {
+                Label(text(track.likedByMe ? "UnlikeTrack" : "LikeTrack"), systemImage: track.likedByMe ? "heart.fill" : "heart")
+            }
+            .disabled(updating)
+        }
+        .buttonStyle(.glass)
+        if downloadCompleted {
+            Label(localization.string("MusicDownloaded", table: "MusicDeepLinks"), systemImage: "checkmark.circle")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func highlightedComment(_ comment: MusicCommentItemResponse) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            MusicArtwork(mediaID: comment.profileMediaPublicId, model: model, symbol: "person.fill")
+                .frame(width: 34, height: 34).clipShape(.circle)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(localization.string("LinkedComment", table: "MusicDeepLinks"))
+                    .font(localization.font(12, weight: .semibold)).accessibilityAddTraits(.isHeader)
+                let name = [comment.firstName, comment.lastName].filter { !$0.isEmpty }.joined(separator: " ")
+                if !name.isEmpty {
+                    Text(name).font(localization.font(13, weight: .semibold))
+                } else if let username = comment.username {
+                    Text("@" + username).font(localization.font(13, weight: .semibold))
+                }
+                Text(comment.text).font(localization.font(14)).textSelection(.enabled)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MizonPalette.accent.opacity(0.10), in: .rect(cornerRadius: 12))
+        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(MizonPalette.accent.opacity(0.38)) }
+        .environment(\.layoutDirection, localization.isPersian ? .rightToLeft : .leftToRight)
+        .accessibilityIdentifier("music.destination.linkedComment")
     }
 
     private func artistCover(_ artist: PersonProfileResponse) -> some View {
@@ -311,48 +364,137 @@ struct MusicHomeDestinationView: View {
         loading = true
         defer { if !Task.isCancelled { loading = false } }
         do {
+            try checkNavigation()
             switch route {
             case .section:
+                completeDeepLink(stage: .opened)
                 return
             case .track(let id):
-                details = .track(id, try await model.service.track(id, session: model.session))
+                let track: MusicResponse
+                if case .track(let loadedID, let loadedTrack) = details, loadedID == id {
+                    track = loadedTrack
+                } else {
+                    track = try await model.service.track(id, session: model.session)
+                    try checkNavigation()
+                    details = .track(id, track)
+                }
+                try await performTrackAction(id, track: track)
+            case .musicComment(let id, let commentID):
+                async let info = model.service.track(id, session: model.session)
+                let comment = try await model.service.trackComment(commentID, musicID: id, session: model.session)
+                let track = try await info
+                try checkNavigation()
+                guard let comment else { throw LoginFailure.invalidResponse }
+                details = .musicComment(id, track, comment)
+            case .musicVideo(let id):
+                let track = try await model.service.track(id, session: model.session)
+                try checkNavigation()
+                guard let mediaID = track.musicVideo?.mediaPublicId else { throw LoginFailure.invalidResponse }
+                video = try await makeVideo(mediaID)
+                details = .musicVideo(track)
             case .client(let id):
-                details = .client(try await model.service.client(id, session: model.session))
+                if case .client(let currentProfile) = details, currentProfile.clientPublicId == id { break }
+                let client = try await model.service.client(id, session: model.session)
+                try checkNavigation()
+                guard deepLink == nil || client.clientPublicId == id else { throw LoginFailure.invalidResponse }
+                details = .client(client)
             case .artist(let id):
                 async let artist = model.service.artist(id, session: model.session)
                 async let music = model.service.artistMusic(id, after: nil, session: model.session)
-                details = .artist(try await artist)
-                tracks = try await music.musics
+                let profile = try await artist
+                try checkNavigation()
+                guard deepLink == nil || profile.personPublicId == id else { throw LoginFailure.invalidResponse }
+                details = .artist(profile)
+                // The profile is a distinct result. The supplementary track list can load independently.
+                completeDeepLink(stage: .completed)
+                let artistTracks = try await music.musics
+                try checkNavigation()
+                tracks = artistTracks
             case .playlist(let id):
                 let playlist = try await model.service.playlist(id, after: nil, session: model.session)
+                try checkNavigation()
+                guard deepLink == nil || playlist.publicId == id else { throw LoginFailure.invalidResponse }
                 details = .playlist(playlist)
                 tracks = playlist.musics
                 nextCursor = playlist.nextCursor
             case .story(let id):
                 let story = try await model.service.story(id, session: model.session)
+                try checkNavigation()
+                guard deepLink == nil || story.publicId == id else { throw LoginFailure.invalidResponse }
                 details = .story(story)
+                if story.storyContentTypeTitle.localizedCaseInsensitiveContains("video") {
+                    let player = try await makeVideo(story.contentMediaPublicId)
+                    try checkNavigation()
+                    video = player
+                    player.play()
+                } else if deepLink != nil {
+                    _ = try await model.artwork.image(story.contentMediaPublicId, session: model.session)
+                    try checkNavigation()
+                }
                 if !story.viewedByMe,
-                   let viewed = try? await model.service.markStoryViewed(id, session: model.session), !Task.isCancelled {
+                   let viewed = try? await model.service.markStoryViewed(id, session: model.session) {
+                    try checkNavigation()
                     model.updateStoryView(viewed)
                     details = .story(viewed)
                 }
-                if story.storyContentTypeTitle.localizedCaseInsensitiveContains("video") {
-                    let media = try await model.service.media(story.contentMediaPublicId, session: model.session)
-                    let player = AVPlayer(url: try MusicHomeService.storageURL(media.storagePath))
-                    video = player
-                    player.play()
-                }
             }
+            try checkNavigation()
+            completeDeepLink(stage: .completed)
+        } catch is CancellationError {
+            return
         } catch {
             if !Task.isCancelled {
                 failed = true
-                #if os(macOS)
-                if let request = matchingMenuBarRequest(MacMenuBarProfile.shared.profileRequest) {
-                    MacMenuBarProfile.shared.finishProfileRequest(request, succeeded: false)
+                if let request = deepLink, resolvedDeepLink != request.id {
+                    resolvedDeepLink = request.id
+                    let profile: Bool = switch route {
+                    case .artist, .client: true
+                    default: false
+                    }
+                    MizonDeepLinkRouter.shared.fail(
+                        request, code: profile ? "profile_unavailable" : "page_unavailable",
+                        message: profile ? "The profile could not be loaded." : "The requested content could not be loaded.")
                 }
-                #endif
             }
         }
+    }
+
+    private func completeDeepLink(stage: MizonDeepLinkResult.Stage) {
+        guard let request = deepLink, resolvedDeepLink != request.id else { return }
+        resolvedDeepLink = request.id
+        MizonDeepLinkRouter.shared.complete(request, stage: stage)
+    }
+
+    private func checkNavigation() throws {
+        try Task.checkCancellation()
+        if let deepLink, resolvedDeepLink != deepLink.id, !MizonDeepLinkRouter.shared.isActive(deepLink) {
+            throw CancellationError()
+        }
+    }
+
+    private func performTrackAction(_ id: UUID, track: MusicResponse) async throws {
+        guard let request = deepLink, resolvedDeepLink != request.id, case .track(_, let action) = request.route else { return }
+        switch action {
+        case .details, .video:
+            return
+        case .play:
+            try await model.playFromDeepLink(id, title: localized(track.title, track.persianTitle)) {
+                MizonDeepLinkRouter.shared.isActive(request)
+            }
+        case .download:
+            try await model.artwork.cacheTrack(id, session: model.session)
+            try checkNavigation()
+            downloadCompleted = true
+        }
+    }
+
+    private func makeVideo(_ mediaID: UUID) async throws -> AVPlayer {
+        let url = try await model.artwork.playableURL(mediaID, session: model.session)
+        try checkNavigation()
+        let asset = AVURLAsset(url: url)
+        guard try await asset.load(.isPlayable) else { throw LoginFailure.invalidResponse }
+        try checkNavigation()
+        return AVPlayer(playerItem: AVPlayerItem(asset: asset))
     }
 
     private func morePlaylist(_ id: UUID, cursor: String) async {
@@ -377,7 +519,11 @@ struct MusicHomeDestinationView: View {
             var updated = item
             updated.likedByMe = response.likedByMe
             updated.likesCount = response.likesCount
-            details = .track(id, updated)
+            if case .musicComment(_, _, let comment) = details {
+                details = .musicComment(id, updated, comment)
+            } else {
+                details = .track(id, updated)
+            }
         } catch { model.actionFailed = true }
     }
 

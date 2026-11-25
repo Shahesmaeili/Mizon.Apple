@@ -19,9 +19,11 @@ public struct MizonRootView: View {
     @State private var nearby = NearbyDiscoveryModel()
     @State private var nearbyIdentity: NearbyIdentity?
     @ObservedObject private var shellShortcuts = MizonShellShortcuts.shared
+    @ObservedObject private var deepLinks = MizonDeepLinkRouter.shared
     @State private var authShortcut: ShellShortcutRequest?
     @State private var accountSheet: ShellShortcutRequest?
     @State private var sectionShortcut: ShellShortcutRequest?
+    @State private var deepLinkSettings: MizonDeepLinkRouter.Request?
     @State private var signingOut = false
     private var localization = AuthLocalization()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -76,31 +78,50 @@ public struct MizonRootView: View {
             .onChange(of: reduceMotion) { _, enabled in
                 if enabled { profileTransition.cancel() }
             }
-            .onDisappear { profileTransition.cancel() }
+            .onDisappear {
+                profileTransition.cancel()
+                deepLinks.cancelDispatched()
+            }
             .onChange(of: shellContext, initial: true) { _, _ in
                 #if os(macOS)
                 let busy = shellContext == .busy || shellContext == .signingOut
                 MacMenuBarProfile.shared.setAccountBusy(busy)
                 #endif
                 updateShortcutMenu()
+                if deepLinks.pending == nil { openPendingShortcut() }
+                else { openPendingDeepLink() }
+            }
+            .onChange(of: deepLinks.pending, initial: true) {
+                guard deepLinks.pending != nil else { return }
+                if let shortcut = shellShortcuts.pending { shellShortcuts.complete(shortcut) }
+                openPendingDeepLink()
+            }
+            .onChange(of: shellShortcuts.pending) {
+                guard shellShortcuts.pending != nil else { return }
+                deepLinks.cancelActive(code: "superseded", message: "A system shortcut replaced this request.")
+                deepLinkSettings = nil
                 openPendingShortcut()
             }
-            .onChange(of: shellShortcuts.pending) { openPendingShortcut() }
             .onChange(of: localization.isPersian) { updateShortcutMenu() }
             .onChange(of: model.session?.sessionPublicId) {
                 accountSheet = nil
                 authShortcut = nil
+                deepLinkSettings = nil
+                if let request = deepLinks.authorized, request.sessionID != model.session?.sessionPublicId {
+                    deepLinks.fail(request, code: "requires_sign_in", message: "The active account has changed.")
+                }
                 #if os(macOS)
                 MacMenuBarProfile.shared.retainOnlySession(model.session?.sessionPublicId)
                 #endif
             }
-            #if os(macOS)
-            .onReceive(MacMenuBarProfile.shared.$profileRequest) { request in
-                if let request, request.sessionID == model.session?.sessionPublicId, !model.isLoading {
-                    accountSheet = nil
+            .sheet(item: $deepLinkSettings) { request in
+                if case .settings(let section) = request.route {
+                    DeepLinkSettingsView(model: model, section: section) {
+                        deepLinks.complete(id: request.id, stage: .opened)
+                    }
+                    .id(request.id)
                 }
             }
-            #endif
             .sheet(item: $accountSheet, onDismiss: model.dismissError) { request in
                 AuthenticationPage(model: model, shellRequest: request) { accountSheet = nil }
                     .safeAreaInset(edge: .top, spacing: 0) {
@@ -183,6 +204,50 @@ public struct MizonRootView: View {
         shellShortcuts.complete(request)
     }
 
+    private func openPendingDeepLink() {
+        guard let request = deepLinks.pending else { return }
+        let context = shellContext
+        if context == .signingOut || context == .busy {
+            if context == .signingOut || request.expectsResult {
+                deepLinks.fail(id: request.id, code: "busy", message: "An account operation is already in progress.")
+            }
+            return
+        }
+
+        if request.route == .login || request.route == .register {
+            let face = request.route == .login ? ShellShortcutDestination.login : .register
+            let shortcut = ShellShortcutRequest(id: request.id, destination: face)
+            deepLinks.dispatch(request)
+            deepLinkSettings = nil
+            if model.session == nil {
+                authShortcut = shortcut
+                checkedStartup = true
+            } else {
+                accountSheet = shortcut
+            }
+            return
+        }
+
+        if context == .signedOut {
+            if request.expectsResult {
+                deepLinks.fail(id: request.id, code: "requires_sign_in", message: "Sign in first. No navigation was queued.")
+            } else if authShortcut?.id != request.id {
+                authShortcut = ShellShortcutRequest(id: request.id, destination: .login)
+            }
+            return
+        }
+
+        guard context == .home, let session = model.session else { return }
+        accountSheet = nil
+        if case .settings = request.route {
+            deepLinks.dispatch(request)
+            deepLinkSettings = request
+        } else {
+            deepLinkSettings = nil
+            deepLinks.dispatch(request, sessionID: session.sessionPublicId)
+        }
+    }
+
     private func loadMissingHomeAvatar() async {
         guard let session = model.session, let home, home.sessionID == session.sessionPublicId,
               home.avatar == nil, let avatarID = home.account?.avatarID,
@@ -208,9 +273,10 @@ public struct MizonRootView: View {
             MusicHomePage(session: session, service: model.musicHomeService, displayName: home.account?.displayName,
                           nearby: nearby, avatar: home.avatar, profileTransition: profileTransition,
                           initialMood: home.account?.mood, shellRequest: $sectionShortcut,
-                          shellAccountOpen: accountSheet != nil || signingOut) {
+                          shellAccountOpen: accountSheet != nil || deepLinkSettings != nil || signingOut) {
                 guard !signingOut else { return }
                 signingOut = true
+                deepLinks.cancelActive(code: "cancelled", message: "The account was signed out.")
                 Task {
                     defer { signingOut = false }
                     await model.signOut()
@@ -452,7 +518,9 @@ private struct AuthenticationPage: View {
             if scenePhase == .active { await observeGamepad() }
         }
         .onChange(of: shellRequest, initial: true) {
-            if let shellRequest, registration != (shellRequest.destination == .register) { switchMode() }
+            guard let shellRequest else { return }
+            if registration != (shellRequest.destination == .register) { switchMode() }
+            MizonDeepLinkRouter.shared.finishShowingAccount(id: shellRequest.id)
         }
         .environment(\.layoutDirection, .leftToRight)
         .onAppear {

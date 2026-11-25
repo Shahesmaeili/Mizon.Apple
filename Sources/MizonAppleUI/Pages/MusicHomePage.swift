@@ -53,9 +53,26 @@ private struct MusicHomePhoneHeaderGlass: View {
 
 enum MusicDestination: Hashable, Identifiable {
     case track(UUID), artist(UUID), client(UUID), playlist(UUID), story(UUID)
+    case musicVideo(UUID), musicComment(UUID, comment: UUID)
     case section(ShellShortcutDestination)
 
     var id: Self { self }
+
+    init?(deepLink: MizonDeepLink) {
+        switch deepLink {
+        case .track(let id, .video): self = .musicVideo(id)
+        case .track(let id, _): self = .track(id)
+        case .musicComment(let id, let comment): self = .musicComment(id, comment: comment)
+        case .client(let id): self = .client(id)
+        case .person(let id): self = .artist(id)
+        case .playlist(let id): self = .playlist(id)
+        case .story(let id): self = .story(id)
+        case .movies: self = .section(.movies)
+        case .apps: self = .section(.apps)
+        case .vpn: self = .section(.vpn)
+        default: return nil
+        }
+    }
 }
 
 struct MusicHomePage: View {
@@ -71,6 +88,8 @@ struct MusicHomePage: View {
     }
 
     @State var model: MusicHomeViewModel
+    @State private var incomingDeepLink: MizonDeepLinkRouter.AuthorizedLink?
+    @State private var presentedDeepLink: MizonDeepLinkRouter.AuthorizedLink?
     @State private var destination: MusicDestination?
     @State private var showingLibrary = false
     @State private var showingAllMusicActivity = false
@@ -208,6 +227,10 @@ struct MusicHomePage: View {
                 layout(width: geometry.size.width)
                 #endif
             }
+                .task(id: visibleHomeLink?.id) {
+                    guard let request = visibleHomeLink, !Task.isCancelled else { return }
+                    MizonDeepLinkRouter.shared.complete(request, stage: .opened)
+                }
                 .coordinateSpace(.named(MusicHomePointer.coordinateSpace))
                 .onContinuousHover { phase in
                     switch phase {
@@ -247,7 +270,8 @@ struct MusicHomePage: View {
                 }
                 #endif
                 .navigationDestination(item: $destination) { route in
-                    MusicHomeDestinationView(route: route, model: model)
+                    let link = presentedDeepLink.flatMap { MusicDestination(deepLink: $0.route) == route ? $0 : nil }
+                    MusicHomeDestinationView(route: route, model: model, deepLink: link)
                 }
         }
         .preferredColorScheme(.dark)
@@ -263,13 +287,27 @@ struct MusicHomePage: View {
         .onChange(of: localization.isPersian) {
             MacMenuBarProfile.shared.setLanguage(isPersian: localization.isPersian)
         }
-        .onReceive(MacMenuBarProfile.shared.$profileRequest) { request in
-            openMenuBarProfile(request)
-        }
-        .onChange(of: shellAccountOpen) {
-            openMenuBarProfile(MacMenuBarProfile.shared.profileRequest)
-        }
         #endif
+        .onReceive(MizonDeepLinkRouter.shared.$authorized) { incomingDeepLink = $0 }
+        .task(id: shellAccountOpen ? nil : incomingDeepLink?.id) {
+            guard !Task.isCancelled, !shellAccountOpen, let request = incomingDeepLink else { return }
+            openDeepLink(request)
+        }
+        .onChange(of: destination) { _, route in
+            if let request = presentedDeepLink,
+               let linkedDestination = MusicDestination(deepLink: request.route), linkedDestination != route {
+                presentedDeepLink = nil
+            }
+        }
+        .onChange(of: showingSearch) { _, visible in
+            if !visible, case .search = presentedDeepLink?.route { presentedDeepLink = nil }
+        }
+        .onChange(of: showingLibrary) { _, visible in
+            if !visible, presentedDeepLink?.route == .playlists { presentedDeepLink = nil }
+        }
+        .onChange(of: showingAllMusicActivity) { _, visible in
+            if !visible, presentedDeepLink?.route == .activities { presentedDeepLink = nil }
+        }
         .onChange(of: shellRequest, initial: true) {
             guard let request = shellRequest else { return }
             openShellSection(request.destination)
@@ -291,16 +329,20 @@ struct MusicHomePage: View {
             if controllerActive { await observeGamepad() }
         }
         .sheet(isPresented: $showingLibrary) {
-            MusicLibraryBrowser(model: model) { id in
+            let link = presentedDeepLink?.route == .playlists ? presentedDeepLink : nil
+            MusicLibraryBrowser(model: model, deepLink: link) { id in
                 showingLibrary = false
                 destination = .playlist(id)
             }
+            .id(link?.id)
         }
         .sheet(isPresented: $showingAllMusicActivity) {
-            MusicHomeAllActivityPage(model: model) { item in
+            let link = presentedDeepLink?.route == .activities ? presentedDeepLink : nil
+            MusicHomeAllActivityPage(model: model, deepLink: link) { item in
                 showingAllMusicActivity = false
                 destination = activityDestination(item)
             }
+            .id(link?.id)
         }
         .sheet(isPresented: Binding(get: { article != nil }, set: { if !$0 { article = nil } })) {
             if let article { articleView(article) }
@@ -364,17 +406,46 @@ struct MusicHomePage: View {
         #endif
     }
 
-    #if os(macOS)
-    private func openMenuBarProfile(_ request: MacMenuBarProfile.ProfileRequest?) {
-        guard !shellAccountOpen, let request, request.sessionID == model.session.sessionPublicId else { return }
-        dismissShellOverlays()
-        destination = .client(model.session.clientPublicId)
+    private var visibleHomeLink: MizonDeepLinkRouter.AuthorizedLink? {
+        guard destination == nil, let request = presentedDeepLink,
+              request.route == .home || request.route == .music else { return nil }
+        return request
     }
-    #endif
+
+    private func openDeepLink(_ request: MizonDeepLinkRouter.AuthorizedLink) {
+        let router = MizonDeepLinkRouter.shared
+        guard request.sessionID == model.session.sessionPublicId, router.isActive(request) else { return }
+        switch request.route {
+        case .login, .register, .settings: return
+        default: break
+        }
+        guard !exportPresented, exportRequest == nil else {
+            router.fail(request, code: "busy", message: "Finish the current export before opening a new destination.")
+            return
+        }
+        dismissShellOverlays()
+        presentedDeepLink = request
+        switch request.route {
+        case .home, .music:
+            destination = nil
+        case .playlists:
+            destination = nil
+            showingLibrary = true
+        case .activities:
+            destination = nil
+            showingAllMusicActivity = true
+        case .search:
+            destination = nil
+            showingSearch = true
+        default:
+            destination = MusicDestination(deepLink: request.route)
+        }
+    }
 
     private func openShellSection(_ section: ShellShortcutDestination) {
         guard !section.isAccount else { return }
         dismissShellOverlays()
+        presentedDeepLink = nil
         destination = section == .music ? nil : .section(section)
     }
 
@@ -397,7 +468,8 @@ struct MusicHomePage: View {
                                onOverflowAvailabilityChange: setNavigationOverflowAvailability) { compactSearch in
             focusableControl(.search, cornerRadius: 8) {
                 MusicHomeSearch(model: model, viewportWidth: viewport.width, compact: compactSearch,
-                                focusRequest: $searchFocusRequest, showingSearch: $showingSearch) { result in
+                                focusRequest: $searchFocusRequest, showingSearch: $showingSearch,
+                                deepLink: presentedDeepLink) { result in
                     destination = result.kind == .music ? .track(result.publicID) : .client(result.publicID)
                 }
             }
@@ -1689,7 +1761,7 @@ struct MusicHomePage: View {
             previewPlayer?.isMuted = previewMuted
         case .copyFeatureLink:
             guard let id = currentFeature?.musicPublicId else { return }
-            let link = "mizon://music/\(id.uuidString.lowercased())"
+            let link = MizonDeepLink.track(id, action: .details).canonicalURI
             #if os(macOS)
             NSPasteboard.general.clearContents()
             copiedFeatureLink = NSPasteboard.general.setString(link, forType: .string)
@@ -1737,6 +1809,7 @@ struct MusicHomePage: View {
     func activityDestination(_ item: FollowingActivityItemResponse) -> MusicDestination? {
         if let id = item.storyPublicId { return .story(id) }
         if let id = item.musicPlaylistPublicId { return .playlist(id) }
+        if let id = item.musicPublicId, let comment = item.musicCommentPublicId { return .musicComment(id, comment: comment) }
         return item.musicPublicId.map(MusicDestination.track)
     }
 

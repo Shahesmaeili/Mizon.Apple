@@ -1,0 +1,31 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Mizon Link" : {
+      "localizations" : {
+        "fa" : { "stringUnit" : { "state" : "translated", "value" : "لینک میزون" } }
+      }
+    },
+    "Open Mizon Link" : {
+      "localizations" : {
+        "fa" : { "stringUnit" : { "state" : "translated", "value" : "باز کردن لینک میزون" } }
+      }
+    },
+    "Opens a Mizon link and returns its versioned JSON result." : {
+      "localizations" : {
+        "fa" : { "stringUnit" : { "state" : "translated", "value" : "لینک میزون را باز می‌کند و نتیجه را به صورت JSON برمی‌گرداند." } }
+      }
+    },
+    "Request ID" : {
+      "localizations" : {
+        "fa" : { "stringUnit" : { "state" : "translated", "value" : "شناسهٔ درخواست" } }
+      }
+    },
+    "Response Version" : {
+      "localizations" : {
+        "fa" : { "stringUnit" : { "state" : "translated", "value" : "نسخهٔ پاسخ" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

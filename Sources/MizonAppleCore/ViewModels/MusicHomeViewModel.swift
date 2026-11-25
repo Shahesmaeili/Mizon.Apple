@@ -27,7 +27,10 @@ public final class MusicHomeViewModel {
     public private(set) var updating: Set<UUID> = []
     public var actionFailed = false
     @ObservationIgnored private var sectionRequests: [Section: UUID] = [:]
-    @ObservationIgnored private var playbackRequest: Task<Void, Never>?
+    @ObservationIgnored private var playbackRequest: Task<Bool, Never>?
+    @ObservationIgnored private var playbackRecord: Task<Void, Never>?
+    @ObservationIgnored private var playbackRequestID: UUID?
+    @ObservationIgnored private var restorePreviousPlayback: (() -> Void)?
 
     public init(session: AuthSession, service: MusicHomeService, peerNetwork: NearbyDiscoveryService? = nil) {
         self.session = session
@@ -73,28 +76,6 @@ public final class MusicHomeViewModel {
             }
         } catch {
             if !Task.isCancelled, sectionRequests[section] == request { failures.insert(section) }
-        }
-    }
-
-    public func loadMoreActivity() async {
-        guard let current = activity, let cursor = current.nextCursor, !loading.contains(.activity) else { return }
-        let request = UUID()
-        sectionRequests[.activity] = request
-        loading.insert(.activity)
-        defer {
-            if sectionRequests[.activity] == request {
-                sectionRequests[.activity] = nil
-                loading.remove(.activity)
-            }
-        }
-        do {
-            var next = try await service.activity(after: cursor, session: session)
-            guard sectionRequests[.activity] == request, !Task.isCancelled else { return }
-            let existingIds = Set(current.activities.map(\.activityId))
-            next.activities = current.activities + next.activities.filter { !existingIds.contains($0.activityId) }
-            activity = next
-        } catch {
-            if !Task.isCancelled, sectionRequests[.activity] == request { actionFailed = true }
         }
     }
 
@@ -145,31 +126,109 @@ public final class MusicHomeViewModel {
             togglePlayback()
             return
         }
+        beginPlayback(id, title: title, requireConfirmation: false)
+    }
+
+    public func playFromDeepLink(_ id: UUID, title: String, authorized: @escaping @MainActor () -> Bool) async throws {
+        try Task.checkCancellation()
+        guard authorized() else { throw CancellationError() }
+        let request = beginPlayback(id, title: title, requireConfirmation: true, authorized: authorized)
+        let started = await withTaskCancellationHandler {
+            await request.value
+        } onCancel: {
+            request.cancel()
+        }
+        try Task.checkCancellation()
+        guard authorized() else { throw CancellationError() }
+        guard started else { throw LoginFailure.invalidResponse }
+    }
+
+    @discardableResult
+    private func beginPlayback(_ id: UUID, title: String, requireConfirmation: Bool,
+                               authorized: @escaping @MainActor () -> Bool = { true }) -> Task<Bool, Never> {
         playbackRequest?.cancel()
-        player.pause()
-        isPlaying = false
+        restorePreviousPlayback?()
+        restorePreviousPlayback = nil
+        let requestID = UUID()
+        playbackRequestID = requestID
+        if !requireConfirmation {
+            player.pause()
+            isPlaying = false
+        }
         requestingPlayback = true
-        playbackRequest = Task {
-            defer { if !Task.isCancelled { requestingPlayback = false } }
+        let request = Task {
+            var started = false
+            defer {
+                if playbackRequestID == requestID {
+                    if !started { restorePreviousPlayback?() }
+                    restorePreviousPlayback = nil
+                    playbackRequest = nil
+                    playbackRequestID = nil
+                    requestingPlayback = false
+                }
+            }
             do {
-                let file = try await service.trackFile(id, session: session)
-                let url = try await artwork.playableTrack(file, session: session)
+                let currentItem = player.currentItem
+                let wasPlaying = isPlaying
+                let reused = requireConfirmation && id == playingTrack && currentItem?.status != .failed && currentItem != nil
+                let item: AVPlayerItem
+                if reused, let currentItem {
+                    item = currentItem
+                } else {
+                    let file = try await service.trackFile(id, session: session)
+                    let url = try await artwork.playableTrack(file, session: session)
+                    item = AVPlayerItem(url: url)
+                }
                 try Task.checkCancellation()
+                guard authorized(), playbackRequestID == requestID else { return false }
                 #if os(iOS)
                 let audioSession = AVAudioSession.sharedInstance()
                 try audioSession.setCategory(.playback)
                 try audioSession.setActive(true)
                 #endif
-                player.replaceCurrentItem(with: AVPlayerItem(url: url))
+                if requireConfirmation {
+                    restorePreviousPlayback = {
+                        if self.player.currentItem !== currentItem { self.player.replaceCurrentItem(with: currentItem) }
+                        if wasPlaying { self.player.play() } else { self.player.pause() }
+                    }
+                }
+                if !reused { player.replaceCurrentItem(with: item) }
+                player.play()
+                if requireConfirmation {
+                    try await confirmPlayback(item, authorized: authorized)
+                    try Task.checkCancellation()
+                    guard authorized(), playbackRequestID == requestID else { return false }
+                }
                 playingTrack = id
                 playbackTitle = title
                 isPlaying = true
-                player.play()
-                try? await service.recordPlayback(id, playbackID: UUID(), session: session)
+                started = true
+                if !reused {
+                    playbackRecord?.cancel()
+                    playbackRecord = Task { [service, session] in
+                        try? await service.recordPlayback(id, playbackID: UUID(), session: session)
+                    }
+                }
+                return true
             } catch {
-                if !Task.isCancelled { actionFailed = true }
+                if !requireConfirmation && !Task.isCancelled { actionFailed = true }
+                return false
             }
         }
+        playbackRequest = request
+        return request
+    }
+
+    private func confirmPlayback(_ item: AVPlayerItem, authorized: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        repeat {
+            try Task.checkCancellation()
+            guard authorized(), player.currentItem === item else { throw CancellationError() }
+            if player.timeControlStatus == .playing { return }
+            if item.status == .failed { throw LoginFailure.invalidResponse }
+            try await Task.sleep(for: .milliseconds(75))
+        } while ContinuousClock.now < deadline
+        throw LoginFailure.invalidResponse
     }
 
     public func togglePlayback() {
@@ -181,6 +240,10 @@ public final class MusicHomeViewModel {
     public func stop() {
         playbackRequest?.cancel()
         playbackRequest = nil
+        playbackRecord?.cancel()
+        playbackRecord = nil
+        playbackRequestID = nil
+        restorePreviousPlayback = nil
         player.replaceCurrentItem(with: nil)
         playingTrack = nil
         playbackTitle = ""

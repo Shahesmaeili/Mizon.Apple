@@ -363,6 +363,7 @@ struct MusicHomeSearch: View {
     let compact: Bool
     @Binding var focusRequest: Int
     @Binding var showingSearch: Bool
+    let deepLink: MizonDeepLinkRouter.AuthorizedLink?
     let onSelect: (GlobalSearchResult) -> Void
     @FocusState private var focused: Bool
     @State private var query = ""
@@ -370,11 +371,13 @@ struct MusicHomeSearch: View {
     @State private var selected: String?
     @State private var loading = false
     @State private var failed = false
+    @State private var linkedQuery = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private var localization = AuthLocalization()
 
     private var normalized: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var minimumQueryLength: Int { linkedQuery ? 1 : 2 }
 
     var body: some View {
         Button { showingSearch = true } label: {
@@ -404,7 +407,7 @@ struct MusicHomeSearch: View {
         .popover(isPresented: $showingSearch, arrowEdge: .top) {
             VStack(spacing: 8) {
                 searchField
-                if normalized.count >= 2 { searchSuggestions }
+                if normalized.count >= minimumQueryLength { searchSuggestions }
             }
             .padding(10)
             .frame(width: min(420, max(240, viewportWidth - 42)))
@@ -417,9 +420,19 @@ struct MusicHomeSearch: View {
                 await Task.yield()
                 if !Task.isCancelled { focused = true }
             }
+            .task(id: deepLink?.id) {
+                guard let deepLink, case .search(let term) = deepLink.route,
+                      MizonDeepLinkRouter.shared.isActive(deepLink), !Task.isCancelled else { return }
+                linkedQuery = true
+                query = term
+                MizonDeepLinkRouter.shared.complete(deepLink, stage: .opened)
+            }
+            .onDisappear { linkedQuery = false }
         }
         .onChange(of: focusRequest) { _, _ in showingSearch = true }
-        .task(id: normalized) { await find(normalized) }
+        .task(id: showingSearch ? normalized : "") {
+            await find(showingSearch ? normalized : "")
+        }
     }
 
     private var searchField: some View {
@@ -541,18 +554,19 @@ struct MusicHomeSearch: View {
         results = []
         selected = nil
         failed = false
-        loading = term.count >= 2
+        loading = term.count >= minimumQueryLength
         guard loading else { return }
         defer { if !Task.isCancelled && normalized == term { loading = false } }
         do {
             try await Task.sleep(for: .milliseconds(250))
             var seen: Set<String> = []
             try await model.service.searchService.search(term, session: model.session) { item in
-                guard !Task.isCancelled, normalized == term, results.count < 24, seen.insert(item.id).inserted else { return }
+                guard !Task.isCancelled, showingSearch, normalized == term,
+                      results.count < 24, seen.insert(item.id).inserted else { return }
                 results.append(item)
             }
         } catch {
-            if !Task.isCancelled && normalized == term { failed = true }
+            if !Task.isCancelled, showingSearch, normalized == term { failed = true }
         }
     }
 }
