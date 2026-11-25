@@ -1,6 +1,9 @@
 #if os(macOS) || os(iOS)
 import CoreText
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct MusicStoryOrbit: View {
     private struct Card {
@@ -50,12 +53,12 @@ struct MusicStoryOrbit: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.displayScale) private var displayScale
     @Environment(\.scenePhase) private var scenePhase
-    #if os(macOS)
     @Environment(MusicHomePointer.self) private var homePointer
+    @State private var pointerMotion = MusicStoryOrbitPointerMotion()
+    #if os(macOS)
     @Environment(\.appearsActive) private var windowActive
     @Environment(\.colorScheme) private var colorScheme
     @State private var labelCache: LabelCache?
-    @State private var pointerMotion = MusicStoryOrbitPointerMotion()
     #else
     @State private var deviceMotion = MusicStoryOrbitDeviceMotion()
     #endif
@@ -82,6 +85,7 @@ struct MusicStoryOrbit: View {
             ? LabelRequest(pixelWidth: pixelWidth, colorScheme: colorScheme)
             : nil
         #else
+        let usesTilt = UIDevice.current.userInterfaceIdiom == .phone
         let animating = permitsMotion
         let scrollStartedAt: Date? = nil
         let timeSpentScrolling: TimeInterval = 0
@@ -94,7 +98,7 @@ struct MusicStoryOrbit: View {
             #if os(macOS)
             let influence = animating ? pointerMotion.position(at: clock) : .zero
             #else
-            let influence = animating ? deviceMotion.position() : .zero
+            let influence = animating ? (usesTilt ? deviceMotion.position() : pointerMotion.position(at: clock)) : .zero
             #endif
             Canvas(rendersAsynchronously: drawsAsynchronously) { context, size in
                 guard size.width > 0 else { return }
@@ -108,14 +112,24 @@ struct MusicStoryOrbit: View {
         }
         .aspectRatio(1440 / 560.0, contentMode: .fit)
         .frame(maxWidth: 1130)
-        #if os(macOS)
-        .background { pointerSurface(enabled: animating, scrolling: scrollStartedAt != nil) }
-        .onChange(of: animating) { _, enabled in
-            if !enabled { pointerMotion.reset() }
+        .background {
+            #if os(macOS)
+            pointerSurface(enabled: animating && scrollStartedAt == nil, timeSpentScrolling: timeSpentScrolling)
+            #else
+            if usesTilt {
+                MusicStoryOrbitWindowProbe(motion: deviceMotion).allowsHitTesting(false)
+            } else {
+                pointerSurface(enabled: animating, timeSpentScrolling: 0)
+            }
+            #endif
         }
-        #else
-        .background { MusicStoryOrbitWindowProbe(motion: deviceMotion).allowsHitTesting(false) }
-        .onChange(of: animating, initial: true) { _, enabled in deviceMotion.setActive(enabled) }
+        .onChange(of: animating, initial: true) { _, enabled in
+            if !enabled { pointerMotion.reset() }
+            #if os(iOS)
+            if usesTilt { deviceMotion.setActive(enabled) }
+            #endif
+        }
+        #if os(iOS)
         .onDisappear { deviceMotion.setActive(false) }
         #endif
         .onGeometryChange(for: Int.self) { geometry in
@@ -142,25 +156,23 @@ struct MusicStoryOrbit: View {
         .accessibilityHidden(true)
     }
 
-    #if os(macOS)
     private enum PointerSample: Equatable {
         case suspended, position(CGPoint?)
     }
 
-    private func pointerSurface(enabled: Bool, scrolling: Bool) -> some View {
+    private func pointerSurface(enabled: Bool, timeSpentScrolling: TimeInterval) -> some View {
         GeometryReader { geometry in
-            let sample: PointerSample = enabled && !scrolling
+            let sample: PointerSample = enabled
                 ? .position(MusicStoryOrbitInput.pointer(homePointer.location, in: geometry.frame(in: .named(MusicHomePointer.coordinateSpace))))
                 : .suspended
             Color.clear.onChange(of: sample, initial: true) { _, sample in
                 guard case .position(let target) = sample else { return }
-                let clock = Date.now.timeIntervalSinceReferenceDate - homePointer.timeSpentScrolling
+                let clock = Date.now.timeIntervalSinceReferenceDate - timeSpentScrolling
                 pointerMotion.update(target, at: clock)
             }
         }
         .allowsHitTesting(false)
     }
-    #endif
 
     private func loadArtwork(pixelWidth: Int) async {
         let requests = Self.cards.map { card in
