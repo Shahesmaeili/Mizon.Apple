@@ -166,14 +166,13 @@ struct MoodEffectAnchor: UIViewRepresentable {
         }
 
         private func updateOverlay() {
-            guard !synchronizing else { return }
             guard effect != nil, window != nil else {
                 pendingUpdate?.cancel()
                 pendingUpdate = nil
                 removeOverlay()
                 return
             }
-            guard pendingUpdate == nil else { return }
+            guard !synchronizing, pendingUpdate == nil else { return }
             // SwiftUI calls didMoveToWindow while updating its display list.
             // Wait for that update to finish before changing UIKit containment.
             pendingUpdate = Task { @MainActor [weak self] in
@@ -230,7 +229,10 @@ struct MoodEffectAnchor: UIViewRepresentable {
             let previous = hosting
             hosting = nil
             displayed = nil
-            if let previous {
+            guard let previous else { return }
+            // Dismantling can also happen within a SwiftUI display-list update.
+            // Retain the detached host only until its UIKit cleanup has finished.
+            Task { @MainActor in
                 previous.willMove(toParent: nil)
                 previous.viewIfLoaded?.removeFromSuperview()
                 previous.removeFromParent()
