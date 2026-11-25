@@ -82,16 +82,9 @@ struct MusicHomePage: View {
     @State private var artistRailPosition: UUID?
     @State private var featureIndex = 0
     @State private var featureDirection = 1
-    @State private var heroHovered = false
-    @State private var heroArtwork: FeatureArtwork?
-    @State private var outgoingHeroArtwork: FeatureArtwork?
-    @State private var heroArtworkStatus = FeatureMediaStatus.waiting
-    @State private var heroVideoStatus = FeatureMediaStatus.waiting
-    @State private var heroVideoEnded = false
+    @State private var featurePresentation = FeaturePresentation()
     @State private var heroMediaRetry = 0
     @State private var featurePaused = false
-    @State private var heroVisible = false
-    @State private var previewPlayer: AVPlayer?
     @State private var previewMuted = true
     @State private var previewVolume: Double = 0.7
     @State private var showingPreviewControls = false
@@ -109,8 +102,6 @@ struct MusicHomePage: View {
     @State private var pointer = MusicHomePointer()
     #if os(macOS)
     @State private var headerViewport = CGSize(width: 960, height: 700)
-    @State private var pendingHeroVisibility: Bool?
-    @State private var resumePreviewAfterScroll = false
     #else
     @State private var phoneHeaderHasScrolled = false
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -153,7 +144,7 @@ struct MusicHomePage: View {
 
     private var heroMediaFailed: Bool {
         guard let feature = currentFeature else { return false }
-        return (isVideo(feature) ? heroVideoStatus : heroArtworkStatus) == .failed
+        return (isVideo(feature) ? featurePresentation.videoStatus : featurePresentation.artworkStatus) == .failed
     }
 
     private var currentArtist: FeaturedPersonItem? {
@@ -304,9 +295,9 @@ struct MusicHomePage: View {
             }
         }
         .modifier(MusicFullWindowPresentation(isPresented: $fullWindowVideo) {
-            if let previewPlayer {
+            if let player = featurePresentation.player {
                 VStack(spacing: 12) {
-                    VideoPlayer(player: previewPlayer)
+                    VideoPlayer(player: player)
                     Button(text("Close")) { fullWindowVideo = false }
                         .buttonStyle(.glass)
                         .keyboardShortcut(.cancelAction)
@@ -442,7 +433,7 @@ struct MusicHomePage: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 28) {
                         // Keep each deep section out of the feed's composite layout metadata.
-                        AnyView(feature(width: feedWidth)).id(Action.home)
+                        MusicFeaturedSection { feature(width: feedWidth) }.id(Action.home)
                         AnyView(artistSpotlight(width: feedWidth))
                         MusicStoryOrbit()
                         AnyView(stories)
@@ -479,8 +470,16 @@ struct MusicHomePage: View {
                 }
                 .onDisappear {
                     pointer.setScrolling(false)
-                    pendingHeroVisibility = nil
-                    resumePreviewAfterScroll = false
+                    featurePresentation.pendingVisibility = nil
+                    featurePresentation.resumeAfterScroll = false
+                }
+                .background {
+                    MusicFeaturedSection {
+                        Color.clear.frame(width: 0, height: 0)
+                            .task(id: featureVideoIdentity) { await presentFeatureVideo() }
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 }
                 #else
                 .contentMargins(.top, scrollTopMargin, for: .scrollContent)
@@ -537,11 +536,11 @@ struct MusicHomePage: View {
                     .frame(height: height)
                     .clipShape(.rect(cornerRadius: MusicFeaturedArtworkShadow.cornerRadius, style: .circular))
                     .background {
-                        if let heroArtwork {
-                            MusicFeaturedArtworkShadow(color: heroArtwork.edgeColor?.color ?? .black)
+                        if let artwork = featurePresentation.artwork {
+                            MusicFeaturedArtworkShadow(color: artwork.edgeColor?.color ?? .black)
                         }
                     }
-                    .modifier(MusicHeroLighting(active: canPresentFeature && !fullWindowVideo, palette: heroArtwork?.palette))
+                    .modifier(MusicHeroLighting(active: canPresentFeature && !fullWindowVideo, palette: featurePresentation.artwork?.palette))
             } else if model.loading.contains(.features) {
                 MusicHomeSkeleton(height: 300, label: text("LoadingFeatures"))
             } else {
@@ -564,11 +563,13 @@ struct MusicHomePage: View {
         .padding(.top, 12)
         .padding(.bottom, 16)
         .environment(\.layoutDirection, .leftToRight)
-        .onHover { heroHovered = $0 }
+        .onHover { featurePresentation.hovered = $0 }
         .onScrollVisibilityChange { featureViewportChanged($0) }
-        .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: canPresentFeature, retry: heroMediaRetry)) {
+        #if os(iOS)
+        .task(id: featureVideoIdentity) {
             await presentFeatureVideo()
         }
+        #endif
         .task(id: PreviewIdentity(id: currentFeature?.publicId, visible: canPresentFeature, retry: heroMediaRetry)) {
             await presentFeatureArtwork()
         }
@@ -580,15 +581,15 @@ struct MusicHomePage: View {
             } catch {}
         }
         .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { event in
-            guard let item = event.object as? AVPlayerItem, item === previewPlayer?.currentItem else { return }
-            heroVideoEnded = true
+            guard let item = event.object as? AVPlayerItem, item === featurePresentation.player?.currentItem else { return }
+            featurePresentation.videoEnded = true
             advanceFinishedVideo()
         }
         .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.failedToPlayToEndTimeNotification)) { event in
-            guard let item = event.object as? AVPlayerItem, item === previewPlayer?.currentItem else { return }
-            previewPlayer?.pause()
-            previewPlayer = nil
-            heroVideoStatus = .failed
+            guard let item = event.object as? AVPlayerItem, item === featurePresentation.player?.currentItem else { return }
+            featurePresentation.player?.pause()
+            featurePresentation.player = nil
+            featurePresentation.videoStatus = .failed
         }
         .onChange(of: canRotateFeatures) { _, canRotate in
             if canRotate { advanceFinishedVideo() }
@@ -598,36 +599,47 @@ struct MusicHomePage: View {
     private func featureViewportChanged(_ visible: Bool) {
         #if os(macOS)
         if pointer.scrollStartedAt != nil {
-            // Match WinUI's settled viewport check. Pause playback immediately, but let the
-            // same AVPlayer and its surface survive a transient exit during scrolling.
-            pendingHeroVisibility = visible
-            if !visible, let previewPlayer, previewPlayer.timeControlStatus != .paused {
-                resumePreviewAfterScroll = true
-                previewPlayer.pause()
-            }
+            featurePresentation.pendingVisibility = visible
+            if !visible { pauseFeatureOutsideViewport() }
             return
         }
         #endif
-        heroVisible = visible
+        setSettledFeatureVisibility(visible)
+    }
+
+    private func setSettledFeatureVisibility(_ visible: Bool) {
+        featurePresentation.visible = visible
+        #if os(macOS)
+        guard visible else {
+            pauseFeatureOutsideViewport()
+            return
+        }
+        if (featurePresentation.resumeAfterScroll || !reduceMotion), canPresentFeature,
+           !featurePaused, !featurePresentation.videoEnded, featurePresentation.videoStatus == .ready {
+            featurePresentation.player?.play()
+        }
+        featurePresentation.resumeAfterScroll = false
+        #endif
     }
 
     #if os(macOS)
     private func settleFeatureViewport() {
-        if let pendingHeroVisibility {
-            heroVisible = pendingHeroVisibility
-            self.pendingHeroVisibility = nil
-        }
-        if resumePreviewAfterScroll, canPresentFeature, !featurePaused, !heroVideoEnded {
-            previewPlayer?.play()
-        }
-        resumePreviewAfterScroll = false
+        guard let visible = featurePresentation.pendingVisibility else { return }
+        featurePresentation.pendingVisibility = nil
+        setSettledFeatureVisibility(visible)
+    }
+
+    private func pauseFeatureOutsideViewport() {
+        guard let player = featurePresentation.player, player.timeControlStatus != .paused else { return }
+        featurePresentation.resumeAfterScroll = true
+        player.pause()
     }
     #endif
 
     private func presentFeatureArtwork() async {
         guard canPresentFeature, let item = currentFeature else { return }
-        if heroArtwork?.id == item.publicId, heroArtworkStatus == .ready { return }
-        heroArtworkStatus = .loading
+        if featurePresentation.artwork?.id == item.publicId, featurePresentation.artworkStatus == .ready { return }
+        featurePresentation.artworkStatus = .loading
         for id in featureArtworkIDs(item) {
             do {
                 let artwork = try await model.artwork.imageWithSource(id, session: model.session)
@@ -638,17 +650,18 @@ struct MusicHomePage: View {
                 let colors = await palette
                 try Task.checkCancellation()
                 let animate = !reduceMotion && !fullWindowVideo
-                outgoingHeroArtwork = animate ? heroArtwork : nil
-                heroArtwork = FeatureArtwork(id: item.publicId, image: image, palette: colors, edgeColor: edgeColor,
-                                             stretch: !isVideo(item), direction: featureDirection,
-                                             revealStart: animate ? Date() : nil)
-                heroArtworkStatus = .ready
+                featurePresentation.outgoingArtwork = animate ? featurePresentation.artwork : nil
+                featurePresentation.artwork = FeatureArtwork(
+                    id: item.publicId, image: image, palette: colors, edgeColor: edgeColor,
+                    stretch: !isVideo(item), direction: featureDirection, revealStart: animate ? Date() : nil
+                )
+                featurePresentation.artworkStatus = .ready
                 return
             } catch {
                 if Task.isCancelled { return }
             }
         }
-        heroArtworkStatus = .failed
+        featurePresentation.artworkStatus = .failed
     }
 
     @concurrent
@@ -663,15 +676,17 @@ struct MusicHomePage: View {
     }
 
     private func presentFeatureVideo() async {
-        previewPlayer?.pause()
-        previewPlayer = nil
+        let item = canPrepareFeatureVideo ? currentFeature : nil
+        featurePresentation.player?.pause()
+        featurePresentation.player = nil
         #if os(macOS)
-        resumePreviewAfterScroll = false
+        featurePresentation.requestedVideoID = item.flatMap { isVideo($0) ? $0.publicId : nil }
+        featurePresentation.resumeAfterScroll = false
         #endif
-        heroVideoStatus = .waiting
-        heroVideoEnded = false
-        guard canPresentFeature, let item = currentFeature, isVideo(item) else { return }
-        heroVideoStatus = .loading
+        featurePresentation.videoStatus = .waiting
+        featurePresentation.videoEnded = false
+        guard let item, isVideo(item) else { return }
+        featurePresentation.videoStatus = .loading
         do {
             let url = try await model.artwork.playableURL(item.mediaPublicId, session: model.session)
             try Task.checkCancellation()
@@ -679,19 +694,15 @@ struct MusicHomePage: View {
             let player = AVPlayer(playerItem: media)
             player.isMuted = previewMuted
             player.volume = Float(previewVolume)
-            previewPlayer = player
+            featurePresentation.player = player
             for await status in media.publisher(for: \.status, options: [.initial, .new]).values {
                 try Task.checkCancellation()
                 if status == .failed { throw media.error ?? CocoaError(.fileReadCorruptFile) }
-                if status == .readyToPlay, heroVideoStatus == .loading {
-                    heroVideoStatus = .ready
+                if status == .readyToPlay, featurePresentation.videoStatus == .loading {
+                    featurePresentation.videoStatus = .ready
                     if !featurePaused && !reduceMotion {
                         #if os(macOS)
-                        if pendingHeroVisibility == false {
-                            resumePreviewAfterScroll = true
-                        } else {
-                            player.play()
-                        }
+                        if canPresentFeature, featurePresentation.pendingVisibility != false { player.play() }
                         #else
                         player.play()
                         #endif
@@ -700,32 +711,51 @@ struct MusicHomePage: View {
             }
         } catch {
             if !Task.isCancelled {
-                previewPlayer?.pause()
-                previewPlayer = nil
-                heroVideoStatus = .failed
+                featurePresentation.player?.pause()
+                featurePresentation.player = nil
+                featurePresentation.videoStatus = .failed
             }
         }
     }
 
     private func advanceFinishedVideo() {
-        guard heroVideoEnded, canRotateFeatures, model.features.count > 1 else { return }
-        heroVideoEnded = false
+        guard featurePresentation.videoEnded, canRotateFeatures, model.features.count > 1 else { return }
+        featurePresentation.videoEnded = false
         selectFeature(featureIndex + 1)
     }
 
     private var canPresentFeature: Bool {
-        heroVisible && scenePhase == .active && !showingLibrary && !showingAllMusicActivity
+        featurePresentation.visible && canKeepFeaturePresentation
+    }
+
+    private var canKeepFeaturePresentation: Bool {
+        scenePhase == .active && !showingLibrary && !showingAllMusicActivity
             && destination == nil && !model.isPlaying && !showingStoryPreview && article == nil
+    }
+
+    private var canPrepareFeatureVideo: Bool {
+        #if os(macOS)
+        // Cache the selected preview during vertical scrolling. The task is still cancelled
+        // when the feature changes or another page takes over playback.
+        guard canKeepFeaturePresentation, let item = currentFeature else { return false }
+        return featurePresentation.visible || featurePresentation.requestedVideoID == item.publicId
+        #else
+        canPresentFeature
+        #endif
+    }
+
+    private var featureVideoIdentity: PreviewIdentity {
+        PreviewIdentity(id: currentFeature?.publicId, visible: canPrepareFeatureVideo, retry: heroMediaRetry)
     }
 
     private var canRotateFeatures: Bool {
         canPresentFeature && !featurePaused && !reduceMotion && !showingPreviewControls && !fullWindowVideo
-            && !heroHovered && !featureHasFocus && exportRequest == nil
+            && !featurePresentation.hovered && !featureHasFocus && exportRequest == nil
     }
 
     private var canRotateImage: Bool {
         guard canRotateFeatures, let item = currentFeature, !isVideo(item) else { return false }
-        return heroArtwork?.id == item.publicId || heroArtworkStatus == .failed
+        return featurePresentation.artwork?.id == item.publicId || featurePresentation.artworkStatus == .failed
     }
 
     private var featureHasFocus: Bool {
@@ -740,11 +770,11 @@ struct MusicHomePage: View {
         return ZStack(alignment: .bottom) {
             musicColor("090C0F")
             Group {
-                if let heroArtwork {
-                    artworkReveal(heroArtwork)
+                if let artwork = featurePresentation.artwork {
+                    artworkReveal(artwork)
                 }
-                if let previewPlayer, heroVideoStatus == .ready {
-                    MusicInlineVideo(player: previewPlayer)
+                if let player = featurePresentation.player, featurePresentation.videoStatus == .ready {
+                    MusicInlineVideo(player: player)
                 }
             }
             .allowsHitTesting(false)
@@ -805,7 +835,7 @@ struct MusicHomePage: View {
         }
         .foregroundStyle(.white)
         .overlay(alignment: .top) {
-            if isVideo(item), heroVideoStatus == .loading {
+            if isVideo(item), featurePresentation.videoStatus == .loading {
                 ProgressView().progressViewStyle(.linear).tint(musicColor("A1E8EE"))
                     .frame(height: 2).clipped()
                     .accessibilityLabel(text("DownloadingVideo"))
@@ -815,7 +845,7 @@ struct MusicHomePage: View {
     }
 
     private func heroMediaLoading(_ item: MusicFeatureItemResponse) -> Bool {
-        (isVideo(item) ? heroVideoStatus : heroArtworkStatus) == .loading
+        (isVideo(item) ? featurePresentation.videoStatus : featurePresentation.artworkStatus) == .loading
     }
 
     @ViewBuilder
@@ -825,7 +855,7 @@ struct MusicHomePage: View {
             TimelineView(.animation(minimumInterval: 1.0 / 60)) { timeline in
                 let phase = min(1, max(0, timeline.date.timeIntervalSince(start) / FeatureArtwork.revealDuration))
                 ZStack {
-                    if let outgoingHeroArtwork { artworkImage(outgoingHeroArtwork) }
+                    if let outgoing = featurePresentation.outgoingArtwork { artworkImage(outgoing) }
                     artworkImage(artwork)
                         .scaleEffect(1 + 0.055 * (1 - Self.artworkRevealCurve.value(at: phase)),
                                      anchor: UnitPoint(x: artwork.direction < 0 ? 0.78 : 0.22, y: 0.5))
@@ -836,9 +866,9 @@ struct MusicHomePage: View {
             .task(id: start) {
                 do {
                     try await Task.sleep(for: .seconds(max(0, FeatureArtwork.revealDuration + start.timeIntervalSinceNow)))
-                    guard heroArtwork?.revealStart == start else { return }
-                    heroArtwork?.revealStart = nil
-                    outgoingHeroArtwork = nil
+                    guard featurePresentation.artwork?.revealStart == start else { return }
+                    featurePresentation.artwork?.revealStart = nil
+                    featurePresentation.outgoingArtwork = nil
                 } catch {}
             }
         } else {
@@ -1031,20 +1061,20 @@ struct MusicHomePage: View {
                     FluentIcon(symbol: featurePaused ? .play : .pause, size: 16).frame(width: 32, height: 32)
                 }
                 .accessibilityLabel(text(featurePaused ? "ResumePresentation" : "PausePresentation"))
-                if previewPlayer != nil {
+                if featurePresentation.player != nil {
                     Button { activate(.mutePreview) } label: {
                         FluentIcon(symbol: previewMuted ? .speakerMute : .speaker2, size: 16).frame(width: 32, height: 32)
                     }
                     .accessibilityLabel(text(previewMuted ? "UnmuteVideo" : "MuteVideo"))
                     Slider(value: $previewVolume) { Text(text("VideoVolume")) }
-                        .onChange(of: previewVolume) { _, value in previewPlayer?.volume = Float(value) }
+                        .onChange(of: previewVolume) { _, value in featurePresentation.player?.volume = Float(value) }
                 }
             }
-            if let previewPlayer {
-                MusicFeatureScrubber(player: previewPlayer, title: text("PresentationPosition"))
+            if let player = featurePresentation.player {
+                MusicFeatureScrubber(player: player, title: text("PresentationPosition"))
             }
             heroMenuButton("PlayInMizon") { activate(.playFeature) }
-            if previewPlayer != nil {
+            if featurePresentation.player != nil {
                 heroMenuButton("VideoFullWindow") { fullWindowVideo = true }
             }
             heroMenuButton("SaveMedia") { exportRequest = item }.disabled(exportRequest != nil)
@@ -1071,9 +1101,26 @@ struct MusicHomePage: View {
         var retry = 0
     }
 
-    private enum FeatureMediaStatus { case waiting, loading, ready, failed }
+    fileprivate enum FeatureMediaStatus { case waiting, loading, ready, failed }
 
-    private struct FeatureArtwork {
+    @MainActor @Observable
+    fileprivate final class FeaturePresentation {
+        var hovered = false
+        var visible = false
+        var artwork: FeatureArtwork?
+        var outgoingArtwork: FeatureArtwork?
+        var artworkStatus = FeatureMediaStatus.waiting
+        var videoStatus = FeatureMediaStatus.waiting
+        var player: AVPlayer?
+        @ObservationIgnored var videoEnded = false
+        #if os(macOS)
+        @ObservationIgnored var requestedVideoID: UUID?
+        @ObservationIgnored var pendingVisibility: Bool?
+        @ObservationIgnored var resumeAfterScroll = false
+        #endif
+    }
+
+    fileprivate struct FeatureArtwork {
         static let revealDuration = 0.430
         let id: UUID
         let image: CGImage
@@ -1575,7 +1622,7 @@ struct MusicHomePage: View {
         case .nextFeature: selectFeature(featureIndex + 1)
         case .rotateFeatures:
             featurePaused.toggle()
-            if featurePaused { previewPlayer?.pause() } else { previewPlayer?.play() }
+            if featurePaused { featurePresentation.player?.pause() } else { featurePresentation.player?.play() }
         case .playFeature:
             if let item = currentFeature {
                 destination = .track(item.musicPublicId)
@@ -1587,7 +1634,7 @@ struct MusicHomePage: View {
             if let item = currentFeature { Task { await model.toggleLike(item) } }
         case .mutePreview:
             previewMuted.toggle()
-            previewPlayer?.isMuted = previewMuted
+            featurePresentation.player?.isMuted = previewMuted
         case .copyFeatureLink:
             guard let id = currentFeature?.musicPublicId else { return }
             let link = "mizon://music/\(id.uuidString.lowercased())"
@@ -1749,6 +1796,12 @@ struct MusicHomePage: View {
     }
     func text(_ key: String) -> String { localization.string(key, table: "MusicHome") }
     func widget(_ key: String) -> String { localization.string(key, table: "MusicWidgets") }
+}
+
+private struct MusicFeaturedSection<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View { AnyView(content()) }
 }
 
 struct MusicArtwork: View {
