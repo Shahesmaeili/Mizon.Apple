@@ -13,7 +13,8 @@ the authenticated Music Home services and the shared AVPlayer.
 
 - The player uses the reference artwork size, layout thresholds, waveform
   dimensions, bar colors and bilingual typography. Compact layout wraps actions
-  and keeps volume usable at iPhone sizes. Cover preview supports connected
+  and keeps volume usable at iPhone sizes. Short landscape viewports keep the
+  cover and playback controls next to one another. Cover preview supports connected
   geometry, zoom, pan and Reduce Motion.
 - Credits, reactions, live listeners, stories, album and contributor tracks,
   timed lyrics, and discussion use typed SDK operations. Discussion supports

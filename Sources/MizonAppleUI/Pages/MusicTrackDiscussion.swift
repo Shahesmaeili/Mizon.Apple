@@ -343,7 +343,7 @@ extension MusicTrackDetailsView {
 
     private var aiInsight: some View {
         HStack(spacing: 10) {
-            FluentIcon(symbol: .agentsAdd, size: 38, usesColor: true).opacity(0.6)
+            FluentIcon(symbol: .agentsAdd, size: 38).foregroundStyle(MizonPalette.accent.opacity(0.6))
             VStack(alignment: .leading, spacing: 4) {
                 insightValue("InsightViewLabel", "SampleListenerQuote")
                 insightValue("InsightSatisfactionLabel", "SampleSatisfaction")

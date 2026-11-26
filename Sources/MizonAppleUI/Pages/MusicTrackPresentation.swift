@@ -243,12 +243,12 @@ struct MusicTrackLoadingView: View {
     var body: some View {
         ScrollView {
             GeometryReader { geometry in
-                let wide = geometry.size.width > 1_000
-                let layout = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 32)) :
+                let metrics = MusicTrackLayoutMetrics(width: geometry.size.width, height: geometry.size.height)
+                let layout = metrics.sideBySide ? AnyLayout(HStackLayout(alignment: .top, spacing: metrics.compactLandscape ? 16 : 32)) :
                     AnyLayout(VStackLayout(alignment: .center, spacing: 24))
                 layout {
                     RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.06))
-                        .frame(width: min(280, max(100, geometry.size.width - 120)), height: 280)
+                        .frame(width: metrics.artwork, height: metrics.artwork)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 12) {
                         if loading {
@@ -263,7 +263,7 @@ struct MusicTrackLoadingView: View {
                                 .accessibilityIdentifier("music.track.retry")
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.top, wide ? 16 : 0)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.top, metrics.wide ? 16 : 0)
                 }
                 .padding(32)
                 .frame(maxWidth: .infinity)

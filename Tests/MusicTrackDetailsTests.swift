@@ -12,9 +12,10 @@ struct MusicTrackDetailsTests {
         let portrait = MusicTrackLayoutMetrics(width: 402)
         let compact = MusicTrackLayoutMetrics(width: 320)
         for landscape in [680.0, 796.0, 840.0] {
-            let metrics = MusicTrackLayoutMetrics(width: landscape)
+            let metrics = MusicTrackLayoutMetrics(width: landscape, height: 402)
             #expect(!metrics.wide)
-            #expect(metrics.artwork == 280)
+            #expect(metrics.sideBySide)
+            #expect(metrics.artwork <= 205)
             #expect(metrics.usesVerticalVolume)
         }
         #expect(portrait.artwork == 280 && !portrait.usesVerticalVolume)

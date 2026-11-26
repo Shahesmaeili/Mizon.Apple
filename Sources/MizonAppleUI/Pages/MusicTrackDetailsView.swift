@@ -48,7 +48,7 @@ struct MusicTrackDetailsView: View {
     @GestureState var drag: CGSize = .zero
     @State var lyricsOpen = false
     @State var floating = false
-    @State var width: CGFloat = 390
+    @State var viewport = CGSize(width: 390, height: 844)
     @State var scroll = GamepadScroll()
     @State var scrollToComment: UUID?
     @State var highlightedComment: UUID?
@@ -92,8 +92,7 @@ struct MusicTrackDetailsView: View {
     var rtl: Bool { localization.isPersian }
     var title: String { localized(track.title, track.persianTitle) }
     var isTrackPlaying: Bool { music.playingTrack == details.id && music.isPlaying }
-    var metrics: MusicTrackLayoutMetrics { MusicTrackLayoutMetrics(width: width) }
-    var wide: Bool { metrics.wide }
+    var metrics: MusicTrackLayoutMetrics { MusicTrackLayoutMetrics(width: viewport.width, height: viewport.height) }
     var inset: CGFloat { metrics.inset }
     var outside: CGFloat { metrics.outside }
     var artworkSize: CGFloat { metrics.artwork }
@@ -127,7 +126,7 @@ struct MusicTrackDetailsView: View {
                     if let id { withAnimation(animation) { proxy.scrollTo(Target.comment(id), anchor: .center) } }
                 }
             }
-            .onChange(of: geometry.size.width, initial: true) { _, width in self.width = min(1_920, width) }
+            .onChange(of: geometry.size, initial: true) { _, size in viewport = size }
             .overlay { if coverOpen { coverPreview } }
         }
         .background(MizonPalette.surface.opacity(0.10))
@@ -188,16 +187,16 @@ struct MusicTrackDetailsView: View {
     private var presentation: some View {
         VStack(spacing: 0) {
             Group {
-                if wide {
-                    HStack(alignment: .top, spacing: 32) {
+                if metrics.sideBySide {
+                    HStack(alignment: .top, spacing: metrics.compactLandscape ? 16 : 32) {
                         artwork
-                        information.padding(.top, 16)
+                        information.padding(.top, metrics.compactLandscape ? 0 : 16)
                     }
                 } else {
                     VStack(spacing: 24) { artwork; information }
                 }
             }
-            .padding(.top, 32)
+            .padding(.top, metrics.compactLandscape ? 16 : 32)
             .padding(.horizontal, inset)
             lyricsArea.padding(.horizontal, inset).padding(.top, 16).padding(.bottom, 12)
             if downloadCompleted {
@@ -228,11 +227,14 @@ struct MusicTrackDetailsView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if metrics.usesVerticalVolume {
+                let length: CGFloat = metrics.compactLandscape ? 210 : 280
                 Slider(value: volume, in: 0...1) { Text(text("Volume")) }
+                    .labelsHidden()
+                    .accessibilityLabel(text("Volume"))
                     .tint(MizonPalette.accent)
-                    .frame(width: 280)
+                    .frame(width: length)
                     .rotationEffect(.degrees(-90))
-                    .frame(width: 32, height: 280)
+                    .frame(width: 32, height: length)
                     .modifier(TrackFocus(isFocused: focus == .volume))
                     .id(Target.volume)
             }
@@ -410,7 +412,10 @@ struct MusicTrackDetailsView: View {
             if !metrics.usesVerticalVolume {
                 HStack(spacing: 8) {
                     Image(systemName: "speaker.wave.2")
-                    Slider(value: volume, in: 0...1) { Text(text("Volume")) }.tint(MizonPalette.accent)
+                    Slider(value: volume, in: 0...1) { Text(text("Volume")) }
+                        .labelsHidden()
+                        .accessibilityLabel(text("Volume"))
+                        .tint(MizonPalette.accent)
                         .modifier(TrackFocus(isFocused: focus == .volume)).id(Target.volume)
                 }
                 .foregroundStyle(MizonPalette.secondaryText)
@@ -493,14 +498,22 @@ struct MusicTrackDetailsView: View {
 
 struct MusicTrackLayoutMetrics {
     let width: CGFloat
+    let height: CGFloat
     var wide: Bool { width > 1_000 }
-    var inset: CGFloat { width < 680 ? 16 : 32 }
-    var outside: CGFloat { width < 540 ? 14 : 32 }
-    var artwork: CGFloat { min(280, max(1, width - outside * 2 - inset * 2)) }
+    var compactLandscape: Bool { !wide && width >= 620 && height <= 480 }
+    var sideBySide: Bool { wide || compactLandscape }
+    var inset: CGFloat { width < 680 || compactLandscape ? 16 : 32 }
+    var outside: CGFloat { width < 540 || compactLandscape ? 14 : 32 }
+    var artwork: CGFloat {
+        let available = max(1, width - outside * 2 - inset * 2)
+        let maximum = compactLandscape ? min(205, max(120, height * 0.48)) : 280
+        return min(maximum, available)
+    }
     var usesVerticalVolume: Bool { width >= 680 }
 
-    init(width: CGFloat) {
+    init(width: CGFloat, height: CGFloat = 800) {
         self.width = width.isFinite ? max(1, min(1_920, width)) : 390
+        self.height = height.isFinite && height > 0 ? height : 800
     }
 }
 
