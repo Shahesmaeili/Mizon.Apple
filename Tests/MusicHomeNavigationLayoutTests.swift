@@ -57,18 +57,25 @@ struct MusicHomeNavigationLayoutTests {
     }
 
     #if os(macOS)
-    @MainActor @Test func musicHomeUsesAndRestoresTheWindowToolbarStyle() throws {
+    @MainActor @Test func musicHomeExtendsBehindTheTitlebarAndRestoresTheWindowChrome() throws {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 340, height: 350),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.toolbarStyle = .unifiedCompact
+        window.titlebarAppearsTransparent = false
+        window.titlebarSeparatorStyle = .line
         let content = try #require(window.contentView)
-        let header = MusicHomeToolbarStyle.ToolbarView()
+        let header = MusicHomeWindowChrome.ChromeView()
 
         content.addSubview(header)
-        #expect(window.toolbarStyle == .unified)
+        #expect(window.styleMask.contains(.fullSizeContentView))
+        #expect(window.titlebarAppearsTransparent)
+        #expect(window.titlebarSeparatorStyle == .none)
 
         header.removeFromSuperview()
+        #expect(!window.styleMask.contains(.fullSizeContentView))
+        #expect(!window.titlebarAppearsTransparent)
+        #expect(window.titlebarSeparatorStyle == .line)
         #expect(window.toolbarStyle == .unifiedCompact)
     }
     #endif

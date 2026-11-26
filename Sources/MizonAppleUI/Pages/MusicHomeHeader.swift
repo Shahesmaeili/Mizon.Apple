@@ -5,34 +5,45 @@ import SwiftUI
 #if os(macOS)
 import AppKit
 
-struct MusicHomeToolbarStyle: NSViewRepresentable {
-    func makeNSView(context: Context) -> ToolbarView { ToolbarView() }
-    func updateNSView(_ view: ToolbarView, context: Context) {}
+struct MusicHomeWindowChrome: NSViewRepresentable {
+    func makeNSView(context: Context) -> ChromeView { ChromeView() }
+    func updateNSView(_ view: ChromeView, context: Context) {}
 
-    static func dismantleNSView(_ view: ToolbarView, coordinator: ()) {
-        view.restoreToolbarStyle()
+    static func dismantleNSView(_ view: ChromeView, coordinator: ()) {
+        view.restoreWindowChrome()
     }
 
-    final class ToolbarView: NSView {
+    final class ChromeView: NSView {
+        private struct OriginalChrome {
+            let extendsUnderTitlebar: Bool
+            let transparentTitlebar: Bool
+            let separator: NSTitlebarSeparatorStyle
+        }
+
         private weak var styledWindow: NSWindow?
-        private var originalStyle: NSWindow.ToolbarStyle?
+        private var originalChrome: OriginalChrome?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard window !== styledWindow else { return }
-            restoreToolbarStyle()
+            restoreWindowChrome()
             guard let window else { return }
             styledWindow = window
-            originalStyle = window.toolbarStyle
-            window.toolbarStyle = .unified
+            originalChrome = .init(extendsUnderTitlebar: window.styleMask.contains(.fullSizeContentView),
+                                   transparentTitlebar: window.titlebarAppearsTransparent,
+                                   separator: window.titlebarSeparatorStyle)
+            window.styleMask.insert(.fullSizeContentView)
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
         }
 
-        func restoreToolbarStyle() {
-            if let styledWindow, let originalStyle, styledWindow.toolbarStyle == .unified {
-                styledWindow.toolbarStyle = originalStyle
-            }
+        func restoreWindowChrome() {
+            guard let window = styledWindow, let original = originalChrome else { return }
             styledWindow = nil
-            originalStyle = nil
+            originalChrome = nil
+            if !original.extendsUnderTitlebar { window.styleMask.remove(.fullSizeContentView) }
+            window.titlebarAppearsTransparent = original.transparentTitlebar
+            window.titlebarSeparatorStyle = original.separator
         }
     }
 }

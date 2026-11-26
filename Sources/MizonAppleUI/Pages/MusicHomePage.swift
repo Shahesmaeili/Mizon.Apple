@@ -135,7 +135,6 @@ struct MusicHomePage: View {
     @State private var searchFocusRequest = 0
     @State private var pointer = MusicHomePointer()
     #if os(macOS)
-    @State private var headerViewport = CGSize(width: 960, height: 700)
     @State private var pendingHeroVisibility: Bool?
     @State private var resumePreviewAfterScroll = false
     @Environment(\.appearsActive) private var appearsActive
@@ -244,7 +243,11 @@ struct MusicHomePage: View {
                     feed.safeAreaInset(edge: .top, spacing: 0) { topBar }
                 }
                 #else
-                layout(width: geometry.size.width)
+                VStack(spacing: 0) {
+                    macHeader(viewport: geometry.size)
+                    layout(width: geometry.size.width)
+                }
+                .ignoresSafeArea(.container, edges: .top)
                 #endif
             }
                 .task(id: visibleHomeLink?.id) {
@@ -267,16 +270,7 @@ struct MusicHomePage: View {
                 #if os(macOS)
                 .background {
                     MusicHomeFocusInput(input: navigationFocus).frame(width: 0, height: 0)
-                    MusicHomeToolbarStyle().frame(width: 0, height: 0)
-                }
-                .onGeometryChange(for: CGSize.self, of: \.size) { headerViewport = $0 }
-                .toolbar {
-                    ToolbarItem(placement: .navigation) {
-                        header(viewport: headerViewport, width: max(230, headerViewport.width - 112))
-                            .padding(.top, 5)
-                            .padding(.bottom, 3)
-                    }
-                    .sharedBackgroundVisibility(.hidden)
+                    MusicHomeWindowChrome().frame(width: 0, height: 0)
                 }
                 #else
                 .toolbar(.hidden, for: .navigationBar)
@@ -486,6 +480,18 @@ struct MusicHomePage: View {
         fullWindowVideo = false
         article = nil
     }
+
+    #if os(macOS)
+    private func macHeader(viewport: CGSize) -> some View {
+        let windowControlsInset: CGFloat = 80
+        let trailingInset: CGFloat = 12
+        return header(viewport: viewport, width: max(0, viewport.width - windowControlsInset - trailingInset))
+            .padding(.leading, windowControlsInset)
+            .padding(.trailing, trailingInset)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .background { MizonPalette.surface.gesture(WindowDragGesture()) }
+    }
+    #endif
 
     private func header(viewport: CGSize, width: CGFloat) -> some View {
         let accountShape = UnevenRoundedRectangle(
