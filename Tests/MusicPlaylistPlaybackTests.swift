@@ -32,11 +32,12 @@ struct MusicPlaylistPlaybackTests {
         var tracks: [UUID] = []
         var previousTracks: [UUID?] = []
         model.playPlaylist(PlaylistPlaybackProtocol.playlist, title: { $0.title }) { track, previous in
+            #expect(model.playingTrack != track)
             tracks.append(track)
             previousTracks.append(previous)
         }
         #expect(model.playlistPlaybackStatus == .preparing)
-        try await waitUntil { tracks.count == 2 && !model.isPlaying }
+        try await waitUntil { tracks.count == 2 && model.playingTrack == PlaylistPlaybackProtocol.secondTrack && !model.isPlaying }
         #expect(tracks == [PlaylistPlaybackProtocol.firstTrack, PlaylistPlaybackProtocol.secondTrack])
         #expect(previousTracks == [nil, PlaylistPlaybackProtocol.firstTrack])
         #expect(model.playlistPlaybackStatus == nil)
@@ -46,6 +47,38 @@ struct MusicPlaylistPlaybackTests {
         }
         try await waitUntil { model.playlistPlaybackStatus == .unavailable }
         #expect(model.playingTrack == PlaylistPlaybackProtocol.secondTrack)
+    }
+
+    @Test func playlistDetailsReplacesPageAndKeepsTheFirstCover() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [PlaylistPlaybackProtocol.self]
+        let network = URLSession(configuration: configuration)
+        defer { network.invalidateAndCancel() }
+        let api = MizonApi(session: network)
+        let session = AuthSession(accessToken: "playlist-fixture", refreshToken: "", sessionPublicId: UUID(),
+                                  clientPublicId: UUID(), identifier: "fixture", server: PlaylistPlaybackProtocol.server)
+        try await api.setToken(session.accessToken)
+        let model = MusicPlaylistDetailsViewModel(playlistID: PlaylistPlaybackProtocol.playlist,
+                                                  service: MusicHomeService(api: api), session: session)
+
+        #expect(await model.load(page: 0) == true)
+        #expect(model.canPlay)
+        #expect(model.canGoForward)
+        #expect(!model.canGoBack)
+        #expect(model.details?.musics.map(\.publicId) == [PlaylistPlaybackProtocol.firstTrack])
+        #expect(model.rank(at: 0) == 1)
+        #expect(model.artworkID == PlaylistPlaybackProtocol.firstCover)
+
+        #expect(await model.load(page: 1) == true)
+        #expect(model.details?.musics.map(\.publicId) == [PlaylistPlaybackProtocol.secondTrack])
+        #expect(model.artworkID == PlaylistPlaybackProtocol.firstCover)
+        #expect(model.rank(at: 0) == 21)
+        #expect(model.canGoBack)
+        #expect(!model.canGoForward)
+        #expect(await model.load(page: 2) == nil)
+
+        #expect(await model.load(page: 0) == true)
+        #expect(model.page == 0 && model.canGoForward)
     }
 
     private func waitUntil(_ predicate: () -> Bool) async throws {
@@ -62,6 +95,7 @@ private final class PlaylistPlaybackProtocol: URLProtocol, @unchecked Sendable {
     static let firstTrack = UUID()
     static let secondTrack = UUID()
     static let media = UUID()
+    static let firstCover = UUID()
 
     // One second of mono PCM silence. The real AVPlayer emits the completion event.
     static let wav: Data = {
@@ -112,15 +146,18 @@ private final class PlaylistPlaybackProtocol: URLProtocol, @unchecked Sendable {
                     payload = Data(bytes: buffer, count: count)
                 }
                 func matching(_ id: UUID, cursor: String? = nil) throws -> Bool {
-                    let expected = MusicPlaylistDetailsRequest(musicPlaylistPublicId: id, cursor: cursor)
-                    return payload == (try CompressionMethod.gzip.compress(encoder.encode(BaseApiRequest(content: expected))))
+                    try [30, 20].contains { pageSize in
+                        let expected = MusicPlaylistDetailsRequest(musicPlaylistPublicId: id, pageSize: pageSize, cursor: cursor)
+                        return payload == (try CompressionMethod.gzip.compress(encoder.encode(BaseApiRequest(content: expected))))
+                    }
                 }
                 let page: MusicPlaylistDetailsResponse
                 if try matching(Self.emptyPlaylist) {
                     page = .init(publicId: Self.emptyPlaylist)
                 } else if try matching(Self.playlist) {
                     page = .init(publicId: Self.playlist, musicsCount: 2,
-                                 musics: [.init(publicId: Self.firstTrack, title: "First track")], nextCursor: "second")
+                                 musics: [.init(publicId: Self.firstTrack, title: "First track", coverMediaPublicId: Self.firstCover)],
+                                 nextCursor: "second")
                 } else {
                     let isNextPage = try matching(Self.playlist, cursor: "second")
                     try #require(isNextPage)

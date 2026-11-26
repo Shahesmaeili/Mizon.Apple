@@ -16,7 +16,6 @@ struct MusicHomeDestinationView: View {
         case track(UUID, MusicResponse)
         case artist(PersonProfileResponse)
         case client(ClientProfileResponse)
-        case playlist(MusicPlaylistDetailsResponse)
         case story(StoryResponse)
         case musicComment(UUID, MusicResponse, MusicCommentItemResponse)
         case musicVideo(MusicResponse)
@@ -29,7 +28,6 @@ struct MusicHomeDestinationView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var details: Details?
     @State private var tracks: [MusicTabMusicItemResponse] = []
-    @State private var nextCursor: String?
     @State private var loading = true
     @State private var failed = false
     @State private var updating = false
@@ -66,7 +64,6 @@ struct MusicHomeDestinationView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle(title)
-        .navigationTransition(.automatic)
         #if os(iOS)
         .toolbar(.visible, for: .navigationBar)
         #else
@@ -123,7 +120,6 @@ struct MusicHomeDestinationView: View {
             return localized(item.title, item.persianTitle)
         case .artist(let item): return "\(item.firstName) \(item.lastName)"
         case .client(let item): return item.nickName ?? [item.firstName, item.lastName].filter { !$0.isEmpty }.joined(separator: " ")
-        case .playlist(let item): return item.title
         case .story(let item): return item.title ?? text("Story")
         case nil: return text("PageName")
         }
@@ -187,15 +183,6 @@ struct MusicHomeDestinationView: View {
             Text(title).font(localization.font(25, weight: .semibold)).accessibilityAddTraits(.isHeader)
             if let username = item.username, !username.isEmpty {
                 Text("@" + username).font(localization.font(12)).foregroundStyle(MusicHomeStyle.cyan)
-            }
-        case .playlist(let playlist):
-            Text(playlist.title).font(localization.font(25, weight: .semibold)).accessibilityAddTraits(.isHeader)
-            rows
-            if let nextCursor {
-                Button(localization.string("LibraryMore", table: "MusicWidgets")) {
-                    Task { await morePlaylist(playlist.publicId, cursor: nextCursor) }
-                }
-                .buttonStyle(.glass).disabled(loading)
             }
         case .story(let story):
             if let video {
@@ -412,13 +399,8 @@ struct MusicHomeDestinationView: View {
                 let artistTracks = try await music.musics
                 try checkNavigation()
                 tracks = artistTracks
-            case .playlist(let id):
-                let playlist = try await model.service.playlist(id, after: nil, session: model.session)
-                try checkNavigation()
-                guard deepLink == nil || playlist.publicId == id else { throw LoginFailure.invalidResponse }
-                details = .playlist(playlist)
-                tracks = playlist.musics
-                nextCursor = playlist.nextCursor
+            case .playlist, .playlistLibrary:
+                return
             case .story(let id):
                 let story = try await model.service.story(id, session: model.session)
                 try checkNavigation()
@@ -497,18 +479,6 @@ struct MusicHomeDestinationView: View {
         guard try await asset.load(.isPlayable) else { throw LoginFailure.invalidResponse }
         try checkNavigation()
         return AVPlayer(playerItem: AVPlayerItem(asset: asset))
-    }
-
-    private func morePlaylist(_ id: UUID, cursor: String) async {
-        guard !loading else { return }
-        loading = true
-        defer { loading = false }
-        do {
-            let page = try await model.service.playlist(id, after: cursor, session: model.session)
-            let existing = Set(tracks.map(\.publicId))
-            tracks += page.musics.filter { !existing.contains($0.publicId) }
-            nextCursor = page.nextCursor
-        } catch { model.actionFailed = true }
     }
 
     private func like(_ item: MusicResponse, id: UUID) async {

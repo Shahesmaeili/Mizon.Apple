@@ -82,3 +82,18 @@ stack. macOS uses a native Core Animation push for forward and backward
 navigation and honors Reduce Motion. iPhone uses SwiftUI's automatic transition,
 system Back button and edge gesture. The Welcome profile handoff and sign-in
 card flip remain part of their respective screens.
+
+## Playlist details
+
+The Apple screen follows the Windows reference at `221b82d068e7a9230c3158a9d12843901edeaa4d`,
+including `MusicPlaylistPage.xaml`, `MusicLibraryBrowser.xaml`, and
+`MusicPlaylistDetailsViewModel.cs`. It uses the same hero artwork rule,
+right-aligned track metadata, pager, responsive header breakpoints, and
+loading, empty, and error states. The screen requests 20 entries per page and
+keeps the first page's artwork when paging. Refresh returns to page one.
+The playlist CTA opens the selected track while audio is preparing and shares
+the existing ordered playlist playback coordinator on both Apple platforms.
+Copy uses the canonical deep-link URI. The library and track links keep the
+detail page on the navigation stack so Back restores its page and scroll
+position. iPhone uses its native cover zoom. macOS uses its existing
+Core Animation navigation and the reference pointer timing for track rows.
