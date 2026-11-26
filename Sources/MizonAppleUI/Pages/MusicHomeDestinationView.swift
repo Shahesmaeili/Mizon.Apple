@@ -12,7 +12,7 @@ struct MusicHomeDestinationView: View {
     }
 
     private enum ControllerTarget: Hashable {
-        case retry, play, like, follow, video, track(UUID), playTrack(UUID)
+        case retry, like, follow, video, track(UUID), playTrack(UUID)
     }
 
     private enum Details {
@@ -61,14 +61,25 @@ struct MusicHomeDestinationView: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            contentScroll
-                .onChange(of: controllerFocus) {
-                    guard let controllerFocus else { return }
-                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                        proxy.scrollTo(controllerFocus, anchor: .center)
-                    }
+        Group {
+            if let loadedTrack {
+                MusicTrackDetailsView(id: loadedTrack.0, track: loadedTrack.1, music: model,
+                                     linkedComment: loadedTrack.2, downloadCompleted: downloadCompleted,
+                                     controllerIsCurrent: controllerIsCurrent, open: open)
+                    .id(route)
+            } else if isTrackRoute {
+                MusicTrackLoadingView(loading: loading && !failed, focus: controllerFocus == .retry) { loadID += 1 }
+            } else {
+                ScrollViewReader { proxy in
+                    contentScroll
+                        .onChange(of: controllerFocus) {
+                            guard let controllerFocus else { return }
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                                proxy.scrollTo(controllerFocus, anchor: .center)
+                            }
+                        }
                 }
+            }
         }
         .navigationTitle(title)
         #if os(iOS)
@@ -95,8 +106,8 @@ struct MusicHomeDestinationView: View {
                 loading = false
             }
         }
-        .task(id: ownsController) {
-            if ownsController { await observeController() }
+        .task(id: ownsController && loadedTrack == nil) {
+            if ownsController && loadedTrack == nil { await observeController() }
         }
         .onDisappear {
             video?.pause()
@@ -105,6 +116,18 @@ struct MusicHomeDestinationView: View {
                 MizonDeepLinkRouter.shared.fail(deepLink, code: "page_changed",
                                                message: "The active page changed before navigation completed.")
             }
+        }
+    }
+
+    private var isTrackRoute: Bool {
+        switch route { case .track, .musicComment: true; default: false }
+    }
+
+    private var loadedTrack: (UUID, MusicResponse, MusicCommentItemResponse?)? {
+        switch details {
+        case .track(let id, let track): (id, track, nil)
+        case .musicComment(let id, let track, let comment): (id, track, comment)
+        default: nil
         }
     }
 
@@ -176,11 +199,8 @@ struct MusicHomeDestinationView: View {
 
     @ViewBuilder private func content(_ details: Details) -> some View {
         switch details {
-        case .track(let id, let track):
-            trackDetails(track, id: id)
-        case .musicComment(let id, let track, let comment):
-            highlightedComment(comment)
-            trackDetails(track, id: id)
+        case .track, .musicComment:
+            EmptyView()
         case .musicVideo(let track):
             if let video {
                 VideoPlayer(player: video)
@@ -239,54 +259,6 @@ struct MusicHomeDestinationView: View {
                 }
             }
         }
-    }
-
-    @ViewBuilder private func trackDetails(_ track: MusicResponse, id: UUID) -> some View {
-        MusicArtwork(mediaID: track.musicCover?.mediaPublicId, model: model, symbol: "music.note")
-            .frame(height: 280).clipShape(.rect(cornerRadius: 12))
-        Text(localized(track.title, track.persianTitle)).font(localization.font(27, weight: .semibold))
-            .accessibilityAddTraits(.isHeader)
-        Text(track.musicGenres.map { localized($0.title, $0.persianTitle) }.joined(separator: " · "))
-            .foregroundStyle(.secondary)
-        HStack {
-            Button { model.play(id, title: title) } label: { Label(text("PlayInMizon"), systemImage: "play.fill") }
-                .modifier(outline(.play))
-            Button { Task { await like(track, id: id) } } label: {
-                Label(text(track.likedByMe ? "UnlikeTrack" : "LikeTrack"), systemImage: track.likedByMe ? "heart.fill" : "heart")
-            }
-            .disabled(updating)
-            .modifier(outline(.like))
-        }
-        .buttonStyle(.glass)
-        if downloadCompleted {
-            Label(localization.string("MusicDownloaded", table: "MusicDeepLinks"), systemImage: "checkmark.circle")
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func highlightedComment(_ comment: MusicCommentItemResponse) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            MusicArtwork(mediaID: comment.profileMediaPublicId, model: model, symbol: "person.fill")
-                .frame(width: 34, height: 34).clipShape(.circle)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(localization.string("LinkedComment", table: "MusicDeepLinks"))
-                    .font(localization.font(12, weight: .semibold)).accessibilityAddTraits(.isHeader)
-                let name = [comment.firstName, comment.lastName].filter { !$0.isEmpty }.joined(separator: " ")
-                if !name.isEmpty {
-                    Text(name).font(localization.font(13, weight: .semibold))
-                } else if let username = comment.username {
-                    Text("@" + username).font(localization.font(13, weight: .semibold))
-                }
-                Text(comment.text).font(localization.font(14)).textSelection(.enabled)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MizonPalette.accent.opacity(0.10), in: .rect(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(MizonPalette.accent.opacity(0.38)) }
-        .environment(\.layoutDirection, localization.isPersian ? .rightToLeft : .leftToRight)
-        .accessibilityIdentifier("music.destination.linkedComment")
     }
 
     private func artistCover(_ artist: PersonProfileResponse) -> some View {
@@ -523,24 +495,6 @@ struct MusicHomeDestinationView: View {
         return AVPlayer(playerItem: AVPlayerItem(asset: asset))
     }
 
-    private func like(_ item: MusicResponse, id: UUID) async {
-        guard !updating else { return }
-        updating = true
-        defer { updating = false }
-        do {
-            let response = try await model.service.likeTrack(id, liked: !item.likedByMe, session: model.session)
-            model.updateTrackLike(id, result: response)
-            var updated = item
-            updated.likedByMe = response.likedByMe
-            updated.likesCount = response.likesCount
-            if case .musicComment(_, _, let comment) = details {
-                details = .musicComment(id, updated, comment)
-            } else {
-                details = .track(id, updated)
-            }
-        } catch { model.actionFailed = true }
-    }
-
     private func like(_ item: StoryResponse) async {
         guard !updating else { return }
         updating = true
@@ -578,7 +532,7 @@ struct MusicHomeDestinationView: View {
     private var controllerTargets: [ControllerTarget] {
         if failed && !loading { return [.retry] }
         switch details {
-        case .track, .musicComment: return updating ? [.play] : [.play, .like]
+        case .track, .musicComment: return []
         case .musicVideo: return video == nil ? [] : [.video]
         case .artist(let artist):
             let actions: [ControllerTarget] = artist.canFollow && !updating ? [.follow] : []
@@ -615,17 +569,8 @@ struct MusicHomeDestinationView: View {
             if video?.rate == 0 { video?.play() } else { video?.pause() }
         case .follow:
             if case .artist(let artist) = details { Task { await follow(artist) } }
-        case .play:
-            switch details {
-            case .track(let id, _), .musicComment(let id, _, _): model.play(id, title: title)
-            default: break
-            }
         case .like:
-            switch details {
-            case .track(let id, let track), .musicComment(let id, let track, _): Task { await like(track, id: id) }
-            case .story(let story): Task { await like(story) }
-            default: break
-            }
+            if case .story(let story) = details { Task { await like(story) } }
         case .track(let id): open(.track(id))
         case .playTrack(let id):
             if let track = tracks.first(where: { $0.publicId == id }) {

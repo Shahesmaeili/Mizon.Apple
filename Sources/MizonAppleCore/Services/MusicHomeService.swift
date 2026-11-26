@@ -106,6 +106,92 @@ public struct MusicHomeService: Sendable {
         return response.musicComments.first { $0.publicId == commentID }
     }
 
+    public func trackCredits(_ id: UUID, session: AuthSession) async throws -> [MusicContributorItemResponse] {
+        try await request(MusicContributorsOperation(.init(musicPublicId: id), endpoints: .init(baseURL: session.server))).contributors
+    }
+
+    public func trackWaveform(_ fileID: UUID, session: AuthSession) async throws -> MusicFileWaveformResponse {
+        try await request(MusicFileWaveformOperation(.init(musicFilePublicId: fileID), endpoints: .init(baseURL: session.server)))
+    }
+
+    public func trackLyrics(_ id: UUID, session: AuthSession) async throws -> [MusicLyricLanguageResponse] {
+        try await request(MusicLyricOperation(.init(musicPublicId: id), endpoints: .init(baseURL: session.server))).musicLyricLanguages
+    }
+
+    public func trackLyricLines(_ id: UUID, session: AuthSession) async throws -> [MusicLyricLineItemResponse] {
+        try await request(MusicLyricLineOperation(.init(musicLyricPublicId: id), endpoints: .init(baseURL: session.server))).musicLyricLines
+    }
+
+    public func trackReactions(_ id: UUID, session: AuthSession) async throws -> (
+        [MusicReactionTypeItemResponse], [MusicReactionItemResponse]
+    ) {
+        let endpoints = Endpoints(baseURL: session.server)
+        async let types = request(MusicReactionTypesOperation(.init(), endpoints: endpoints))
+        async let counts = request(MusicReactionsOperation(.init(musicPublicId: id), endpoints: endpoints))
+        return try await (types.musicReactionTypes, counts.musicReactionItems)
+    }
+
+    public func reactToTrack(_ id: UUID, type: UUID, reacted: Bool, session: AuthSession) async throws {
+        try await checkMediaSession(session)
+        _ = try await request(MusicReactionOperation(.init(musicPublicId: id, musicReactionTypePublicId: type, reacted: reacted),
+                                                      endpoints: .init(baseURL: session.server)))
+    }
+
+    public func relatedTracks(_ id: UUID, album: Bool, session: AuthSession) async throws -> [MusicTabMusicItemResponse] {
+        let endpoints = Endpoints(baseURL: session.server)
+        if album {
+            return try await request(MusicAlbumMusicsOperation(.init(musicPublicId: id), endpoints: endpoints)).musics
+        }
+        return try await request(MusicContributorMusicsOperation(.init(musicPublicId: id), endpoints: endpoints)).musics
+    }
+
+    public func trackStories(_ id: UUID, session: AuthSession) async throws -> [StoryListItemResponse] {
+        try await request(StoriesOperation(.init(musicPublicId: id), endpoints: .init(baseURL: session.server))).stories
+    }
+
+    public func trackDiscussion(_ input: MusicCommentsRequest, session: AuthSession) async throws -> MusicCommentsResponse {
+        try await request(MusicCommentsOperation(input, endpoints: .init(baseURL: session.server)))
+    }
+
+    public func postTrackComment(_ input: MusicCommentCreateRequest, session: AuthSession) async throws -> UUID {
+        try await checkMediaSession(session)
+        return try await request(MusicCommentCreateOperation(input, endpoints: .init(baseURL: session.server))).musicCommentPublicId
+    }
+
+    public func voteOnTrackComment(_ input: MusicCommentVoteRequest, session: AuthSession) async throws -> MusicCommentVoteResponse {
+        try await checkMediaSession(session)
+        return try await request(MusicCommentVoteOperation(input, endpoints: .init(baseURL: session.server)))
+    }
+
+    public func searchTrackCommentTags(_ input: MusicCommentTagSearchRequest, session: AuthSession) async throws -> [MusicCommentTagItem] {
+        try await request(MusicCommentTagSearchOperation(input, endpoints: .init(baseURL: session.server))).tags
+    }
+
+    public func trackPlaylists(_ id: UUID, session: AuthSession) async throws -> [MusicPlaylistListItemResponse] {
+        try await request(MusicPlaylistsOperation(.init(musicPublicId: id), endpoints: .init(baseURL: session.server))).musicPlaylists
+    }
+
+    public func changeTrackPlaylists(_ id: UUID, selected: [UUID], session: AuthSession) async throws {
+        try await checkMediaSession(session)
+        _ = try await request(MusicPlaylistMembershipOperation(.init(musicPublicId: id, musicPlaylistPublicIds: selected),
+                                                               endpoints: .init(baseURL: session.server)))
+    }
+
+    public func createTrackPlaylist(_ id: UUID, title: String, session: AuthSession) async throws -> UUID {
+        try await checkMediaSession(session)
+        return try await request(MusicPlaylistCreateOperation(.init(musicPublicId: id, title: title),
+                                                               endpoints: .init(baseURL: session.server))).musicPlaylistPublicId
+    }
+
+    public func trackStems(_ id: UUID, session: AuthSession) async throws -> MusicStemMixResponse {
+        try await request(MusicStemMixOperation(.init(musicPublicId: id), endpoints: .init(baseURL: session.server)))
+    }
+
+    public func recordTrackView(_ id: UUID, session: AuthSession) async throws {
+        try await checkMediaSession(session)
+        _ = try await request(MusicViewOperation(.init(musicPublicId: id), endpoints: .init(baseURL: session.server)))
+    }
+
     public func client(_ id: UUID, session: AuthSession) async throws -> ClientProfileResponse {
         try await request(ClientProfileOperation(.init(clientPublicId: id), endpoints: .init(baseURL: session.server)))
     }
@@ -505,11 +591,16 @@ public actor MusicArtworkStore {
     }
 
     public func cacheTrack(_ musicID: UUID, session: AuthSession) async throws {
+        _ = try await downloadTrack(musicID, session: session)
+    }
+
+    public func downloadTrack(_ musicID: UUID, session: AuthSession) async throws -> URL {
         let track = try await service.trackFile(musicID, session: session)
         guard track.mediaPublicId != UUID.emptyPublicIdentifier else { throw LoginFailure.invalidResponse }
-        _ = try await service.cacheMedia(track.registeredMedia, session: session, downloader: downloader,
-                                         maximumBytes: PeerMediaTransfer.maximumFileSize, peerNetwork: peerNetwork)
+        let file = try await service.cacheMedia(track.registeredMedia, session: session, downloader: downloader,
+                                                maximumBytes: PeerMediaTransfer.maximumFileSize, peerNetwork: peerNetwork)
         try Task.checkCancellation()
+        return file
     }
 
     public func cancel() {

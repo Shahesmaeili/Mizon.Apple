@@ -26,12 +26,18 @@ public final class MusicHomeViewModel {
     public private(set) var playingTrack: UUID?
     public private(set) var playbackTitle = ""
     public private(set) var isPlaying = false
+    public var repeatingTrack: UUID?
+    public private(set) var stemMixTrack: UUID?
+    @ObservationIgnored private var playbackEndObserver: (any NSObjectProtocol)?
     public private(set) var requestingPlayback = false
     public enum PlaylistPlaybackStatus { case preparing, unavailable }
     public private(set) var playlistPlaybackStatus: PlaylistPlaybackStatus?
     @ObservationIgnored private var playlistPlayback: Task<Void, Never>?
     @ObservationIgnored private var playlistRequestID: UUID?
     @ObservationIgnored private var playlistEndObservers: [any NSObjectProtocol] = []
+    @ObservationIgnored private var playlistContinuation: AsyncStream<Bool>.Continuation?
+    @ObservationIgnored private var originalMix: AVPlayerItem?
+    @ObservationIgnored private var stemTracks: (AVCompositionTrack, AVCompositionTrack)?
     public private(set) var updating: Set<UUID> = []
     public var actionFailed = false
     @ObservationIgnored private var sectionRequests: [Section: UUID] = [:]
@@ -229,14 +235,18 @@ public final class MusicHomeViewModel {
     private func observePlaylistEnd(_ item: AVPlayerItem, continuation: AsyncStream<Bool>.Continuation) {
         let events: [Notification.Name] = [.AVPlayerItemDidPlayToEndTime, .AVPlayerItemFailedToPlayToEndTime]
         playlistEndObservers = events.map { name in
-            NotificationCenter.default.addObserver(forName: name, object: item, queue: nil) { _ in
-                continuation.yield(name == .AVPlayerItemDidPlayToEndTime)
-                continuation.finish()
+            NotificationCenter.default.addObserver(forName: name, object: item, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    if name == .AVPlayerItemDidPlayToEndTime, self?.repeatIfNeeded() == true { return }
+                    continuation.yield(name == .AVPlayerItemDidPlayToEndTime)
+                    continuation.finish()
+                }
             }
         }
     }
 
     private func removePlaylistEndObservers() {
+        playlistContinuation = nil
         for observer in playlistEndObservers { NotificationCenter.default.removeObserver(observer) }
         playlistEndObservers.removeAll()
     }
@@ -252,7 +262,8 @@ public final class MusicHomeViewModel {
     @discardableResult
     private func beginPlayback(_ id: UUID, title: String, requireConfirmation: Bool,
                                allowCurrentItem: Bool = true, authorized: @escaping @MainActor () -> Bool = { true },
-                               prepareItem: (@MainActor (AVPlayerItem) -> Void)? = nil) -> Task<Bool, Never> {
+                               prepareItem: (@MainActor (AVPlayerItem) -> Void)? = nil,
+                               initialTime: Double? = nil) -> Task<Bool, Never> {
         playbackRequest?.cancel()
         restorePreviousPlayback?()
         restorePreviousPlayback = nil
@@ -302,6 +313,14 @@ public final class MusicHomeViewModel {
                 }
                 prepareItem?(item)
                 if !reused { player.replaceCurrentItem(with: item) }
+                if let initialTime {
+                    await item.seek(to: CMTime(seconds: initialTime, preferredTimescale: 1_000),
+                                    toleranceBefore: .zero, toleranceAfter: .zero)
+                    try Task.checkCancellation()
+                    guard playbackRequestID == requestID, authorized(), player.currentItem === item else { return false }
+                }
+                if !reused { originalMix = nil; stemTracks = nil; stemMixTrack = nil }
+                if prepareItem == nil { observeTrackEnd(item) }
                 player.play()
                 if requireConfirmation {
                     try await confirmPlayback(item, authorized: authorized)
@@ -344,10 +363,110 @@ public final class MusicHomeViewModel {
         throw LoginFailure.invalidResponse
     }
 
+    public func seekTrack(_ id: UUID, title: String, at seconds: Double, startPlayback: Bool) {
+        guard seconds.isFinite, seconds >= 0, !requestingPlayback else { return }
+        if playingTrack == id, player.currentItem != nil {
+            let time = CMTime(seconds: seconds, preferredTimescale: 1_000)
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+            if startPlayback && !isPlaying { togglePlayback() }
+        } else if startPlayback {
+            cancelPlaylist()
+            beginPlayback(id, title: title, requireConfirmation: false, initialTime: seconds)
+        }
+    }
+
+    public func switchTrackMix(for id: UUID, vocals: UUID, instrumental: UUID, balance: Double) async throws {
+        guard playingTrack == id, let current = player.currentItem, !requestingPlayback, originalMix == nil else {
+            throw LoginFailure.invalidResponse
+        }
+        async let vocalsURL = artwork.file(vocals, session: session, maximumBytes: PeerMediaTransfer.maximumFileSize)
+        async let instrumentalURL = artwork.file(instrumental, session: session, maximumBytes: PeerMediaTransfer.maximumFileSize)
+        let sources = try await [AVURLAsset(url: vocalsURL), AVURLAsset(url: instrumentalURL)]
+        let mix = AVMutableComposition()
+        var audio: [AVCompositionTrack] = []
+        for asset in sources {
+            let source = try await asset.loadTracks(withMediaType: .audio).first
+            guard let source, let lane = mix.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                throw LoginFailure.invalidResponse
+            }
+            let range = try await source.load(.timeRange)
+            try lane.insertTimeRange(range, of: source, at: .zero)
+            audio.append(lane)
+        }
+        try Task.checkCancellation()
+        guard playingTrack == id, player.currentItem === current, !requestingPlayback else { throw CancellationError() }
+        let replacement = AVPlayerItem(asset: mix)
+        originalMix = current
+        stemTracks = (audio[0], audio[1])
+        stemMixTrack = id
+        replacement.audioMix = makeStemBalance(balance)
+        switchMixItem(replacement)
+    }
+
+    public func updateTrackMixBalance(_ balance: Double, for id: UUID) {
+        guard playingTrack == id, originalMix != nil else { return }
+        player.currentItem?.audioMix = makeStemBalance(balance)
+    }
+
+    public func restoreOriginalMix(for id: UUID) {
+        guard playingTrack == id, let originalMix else { return }
+        self.originalMix = nil
+        stemTracks = nil
+        stemMixTrack = nil
+        switchMixItem(originalMix)
+    }
+
+    private func switchMixItem(_ item: AVPlayerItem) {
+        let position = player.currentTime()
+        let wasPlaying = isPlaying
+        if let continuation = playlistContinuation { observePlaylistEnd(item, continuation: continuation) }
+        else { observeTrackEnd(item) }
+        player.replaceCurrentItem(with: item)
+        player.seek(to: position, toleranceBefore: .zero, toleranceAfter: .zero)
+        if wasPlaying { player.play() }
+    }
+
+    private func makeStemBalance(_ balance: Double) -> AVAudioMix? {
+        guard let (voice, backing) = stemTracks else { return nil }
+        let value = min(1, max(-1, balance / 100))
+        let voiceParameters = AVMutableAudioMixInputParameters(track: voice)
+        voiceParameters.setVolume(Float(min(1, 1 + value)), at: .zero)
+        let backingParameters = AVMutableAudioMixInputParameters(track: backing)
+        backingParameters.setVolume(Float(min(1, 1 - value)), at: .zero)
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = [voiceParameters, backingParameters]
+        return mix
+    }
+
+    private func observeTrackEnd(_ item: AVPlayerItem) {
+        if let playbackEndObserver { NotificationCenter.default.removeObserver(playbackEndObserver) }
+        playbackEndObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
+                                                                     object: item, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.playlistContinuation == nil else { return }
+                if !self.repeatIfNeeded() { self.isPlaying = false }
+            }
+        }
+    }
+
+    private func repeatIfNeeded() -> Bool {
+        guard !requestingPlayback, let repeatingTrack, repeatingTrack == playingTrack, player.currentItem != nil else { return false }
+        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        player.play()
+        isPlaying = true
+        return true
+    }
+
     public func togglePlayback() {
-        guard player.currentItem != nil, !requestingPlayback else { return }
+        guard let item = player.currentItem, !requestingPlayback else { return }
         isPlaying.toggle()
-        if isPlaying { player.play() } else { player.pause() }
+        if isPlaying {
+            let duration = item.duration.seconds
+            if duration.isFinite, duration > 0, player.currentTime().seconds >= duration - 0.05 {
+                player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+            }
+            player.play()
+        } else { player.pause() }
     }
 
     public func stop() {
@@ -358,7 +477,13 @@ public final class MusicHomeViewModel {
         playbackRecord = nil
         playbackRequestID = nil
         restorePreviousPlayback = nil
+        if let playbackEndObserver { NotificationCenter.default.removeObserver(playbackEndObserver) }
+        playbackEndObserver = nil
         player.replaceCurrentItem(with: nil)
+        stemMixTrack = nil
+        repeatingTrack = nil
+        originalMix = nil
+        stemTracks = nil
         playingTrack = nil
         playbackTitle = ""
         isPlaying = false
