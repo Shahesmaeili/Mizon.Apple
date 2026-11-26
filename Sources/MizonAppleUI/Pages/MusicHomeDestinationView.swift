@@ -66,9 +66,10 @@ struct MusicHomeDestinationView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle(title)
+        .navigationTransition(.automatic)
         #if os(iOS)
         .toolbar(.visible, for: .navigationBar)
-        #endif
+        #else
         .navigationBarBackButtonHidden()
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -80,6 +81,7 @@ struct MusicHomeDestinationView: View {
                 .keyboardShortcut(.cancelAction)
             }
         }
+        #endif
         .task(id: loadIdentity) {
             if !loadIdentity.cancelled { await load() }
         }
@@ -213,7 +215,7 @@ struct MusicHomeDestinationView: View {
             .buttonStyle(.glass).disabled(updating)
             ForEach(story.widgets, id: \.publicId) { widget in
                 if let music = widget.music {
-                    NavigationLink(destination: MusicHomeDestinationView(route: .track(music.musicPublicId), model: model)) {
+                    NavigationLink(value: MusicDestination.track(music.musicPublicId)) {
                         Label(music.title, systemImage: "music.note")
                     }
                 }
@@ -340,7 +342,7 @@ struct MusicHomeDestinationView: View {
         LazyVStack(spacing: 8) {
             ForEach(tracks, id: \.publicId) { track in
                 HStack {
-                    NavigationLink(destination: MusicHomeDestinationView(route: .track(track.publicId), model: model)) {
+                    NavigationLink(value: MusicDestination.track(track.publicId)) {
                         HStack(spacing: 10) {
                             MusicArtwork(mediaID: track.coverMediaPublicId, model: model, symbol: "music.note")
                                 .frame(width: 44, height: 44).clipShape(.rect(cornerRadius: 8))

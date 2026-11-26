@@ -83,6 +83,9 @@ struct MusicHomePage: View {
         case featureControls, featureThumbnail(Int), retryFeatureMedia
         case allGenres, genre(UUID), story(UUID), profile(UUID), ownProfile, follow(UUID)
         case playlist(UUID), library, activity(String), moreActivity, recent, news(Int), transport
+        #if os(macOS)
+        case playPlaylist(UUID), copyPlaylistLink(UUID)
+        #endif
         case rhythmDay(Int), previousNews, nextNews, toggleNews, selectNews(Int), spotlightTrack(UUID)
         case addStory, mutePreview, copyFeatureLink, previousSpotlight, nextSpotlight
         case previousArtistRail, nextArtistRail, spotlightProfile(UUID), spotlightFollow(UUID)
@@ -92,8 +95,23 @@ struct MusicHomePage: View {
     @State var model: MusicHomeViewModel
     @State private var incomingDeepLink: MizonDeepLinkRouter.AuthorizedLink?
     @State private var presentedDeepLink: MizonDeepLinkRouter.AuthorizedLink?
-    @State private var destination: MusicDestination?
+    @State private var navigationPath: [MusicDestination] = []
+    private var destination: MusicDestination? {
+        get { navigationPath.last }
+        nonmutating set { navigationPath = newValue.map { [$0] } ?? [] }
+    }
     @State private var showingLibrary = false
+    #if os(macOS)
+    @State private var playlistCopyStatus: String?
+    var playlistStatusKey: String? {
+        if let playlistCopyStatus { return playlistCopyStatus }
+        switch model.playlistPlaybackStatus {
+        case .preparing: return "PlaylistPlaying"
+        case .unavailable: return "PlaylistUnavailable"
+        case nil: return nil
+        }
+    }
+    #endif
     @State private var showingAllMusicActivity = false
     @State var selectedRhythmDay = 5
     @State private var selectedGenre: UUID?
@@ -226,7 +244,7 @@ struct MusicHomePage: View {
     #endif
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             GeometryReader { geometry in
                 #if os(iOS)
                 let feed = AnyView(layout(width: geometry.size.width))
@@ -283,7 +301,7 @@ struct MusicHomePage: View {
                     }
                 }
                 #endif
-                .navigationDestination(item: $destination) { route in
+                .navigationDestination(for: MusicDestination.self) { route in
                     let link = presentedDeepLink.flatMap { MusicDestination(deepLink: $0.route) == route ? $0 : nil }
                     MusicHomeDestinationView(route: route, model: model, deepLink: link)
                 }
@@ -307,9 +325,9 @@ struct MusicHomePage: View {
             guard !Task.isCancelled, !shellAccountOpen, let request = incomingDeepLink else { return }
             openDeepLink(request)
         }
-        .onChange(of: destination) { _, route in
+        .onChange(of: navigationPath) { _, path in
             if let request = presentedDeepLink,
-               let linkedDestination = MusicDestination(deepLink: request.route), linkedDestination != route {
+               let linkedDestination = MusicDestination(deepLink: request.route), !path.contains(linkedDestination) {
                 presentedDeepLink = nil
             }
         }
@@ -319,6 +337,11 @@ struct MusicHomePage: View {
         .onChange(of: showingLibrary) { _, visible in
             if !visible, presentedDeepLink?.route == .playlists { presentedDeepLink = nil }
         }
+        #if os(macOS)
+        .onChange(of: playlistStatusKey) { _, key in
+            if let key { AccessibilityNotification.Announcement(widget(key)).post() }
+        }
+        #endif
         .onChange(of: showingAllMusicActivity) { _, visible in
             if !visible, presentedDeepLink?.route == .activities { presentedDeepLink = nil }
         }
@@ -1856,7 +1879,7 @@ struct MusicHomePage: View {
             }
     }
 
-    private func activate(_ action: Action) {
+    func activate(_ action: Action) {
         switch action {
         case .search: searchFocusRequest += 1
         case .home: scrollHomeRequest += 1
@@ -1919,6 +1942,22 @@ struct MusicHomePage: View {
             if let item = model.artists.first(where: { $0.personPublicId == id }) { Task { await model.toggleFollow(item) } }
         case .spotlightTrack(let id): destination = .track(id)
         case .playlist(let id): destination = .playlist(id)
+        #if os(macOS)
+        case .playPlaylist(let id):
+            guard model.library?.playlists.contains(where: { $0.publicId == id && $0.musicsCount > 0 }) == true else { return }
+            playlistCopyStatus = nil
+            model.playPlaylist(id, title: { localized($0.title, $0.persianTitle) }) { track, previous in
+                if previous == nil {
+                    destination = .track(track)
+                } else if previous.map(MusicDestination.track) == destination, !navigationPath.isEmpty {
+                    navigationPath[navigationPath.count - 1] = .track(track)
+                }
+            }
+        case .copyPlaylistLink(let id):
+            let link = MizonDeepLink.playlist(id).canonicalURI
+            NSPasteboard.general.clearContents()
+            playlistCopyStatus = NSPasteboard.general.setString(link, forType: .string) ? "PlaylistCopied" : "PlaylistActionError"
+        #endif
         case .library: showingLibrary = true
         case .activity(let id):
             if let item = model.activity?.activities.first(where: { $0.activityId == id }) { destination = activityDestination(item) }
@@ -1991,7 +2030,7 @@ struct MusicHomePage: View {
         return targets
     }
 
-    private enum ControllerInput { case neutral, accept, back, next, previous, moodEffect }
+    private enum ControllerInput { case neutral, accept, back, next, previous, secondary, copyPlaylist }
 
     private func observeGamepad() async {
         var previous = ControllerInput.neutral
@@ -2003,15 +2042,11 @@ struct MusicHomePage: View {
                !showingNearby, !showingMoodPicker, !showingSearch {
                 let horizontal = pad.dpad.xAxis.value
                 let vertical = pad.dpad.yAxis.value
-                #if os(macOS)
-                let playsMoodEffect = pad.buttonX.isPressed
-                #else
-                let playsMoodEffect = false
-                #endif
                 let control: ControllerInput
                 if pad.buttonA.isPressed { control = .accept }
                 else if pad.buttonB.isPressed { control = .back }
-                else if playsMoodEffect { control = .moodEffect }
+                else if pad.buttonX.isPressed && isMacControllerActionEnabled { control = .secondary }
+                else if pad.buttonY.isPressed && isMacControllerActionEnabled, case .playlist = controlFocus { control = .copyPlaylist }
                 else if vertical < -0.65 || horizontal > 0.65 { control = .next }
                 else if vertical > 0.65 || horizontal < -0.65 { control = .previous }
                 else { control = .neutral }
@@ -2031,9 +2066,14 @@ struct MusicHomePage: View {
                         else { controlFocus = targets.first }
                     } else if control == .back {
                         controlFocus = nil
-                    } else if control == .moodEffect {
+                    } else if control == .secondary || control == .copyPlaylist {
                         #if os(macOS)
-                        if controlFocus == .mood { MacMenuBarProfile.shared.playEffect() }
+                        switch (control, controlFocus) {
+                        case (.secondary, .mood): MacMenuBarProfile.shared.playEffect()
+                        case (.secondary, .playlist(let id)): activate(.playPlaylist(id))
+                        case (.copyPlaylist, .playlist(let id)): activate(.copyPlaylistLink(id))
+                        default: break
+                        }
                         #endif
                     } else {
                         let targets = controllerTargets
@@ -2049,6 +2089,14 @@ struct MusicHomePage: View {
             }
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
         }
+    }
+
+    private var isMacControllerActionEnabled: Bool {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
     }
 
     private func selectFeature(_ index: Int) {

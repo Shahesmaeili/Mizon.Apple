@@ -66,3 +66,18 @@ iPhone uses the fused device attitude through Core Motion for the same layer tra
 The Apple integration for chat `01a1f8c4-a871-7fd0-9b52-1159ac1caef1` started at `a7c26bf` and owns `WelcomeService`, the profile image fixtures, and the two Swift SDK lockfiles. The [Swift SDK change](https://github.com/Shahesmaeili/Mizon.API.Swift/commit/8c84513fafa3e0f8ec4f5b69d5db28a682ca8ea9) owns cache invalidation and download cleanup. Server file media still uses the authenticated content endpoint. Direct HTTPS image storage can return a complete response without range support. A failed decode invalidates the affected cache entry and its partial file and allows one fresh download. Metadata, rejected downloads, and decode failures log stages without account or storage identifiers.
 
 The fixtures verify signed-in file media, a Welcome timeout followed by Home recovery, replacement of a same-size corrupt cached image, and HTTPS origins with and without a pending partial download. The deployed profile image requires its own check in a signed-in app.
+
+## Playlist context menu and navigation
+
+Windows reference `221b82d` uses `MusicPlaylistMenu` in `MusicLibraryPanel` and
+starts playback through `MusicPlaylistPlaybackService`. The macOS widget offers
+Play, View tracks and Copy playlist link through the native context menu. Play
+starts at the beginning, follows the server's track order through later pages,
+and opens each next track if the current track page is still visible. The link
+uses the shared canonical route. VoiceOver exposes the same actions, and Xbox X
+and Y can play or copy the focused playlist.
+
+Music Home and nested destinations on Mac and iPhone use the SwiftUI navigation
+stack's automatic transition. iPhone uses its system Back button and edge
+gesture. The existing Welcome profile handoff and login card animation remain
+part of their respective screens.

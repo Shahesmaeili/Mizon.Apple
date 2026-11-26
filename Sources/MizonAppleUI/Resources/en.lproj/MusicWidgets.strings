@@ -94,7 +94,7 @@
 "LibraryCountPending" = "Playlist count is not available yet";
 "LibraryCreateHint" = "Create your first playlist from any track page.";
 "LibraryFooter" = "Your latest library updates";
-"LibraryPlaylistHelp" = "Select to view tracks; right-click to play or copy the link.";
+"LibraryPlaylistHelp" = "Select to view tracks. Right-click for more actions. With an Xbox controller, press X to play or Y to copy the link.";
 "LibraryRecentHelp" = "Go to recently played tracks";
 "LibraryRetry" = "Reload your playlists";
 "LibrarySummary" = "{0:N0} tracks in your playlists";

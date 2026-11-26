@@ -48,6 +48,9 @@ extension MusicHomePage {
                     }
                 }
                 VStack(spacing: 10) {
+                    #if os(macOS)
+                    if let status = playlistStatusKey { railCaption(widget(status)) }
+                    #endif
                     railFooterButton(.recent, widget("LibraryRecent"), symbol: .clock, tint: accent)
                         .accessibilityHint(widget("LibraryRecentHelp"))
                     railFootnote("LibraryFooter")
@@ -119,12 +122,33 @@ extension MusicHomePage {
                         ForEach(library.playlists, id: \.publicId) { playlist in
                             control(.playlist(playlist.publicId)) { libraryRow(playlist) }
                                 .buttonStyle(MusicWidgetButtonStyle(tint: accent, radius: 11))
+                                #if os(macOS)
+                                .contextMenu { libraryPlaylistMenu(playlist) }
+                                .accessibilityHint(widget("LibraryPlaylistHelp"))
+                                .accessibilityActions { libraryPlaylistMenu(playlist) }
+                                #endif
                         }
                     }
                 }
             }
         }
     }
+
+    #if os(macOS)
+    @ViewBuilder private func libraryPlaylistMenu(_ playlist: MusicLibraryPlaylistItemResponse) -> some View {
+        Button { activate(.playPlaylist(playlist.publicId)) } label: {
+            Label(widget("PlaylistPlay"), systemImage: "play")
+        }
+        .disabled(playlist.musicsCount <= 0 || model.playlistPlaybackStatus == .preparing)
+        Button { activate(.playlist(playlist.publicId)) } label: {
+            Label(widget("PlaylistOpen"), systemImage: "music.note")
+        }
+        Divider()
+        Button { activate(.copyPlaylistLink(playlist.publicId)) } label: {
+            Label(widget("PlaylistCopy"), systemImage: "link")
+        }
+    }
+    #endif
 
     private func libraryRow(_ playlist: MusicLibraryPlaylistItemResponse) -> some View {
         let accent = MusicWidgetTint.library

@@ -24,6 +24,13 @@ public final class MusicHomeViewModel {
     public private(set) var playbackTitle = ""
     public private(set) var isPlaying = false
     public private(set) var requestingPlayback = false
+    #if os(macOS)
+    public enum PlaylistPlaybackStatus { case preparing, unavailable }
+    public private(set) var playlistPlaybackStatus: PlaylistPlaybackStatus?
+    @ObservationIgnored private var playlistPlayback: Task<Void, Never>?
+    @ObservationIgnored private var playlistRequestID: UUID?
+    @ObservationIgnored private var playlistEndObservers: [any NSObjectProtocol] = []
+    #endif
     public private(set) var updating: Set<UUID> = []
     public var actionFailed = false
     @ObservationIgnored private var sectionRequests: [Section: UUID] = [:]
@@ -32,10 +39,15 @@ public final class MusicHomeViewModel {
     @ObservationIgnored private var playbackRequestID: UUID?
     @ObservationIgnored private var restorePreviousPlayback: (() -> Void)?
 
-    public init(session: AuthSession, service: MusicHomeService, peerNetwork: NearbyDiscoveryService? = nil) {
+    public convenience init(session: AuthSession, service: MusicHomeService, peerNetwork: NearbyDiscoveryService? = nil) {
+        self.init(session: session, service: service,
+                  artwork: MusicArtworkStore(service: service, session: session, peerNetwork: peerNetwork))
+    }
+
+    init(session: AuthSession, service: MusicHomeService, artwork: MusicArtworkStore) {
         self.session = session
         self.service = service
-        artwork = MusicArtworkStore(service: service, session: session, peerNetwork: peerNetwork)
+        self.artwork = artwork
     }
 
     public func moodAnimationURL(_ mediaID: UUID) async throws -> URL {
@@ -122,6 +134,9 @@ public final class MusicHomeViewModel {
     }
 
     public func play(_ id: UUID, title: String) {
+        #if os(macOS)
+        cancelPlaylist()
+        #endif
         if id == playingTrack, !requestingPlayback {
             togglePlayback()
             return
@@ -132,6 +147,9 @@ public final class MusicHomeViewModel {
     public func playFromDeepLink(_ id: UUID, title: String, authorized: @escaping @MainActor () -> Bool) async throws {
         try Task.checkCancellation()
         guard authorized() else { throw CancellationError() }
+        #if os(macOS)
+        cancelPlaylist()
+        #endif
         let request = beginPlayback(id, title: title, requireConfirmation: true, authorized: authorized)
         let started = await withTaskCancellationHandler {
             await request.value
@@ -143,9 +161,100 @@ public final class MusicHomeViewModel {
         guard started else { throw LoginFailure.invalidResponse }
     }
 
+    #if os(macOS)
+    public func playPlaylist(_ id: UUID, title: @escaping @MainActor (MusicTabMusicItemResponse) -> String,
+                             onTrackStarted: @escaping @MainActor (_ trackID: UUID, _ previousTrackID: UUID?) -> Void) {
+        guard id != .emptyPublicIdentifier, playlistPlaybackStatus != .preparing else { return }
+        cancelPlaylist()
+        playbackRequest?.cancel()
+        let requestID = UUID()
+        playlistRequestID = requestID
+        playlistPlaybackStatus = .preparing
+        playlistPlayback = Task { [weak self] in
+            await self?.runPlaylist(id, requestID: requestID, title: title, onTrackStarted: onTrackStarted)
+        }
+    }
+
+    private func runPlaylist(_ id: UUID, requestID: UUID,
+                             title: @MainActor (MusicTabMusicItemResponse) -> String,
+                             onTrackStarted: @MainActor (UUID, UUID?) -> Void) async {
+        defer {
+            if playlistRequestID == requestID {
+                removePlaylistEndObservers()
+                playlistPlayback = nil
+                playlistRequestID = nil
+            }
+        }
+        var previousTrack: UUID?
+        var cursor: String?
+        do {
+            repeat {
+                let page = try await service.playlist(id, after: cursor, session: session)
+                try Task.checkCancellation()
+                guard playlistRequestID == requestID else { return }
+                guard page.publicId == id else { throw LoginFailure.invalidResponse }
+                for track in page.musics where track.publicId != .emptyPublicIdentifier {
+                    try Task.checkCancellation()
+                    let ended = AsyncStream.makeStream(of: Bool.self, bufferingPolicy: .bufferingNewest(1))
+                    let request = beginPlayback(track.publicId, title: title(track), requireConfirmation: true,
+                                                allowCurrentItem: false, authorized: { [weak self] in
+                        self?.playlistRequestID == requestID
+                    }, prepareItem: { [weak self] item in
+                        self?.observePlaylistEnd(item, continuation: ended.continuation)
+                    })
+                    let started = await withTaskCancellationHandler { await request.value } onCancel: { request.cancel() }
+                    try Task.checkCancellation()
+                    guard playlistRequestID == requestID else { return }
+                    guard started else { throw LoginFailure.invalidResponse }
+                    playlistPlaybackStatus = nil
+                    onTrackStarted(track.publicId, previousTrack)
+                    previousTrack = track.publicId
+
+                    var events = ended.stream.makeAsyncIterator()
+                    let finished = await events.next()
+                    try Task.checkCancellation()
+                    guard playlistRequestID == requestID else { return }
+                    removePlaylistEndObservers()
+                    isPlaying = false
+                    guard finished == true else { throw LoginFailure.invalidResponse }
+                }
+                guard page.nextCursor != cursor else { break }
+                cursor = page.nextCursor
+            } while cursor != nil
+            if previousTrack == nil { playlistPlaybackStatus = .unavailable }
+        } catch {
+            if !Task.isCancelled, playlistRequestID == requestID { playlistPlaybackStatus = .unavailable }
+        }
+    }
+
+    private func observePlaylistEnd(_ item: AVPlayerItem, continuation: AsyncStream<Bool>.Continuation) {
+        let events: [Notification.Name] = [.AVPlayerItemDidPlayToEndTime, .AVPlayerItemFailedToPlayToEndTime]
+        playlistEndObservers = events.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: item, queue: nil) { _ in
+                continuation.yield(name == .AVPlayerItemDidPlayToEndTime)
+                continuation.finish()
+            }
+        }
+    }
+
+    private func removePlaylistEndObservers() {
+        for observer in playlistEndObservers { NotificationCenter.default.removeObserver(observer) }
+        playlistEndObservers.removeAll()
+    }
+
+    private func cancelPlaylist() {
+        playlistRequestID = nil
+        playlistPlayback?.cancel()
+        playlistPlayback = nil
+        playlistPlaybackStatus = nil
+        removePlaylistEndObservers()
+    }
+    #endif
+
     @discardableResult
     private func beginPlayback(_ id: UUID, title: String, requireConfirmation: Bool,
-                               authorized: @escaping @MainActor () -> Bool = { true }) -> Task<Bool, Never> {
+                               allowCurrentItem: Bool = true, authorized: @escaping @MainActor () -> Bool = { true },
+                               prepareItem: (@MainActor (AVPlayerItem) -> Void)? = nil) -> Task<Bool, Never> {
         playbackRequest?.cancel()
         restorePreviousPlayback?()
         restorePreviousPlayback = nil
@@ -170,7 +279,8 @@ public final class MusicHomeViewModel {
             do {
                 let currentItem = player.currentItem
                 let wasPlaying = isPlaying
-                let reused = requireConfirmation && id == playingTrack && currentItem?.status != .failed && currentItem != nil
+                let reused = requireConfirmation && allowCurrentItem && id == playingTrack
+                    && currentItem?.status != .failed && currentItem != nil
                 let item: AVPlayerItem
                 if reused, let currentItem {
                     item = currentItem
@@ -192,6 +302,7 @@ public final class MusicHomeViewModel {
                         if wasPlaying { self.player.play() } else { self.player.pause() }
                     }
                 }
+                prepareItem?(item)
                 if !reused { player.replaceCurrentItem(with: item) }
                 player.play()
                 if requireConfirmation {
@@ -238,6 +349,9 @@ public final class MusicHomeViewModel {
     }
 
     public func stop() {
+        #if os(macOS)
+        cancelPlaylist()
+        #endif
         playbackRequest?.cancel()
         playbackRequest = nil
         playbackRecord?.cancel()
