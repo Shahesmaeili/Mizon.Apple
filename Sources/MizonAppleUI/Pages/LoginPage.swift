@@ -264,9 +264,8 @@ public struct MizonRootView: View {
         if context == .signedOut {
             if request.expectsResult {
                 deepLinks.fail(id: request.id, code: "requires_sign_in", message: "Sign in first. No navigation was queued.")
-            } else if authShortcut?.id != request.id {
-                authShortcut = ShellShortcutRequest(id: request.id, destination: .login)
             }
+            // Keep the current authentication form and its input while an ordinary URI waits.
             return
         }
 

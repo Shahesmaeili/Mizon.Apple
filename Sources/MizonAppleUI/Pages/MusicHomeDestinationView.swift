@@ -355,8 +355,14 @@ struct MusicHomeDestinationView: View {
         do {
             try checkNavigation()
             switch route {
-            case .section:
-                completeDeepLink(stage: .opened)
+            case .section(let section):
+                if section == .vpn, let request = deepLink {
+                    resolvedDeepLink = request.id
+                    MizonDeepLinkRouter.shared.fail(request, code: "page_unavailable",
+                        message: "VPN is not available on this platform.")
+                } else {
+                    completeDeepLink(stage: .opened)
+                }
                 return
             case .track(let id):
                 let track: MusicResponse
