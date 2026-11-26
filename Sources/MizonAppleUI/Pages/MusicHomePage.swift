@@ -56,7 +56,7 @@ private struct MusicHomePhoneHeaderGlass: View {
 enum MusicDestination: Hashable, Identifiable {
     case track(UUID), artist(UUID), client(UUID), playlist(UUID), story(UUID)
     case musicVideo(UUID), musicComment(UUID, comment: UUID)
-    case section(ShellShortcutDestination)
+    case section(ShellShortcutDestination), playlistLibrary
 
     var id: Self { self }
 
@@ -96,6 +96,8 @@ struct MusicHomePage: View {
     @State private var incomingDeepLink: MizonDeepLinkRouter.AuthorizedLink?
     @State private var presentedDeepLink: MizonDeepLinkRouter.AuthorizedLink?
     @State private var navigationPath: [MusicDestination] = []
+    @Namespace private var playlistCoverNamespace
+    @State private var playlistCoverSource: UUID?
     private var destination: MusicDestination? {
         get { navigationPath.last }
         nonmutating set { navigationPath = newValue.map { [$0] } ?? [] }
@@ -302,8 +304,7 @@ struct MusicHomePage: View {
                 }
                 #endif
                 .navigationDestination(for: MusicDestination.self) { route in
-                    let link = presentedDeepLink.flatMap { MusicDestination(deepLink: $0.route) == route ? $0 : nil }
-                    MusicHomeDestinationView(route: route, model: model, deepLink: link)
+                    musicDestination(route)
                 }
         }
         .preferredColorScheme(.dark)
@@ -327,6 +328,7 @@ struct MusicHomePage: View {
             openDeepLink(request)
         }
         .onChange(of: navigationPath) { _, path in
+            if let source = playlistCoverSource, !path.contains(.track(source)) { playlistCoverSource = nil }
             if let request = presentedDeepLink,
                let linkedDestination = MusicDestination(deepLink: request.route), !path.contains(linkedDestination) {
                 presentedDeepLink = nil
@@ -483,6 +485,46 @@ struct MusicHomePage: View {
             showingSearch = true
         default:
             destination = MusicDestination(deepLink: request.route)
+        }
+    }
+
+    @ViewBuilder private func musicDestination(_ route: MusicDestination) -> some View {
+        let link = presentedDeepLink.flatMap { MusicDestination(deepLink: $0.route) == route ? $0 : nil }
+        switch route {
+        case .playlist(let id):
+            MusicPlaylistPage(playlistID: id, music: model, deepLink: link, coverNamespace: playlistCoverNamespace) {
+                navigationPath.append(.playlistLibrary)
+            } openTrack: { track in
+                playlistCoverSource = track
+                navigationPath.append(.track(track))
+            } playPlaylist: {
+                startPlaylistPlayback(id, from: route)
+            }
+        case .playlistLibrary:
+            MusicLibraryBrowser(model: model, deepLink: nil, inNavigationStack: true) { id in
+                navigationPath.append(.playlist(id))
+            }
+        default:
+            let page = MusicHomeDestinationView(route: route, model: model, deepLink: link)
+            #if os(iOS)
+            if case .track(let track) = route, playlistCoverSource == track, !reduceMotion {
+                page.navigationTransition(.zoom(sourceID: track, in: playlistCoverNamespace))
+            } else {
+                page.navigationTransition(.automatic)
+            }
+            #else
+            page
+            #endif
+        }
+    }
+
+    private func startPlaylistPlayback(_ id: UUID, from origin: MusicDestination?) {
+        model.playPlaylist(id, title: { localized($0.title, $0.persianTitle) }) { track, previous in
+            if previous == nil, destination == origin {
+                navigationPath.append(.track(track))
+            } else if previous.map(MusicDestination.track) == destination, !navigationPath.isEmpty {
+                navigationPath[navigationPath.count - 1] = .track(track)
+            }
         }
     }
 
@@ -1947,13 +1989,7 @@ struct MusicHomePage: View {
         case .playPlaylist(let id):
             guard model.library?.playlists.contains(where: { $0.publicId == id && $0.musicsCount > 0 }) == true else { return }
             playlistCopyStatus = nil
-            model.playPlaylist(id, title: { localized($0.title, $0.persianTitle) }) { track, previous in
-                if previous == nil {
-                    destination = .track(track)
-                } else if previous.map(MusicDestination.track) == destination, !navigationPath.isEmpty {
-                    navigationPath[navigationPath.count - 1] = .track(track)
-                }
-            }
+            startPlaylistPlayback(id, from: nil)
         case .copyPlaylistLink(let id):
             let link = MizonDeepLink.playlist(id).canonicalURI
             NSPasteboard.general.clearContents()

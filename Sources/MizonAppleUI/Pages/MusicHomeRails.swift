@@ -983,7 +983,7 @@ private struct MusicReferenceDemoHitStyle: ButtonStyle {
     }
 }
 
-private enum MusicReferenceRailFormat {
+enum MusicReferenceRailFormat {
     static func compactNumber(_ value: Int, locale: Locale) -> String {
         let scale = value >= 1_000_000 ? 1_000_000 : value >= 1000 ? 1000 : 1
         guard scale > 1 else { return value.formatted(.number.locale(locale)) }

@@ -9,6 +9,7 @@ struct MusicLibraryBrowser: View {
 
     let model: MusicHomeViewModel
     let deepLink: MizonDeepLinkRouter.AuthorizedLink?
+    var inNavigationStack = false
     let openPlaylist: (UUID) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -22,46 +23,9 @@ struct MusicLibraryBrowser: View {
     private var localization = AuthLocalization()
 
     var body: some View {
-        NavigationStack {
-            ScrollViewReader { scroll in
-                List {
-                    ForEach(items, id: \.publicId) { playlist in
-                        Button { openPlaylist(playlist.publicId) } label: {
-                            HStack(spacing: 10) {
-                                MusicArtwork(mediaID: playlist.lastMusicCoverMediaPublicId, model: model, symbol: "music.note.list")
-                                    .frame(width: 44, height: 44).clipShape(.rect(cornerRadius: 7))
-                                Text(playlist.title)
-                                Spacer()
-                                Text(playlist.musicsCount, format: .number).foregroundStyle(.secondary)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .authHandPointer(enabled: true)
-                        .focusable().focused($focus, equals: .playlist(playlist.publicId))
-                        .id(Target.playlist(playlist.publicId))
-                    }
-                    if loading {
-                        ProgressView().frame(maxWidth: .infinity)
-                    } else if failed {
-                        Text(text("LibraryError")).foregroundStyle(.secondary)
-                        Button(text("Retry")) { page += 1 }
-                            .focusable().focused($focus, equals: .retry).id(Target.retry)
-                    } else if nextCursor != nil {
-                        Button(text("MorePlaylists")) { page += 1 }
-                            .focusable().focused($focus, equals: .more).id(Target.more)
-                    } else if items.isEmpty {
-                        Text(text("LibraryEmpty")).foregroundStyle(.secondary)
-                    }
-                }
-                .onChange(of: focus) { _, target in
-                    if let target, target != .close { scroll.scrollTo(target, anchor: .center) }
-                }
-            }
-            .navigationTitle(text("LibraryTitle"))
-            .toolbar {
-                Button(text("Close")) { dismiss() }.keyboardShortcut(.cancelAction)
-                    .focusable().focused($focus, equals: .close)
-            }
+        Group {
+            if inNavigationStack { library }
+            else { NavigationStack { library } }
         }
         .task(id: page) { await loadPage() }
         .task(id: scenePhase) {
@@ -75,6 +39,65 @@ struct MusicLibraryBrowser: View {
             }
         }
         .frame(minWidth: 310, minHeight: 300)
+    }
+
+    private var library: some View {
+        ScrollViewReader { scroll in
+            List {
+                ForEach(items, id: \.publicId) { playlist in
+                    Button { openPlaylist(playlist.publicId) } label: {
+                        HStack(spacing: 10) {
+                            MusicArtwork(mediaID: playlist.lastMusicCoverMediaPublicId, model: model, symbol: "music.note.list")
+                                .frame(width: 44, height: 44).clipShape(.rect(cornerRadius: 7))
+                            Text(playlist.title)
+                            Spacer()
+                            Text(playlist.musicsCount, format: .number).foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .authHandPointer(enabled: true)
+                    .focusable().focused($focus, equals: .playlist(playlist.publicId))
+                    .id(Target.playlist(playlist.publicId))
+                }
+                if loading {
+                    ProgressView().frame(maxWidth: .infinity)
+                } else if failed {
+                    Text(text("LibraryError")).foregroundStyle(.secondary)
+                    Button(text("Retry")) { page += 1 }
+                        .focusable().focused($focus, equals: .retry).id(Target.retry)
+                } else if nextCursor != nil {
+                    Button(text("MorePlaylists")) { page += 1 }
+                        .focusable().focused($focus, equals: .more).id(Target.more)
+                } else if items.isEmpty {
+                    Text(text("LibraryEmpty")).foregroundStyle(.secondary)
+                }
+            }
+            .onChange(of: focus) { _, target in
+                if let target, target != .close { scroll.scrollTo(target, anchor: .center) }
+            }
+        }
+        .navigationTitle(text("LibraryTitle"))
+        #if os(macOS)
+        .navigationBarBackButtonHidden(inNavigationStack)
+        #endif
+        .toolbar {
+            #if os(macOS)
+            ToolbarItem(placement: .navigation) {
+                if inNavigationStack {
+                    Button { dismiss() } label: { Image(systemName: "chevron.backward") }
+                        .accessibilityLabel(localization.string("Back", table: "MusicHome"))
+                        .accessibilityIdentifier("music.destination.back")
+                        .keyboardShortcut(.cancelAction)
+                }
+            }
+            #endif
+            ToolbarItem {
+                if !inNavigationStack {
+                    Button(text("Close")) { dismiss() }.keyboardShortcut(.cancelAction)
+                        .focusable().focused($focus, equals: .close)
+                }
+            }
+        }
     }
 
     private func loadPage() async {
@@ -105,7 +128,7 @@ struct MusicLibraryBrowser: View {
     }
 
     private var targets: [Target] {
-        var controls: [Target] = [.close] + items.map { .playlist($0.publicId) }
+        var controls: [Target] = (inNavigationStack ? [] : [.close]) + items.map { .playlist($0.publicId) }
         if !loading {
             if failed { controls.append(.retry) }
             else if nextCursor != nil { controls.append(.more) }

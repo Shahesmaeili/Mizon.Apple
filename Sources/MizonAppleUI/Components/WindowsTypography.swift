@@ -82,8 +82,8 @@ enum FluentSymbol: Int, CaseIterable {
     case shieldLock = 1449, eyeOff = 1498, eye = 1824, filmstrip = 2023, wifi = 2692
     case checkmarkCircle = 82, dismissCircle = 113, networkCheck = 192
     case add = 2, apps = 12, arrowUpRight = 22, chevronLeft = 84, chevronRight = 85
-    case clock = 90, emoji = 127, heart = 154, history = 156, pause = 208, people = 209, search = 253, shield = 263
-    case star = 276, arrowCounterclockwise = 430, album = 1005, speaker2 = 1109, speakerMute = 1110
+    case clock = 90, emoji = 127, heart = 154, history = 156, link = 171, pause = 208, people = 209, search = 253, shield = 263
+    case star = 276, arrowClockwise = 429, arrowCounterclockwise = 430, album = 1005, speaker2 = 1109, speakerMute = 1110
     case sparkle = 1682, mic = 1826
     case agentsAdd = 2754, image = 158, checkmark = 81, guitar = 1206, soundWaveCircle = 1781
     case musicNote2 = 1088, pulse = 945, record = 550, fire = 2052, leafOne = 1077

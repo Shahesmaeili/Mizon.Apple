@@ -127,8 +127,9 @@ public struct MusicHomeService: Sendable {
                                                 endpoints: .init(baseURL: session.server)))
     }
 
-    public func playlist(_ id: UUID, after cursor: String?, session: AuthSession) async throws -> MusicPlaylistDetailsResponse {
-        try await request(MusicPlaylistDetailsOperation(.init(musicPlaylistPublicId: id, cursor: cursor),
+    public func playlist(_ id: UUID, after cursor: String?, pageSize: Int = 30,
+                         session: AuthSession) async throws -> MusicPlaylistDetailsResponse {
+        try await request(MusicPlaylistDetailsOperation(.init(musicPlaylistPublicId: id, pageSize: pageSize, cursor: cursor),
                                                        endpoints: .init(baseURL: session.server)))
     }
 
