@@ -135,6 +135,7 @@ struct MusicHomePage: View {
     @State private var searchFocusRequest = 0
     @State private var pointer = MusicHomePointer()
     #if os(macOS)
+    @State private var isMacFullScreen = false
     @State private var pendingHeroVisibility: Bool?
     @State private var resumePreviewAfterScroll = false
     @Environment(\.appearsActive) private var appearsActive
@@ -483,12 +484,15 @@ struct MusicHomePage: View {
     #if os(macOS)
     private func macHeader(viewport: CGSize) -> some View {
         let windowControlsInset: CGFloat = 80
+        let leadingInset = isMacFullScreen ? 0 : windowControlsInset
         let trailingInset: CGFloat = 12
-        return header(viewport: viewport, width: max(0, viewport.width - windowControlsInset - trailingInset))
-            .padding(.leading, windowControlsInset)
+        return header(viewport: viewport, width: max(0, viewport.width - leadingInset - trailingInset))
+            .padding(.leading, leadingInset)
             .padding(.trailing, trailingInset)
             .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-            .background(alignment: .leading) { MusicHomeWindowChrome().frame(width: windowControlsInset) }
+            .background(alignment: .leading) {
+                MusicHomeWindowChrome { isMacFullScreen = $0 }.frame(width: windowControlsInset)
+            }
             .background { Color.clear.contentShape(.rect).gesture(WindowDragGesture()) }
     }
     #endif

@@ -6,8 +6,18 @@ import SwiftUI
 import AppKit
 
 struct MusicHomeWindowChrome: NSViewRepresentable {
-    func makeNSView(context: Context) -> ChromeView { ChromeView() }
-    func updateNSView(_ view: ChromeView, context: Context) { view.needsLayout = true }
+    let onFullScreenChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> ChromeView {
+        let view = ChromeView()
+        view.onFullScreenChange = onFullScreenChange
+        return view
+    }
+
+    func updateNSView(_ view: ChromeView, context: Context) {
+        view.onFullScreenChange = onFullScreenChange
+        view.needsLayout = true
+    }
 
     static func dismantleNSView(_ view: ChromeView, coordinator: ()) {
         view.restoreWindowChrome()
@@ -30,6 +40,7 @@ struct MusicHomeWindowChrome: NSViewRepresentable {
         private weak var styledWindow: NSWindow?
         private var originalChrome: OriginalChrome?
         private var windowControls: [WindowControl] = []
+        var onFullScreenChange: ((Bool) -> Void)?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -47,7 +58,7 @@ struct MusicHomeWindowChrome: NSViewRepresentable {
                                                    name: NSWindow.didEnterFullScreenNotification, object: window)
             NotificationCenter.default.addObserver(self, selector: #selector(fullScreenChanged),
                                                    name: NSWindow.didExitFullScreenNotification, object: window)
-            needsLayout = true
+            fullScreenChanged()
         }
 
         override func layout() {
@@ -100,6 +111,11 @@ struct MusicHomeWindowChrome: NSViewRepresentable {
 
         @objc private func fullScreenChanged() {
             needsLayout = true
+            // Attaching the AppKit view can happen during a SwiftUI update.
+            DispatchQueue.main.async { [weak self, weak window = styledWindow] in
+                guard let self, let window, styledWindow === window else { return }
+                onFullScreenChange?(window.styleMask.contains(.fullScreen))
+            }
         }
 
         func restoreWindowChrome() {
