@@ -3,6 +3,11 @@ import CoreHaptics
 import GameController
 import MizonAppleCore
 import SwiftUI
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 typealias GamepadAction = GamepadInputReducer.Action
 
@@ -21,12 +26,11 @@ enum GamepadControls {
     ) async {
         let clock = ContinuousClock()
         let start = clock.now
-        var reducer = GamepadInputReducer()
+        var session = GamepadInputSession<ObjectIdentifier, Scope>()
         weak var owner: GCController?
-        var previousScope: Scope?
         let feedback = GamepadFeedbackPlayer()
         defer {
-            feedback.detach()
+            feedback.detach(finishingSuccess: true)
             onReset()
         }
         while !Task.isCancelled {
@@ -34,21 +38,17 @@ enum GamepadControls {
             let connected = scope == nil ? [] : GCController.controllers()
             let controller = owner.flatMap { selected in connected.first { $0 === selected } }
                 ?? connected.first { $0.extendedGamepad != nil }
-            if controller !== owner || scope != previousScope {
-                reducer.reset()
-                previousScope = scope
-                if controller !== owner {
-                    owner = controller
-                    feedback.attach(controller)
-                    onReset()
-                }
+            if controller !== owner {
+                owner = controller
+                feedback.attach(controller)
+                onReset()
             }
-            if let pad = controller?.extendedGamepad {
-                let elapsed = start.duration(to: clock.now).components
-                let time = elapsed.seconds * 1_000 + elapsed.attoseconds / 1_000_000_000_000_000
-                if let action = reducer.read(read(pad), atMilliseconds: time) {
-                    perform(action, feedback)
-                }
+            let elapsed = start.duration(to: clock.now).components
+            let time = elapsed.seconds * 1_000 + elapsed.attoseconds / 1_000_000_000_000_000
+            let sample = (controller?.extendedGamepad).map(read)
+            if let action = session.read(sample, controller: controller.map(ObjectIdentifier.init),
+                                         surface: scope, atMilliseconds: time) {
+                perform(action, feedback)
             }
             do { try await Task.sleep(for: controller == nil ? .milliseconds(250) : .milliseconds(20)) }
             catch { return }
@@ -79,6 +79,37 @@ enum GamepadControls {
                      leftX: Double(pad.leftThumbstick.xAxis.value), leftY: Double(pad.leftThumbstick.yAxis.value),
                      rightY: Double(pad.rightThumbstick.yAxis.value),
                      leftTrigger: Double(pad.leftTrigger.value), rightTrigger: Double(pad.rightTrigger.value))
+    }
+}
+
+@MainActor
+@Observable
+final class GamepadScroll {
+    var position = ScrollPosition(edge: .top)
+    @ObservationIgnored private var offset: CGFloat = 0
+
+    func move(by step: CGFloat) {
+        position.scrollTo(y: max(0, offset + step))
+    }
+
+    struct Binding: ViewModifier {
+        @Bindable var scroll: GamepadScroll
+
+        func body(content: Content) -> some View {
+            content
+                .scrollPosition($scroll.position)
+                .onScrollGeometryChange(for: CGFloat.self) {
+                    $0.contentOffset.y + $0.contentInsets.top
+                } action: { _, offset in
+                    scroll.offset = offset
+                }
+        }
+    }
+}
+
+extension View {
+    func gamepadScrolling(_ scroll: GamepadScroll) -> some View {
+        modifier(GamepadScroll.Binding(scroll: scroll))
     }
 }
 
@@ -113,20 +144,44 @@ final class GamepadFeedbackPlayer {
     private weak var controller: GCController?
     private(set) var generation = 0
     private var playing: [CHHapticEngine] = []
+    private var successDeadline: ContinuousClock.Instant?
 
     func attach(_ controller: GCController?) {
         detach()
         self.controller = controller
     }
 
-    func detach() {
+    func detach(finishingSuccess: Bool = false) {
         generation += 1
+        let previousController = controller
         controller = nil
+        let clock = ContinuousClock()
+        if finishingSuccess, let deadline = successDeadline, clock.now < deadline,
+           let previousController, Self.active, !playing.isEmpty {
+            // Keep the last two pulses together when a successful form immediately opens Welcome.
+            let engines = playing
+            playing.removeAll()
+            Task { @MainActor [weak previousController] in
+                while clock.now < deadline, Self.active, let previousController,
+                      GCController.controllers().contains(where: { $0 === previousController }) {
+                    try? await clock.sleep(until: min(deadline, clock.now.advanced(by: .milliseconds(20))))
+                }
+                for engine in engines { engine.stop(completionHandler: nil) }
+            }
+        }
         stop()
     }
 
+    private static var active: Bool {
+        #if os(macOS)
+        NSApplication.shared.isActive
+        #else
+        UIApplication.shared.applicationState == .active
+        #endif
+    }
+
     func play(_ feedback: GamepadFeedback, generation expected: Int? = nil) {
-        guard expected == nil || expected == generation,
+        guard Self.active, expected == nil || expected == generation,
               let controller, GCController.controllers().contains(where: { $0 === controller }),
               let haptics = controller.haptics else { return }
         stop()
@@ -137,9 +192,13 @@ final class GamepadFeedbackPlayer {
         } else {
             play(feedback, haptics: haptics, locality: .default) { max($0.left, $0.right) }
         }
+        if feedback == .success, !playing.isEmpty {
+            successDeadline = ContinuousClock().now.advanced(by: .milliseconds(feedback.durationMilliseconds))
+        }
     }
 
     private func stop() {
+        successDeadline = nil
         for engine in playing { engine.stop(completionHandler: nil) }
         playing.removeAll()
     }

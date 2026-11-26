@@ -14,54 +14,58 @@ struct AuthGamepadKeyboard: View {
             let width = min(520, max(0, geometry.size.width - 24))
             let spacing: CGFloat = 3
             let cell = max(0, (width - 24 - 9 * spacing) / 10)
-            ScrollView {
-                VStack(spacing: 6) {
-                    Text(localization["GamepadKeyboardTitle"]).font(.headline)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(prompt).font(.subheadline)
-                    if let value {
-                        let index = value.index(value.startIndex, offsetBy: min(value.count, keyboard.caret))
-                        Text(keyboard.selectsAll ? value : String(value[..<index]) + "│" + String(value[index...]))
-                            .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(5)
-                            .background(.white.opacity(keyboard.selectsAll ? 0.16 : 0.05), in: .rect(cornerRadius: 5))
-                            .accessibilityLabel(value)
-                    } else {
-                        Text(localization["GamepadKeyboardPasswordHelp"]).font(.caption)
-                    }
-                    VStack(spacing: spacing) {
-                        ForEach(Array(keyboard.rows.enumerated()), id: \.offset) { row, keys in
-                            HStack(spacing: spacing) {
-                                ForEach(Array(keys.enumerated()), id: \.offset) { column, key in
-                                    let focused = keyboard.row == row && keyboard.column == column
-                                    Button { activate(key) } label: {
-                                        label(key)
-                                            .font(.system(size: key.width == 1 ? 14 : 12, weight: .semibold))
-                                            .frame(width: cell * CGFloat(key.width) + spacing * CGFloat(key.width - 1))
-                                            .frame(minHeight: 30)
-                                            .contentShape(.rect)
+            ScrollViewReader { reader in
+                ScrollView {
+                    VStack(spacing: 6) {
+                        Text(localization["GamepadKeyboardTitle"]).font(.headline)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(prompt).font(.subheadline)
+                        if let value {
+                            let index = value.index(value.startIndex, offsetBy: min(value.count, keyboard.caret))
+                            Text(keyboard.selectsAll ? value : String(value[..<index]) + "│" + String(value[index...]))
+                                .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(5)
+                                .background(.white.opacity(keyboard.selectsAll ? 0.16 : 0.05), in: .rect(cornerRadius: 5))
+                                .accessibilityLabel(value)
+                        } else {
+                            Text(localization["GamepadKeyboardPasswordHelp"]).font(.caption)
+                        }
+                        VStack(spacing: spacing) {
+                            ForEach(Array(keyboard.rows.enumerated()), id: \.offset) { row, keys in
+                                HStack(spacing: spacing) {
+                                    ForEach(Array(keys.enumerated()), id: \.offset) { column, key in
+                                        let focused = keyboard.row == row && keyboard.column == column
+                                        Button { activate(key) } label: {
+                                            label(key)
+                                                .font(.system(size: key.width == 1 ? 14 : 12, weight: .semibold))
+                                                .frame(width: cell * CGFloat(key.width) + spacing * CGFloat(key.width - 1))
+                                                .frame(minHeight: 30)
+                                                .contentShape(.rect)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .background(.white.opacity(0.07), in: .rect(cornerRadius: 6))
+                                        .overlay {
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .strokeBorder(focused ? AuthAppearance.accent : .clear, lineWidth: 2)
+                                                .allowsHitTesting(false)
+                                        }
+                                        .disabled(!keyboard.isEnabled(key))
+                                        .accessibilityLabel(name(key))
+                                        .accessibilityAddTraits(focused ? .isSelected : [])
                                     }
-                                    .buttonStyle(.plain)
-                                    .background(.white.opacity(0.07), in: .rect(cornerRadius: 6))
-                                    .overlay {
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .strokeBorder(focused ? AuthAppearance.accent : .clear, lineWidth: 2)
-                                            .allowsHitTesting(false)
-                                    }
-                                    .disabled(!keyboard.isEnabled(key))
-                                    .accessibilityLabel(name(key))
-                                    .accessibilityAddTraits(focused ? .isSelected : [])
                                 }
+                                .id(row)
                             }
                         }
+                        .environment(\.layoutDirection, .leftToRight)
+                        Text(localization[keyboard.allowsPersian ? "GamepadKeyboardHelp" : "GamepadKeyboardIdentifierKeys"])
+                            .font(.caption2)
                     }
-                    .environment(\.layoutDirection, .leftToRight)
-                    Text(localization[keyboard.allowsPersian ? "GamepadKeyboardHelp" : "GamepadKeyboardIdentifierKeys"])
-                        .font(.caption2)
+                    .padding(12)
                 }
-                .padding(12)
+                .scrollBounceBehavior(.basedOnSize)
+                .onChange(of: keyboard.row) { reader.scrollTo(keyboard.row, anchor: .center) }
             }
-            .scrollBounceBehavior(.basedOnSize)
             .frame(width: width)
             .frame(maxHeight: min(380, geometry.size.height))
             .background(MizonPalette.surface, in: .rect(cornerRadius: 20))

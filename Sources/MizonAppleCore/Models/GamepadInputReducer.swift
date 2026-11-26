@@ -158,7 +158,27 @@ public struct GamepadInputReducer: Sendable {
     }
 }
 
-public enum GamepadFeedback: Sendable {
+/// Routes each sample only to the controller and surface that currently own input.
+public struct GamepadInputSession<Controller: Equatable, Surface: Equatable> {
+    private var controller: Controller?
+    private var surface: Surface?
+    private var reducer = GamepadInputReducer()
+
+    public init() {}
+
+    public mutating func read(_ reading: GamepadInputReducer.Reading?, controller: Controller?, surface: Surface?,
+                              atMilliseconds time: Int64) -> GamepadInputReducer.Action? {
+        if controller != self.controller || surface != self.surface {
+            reducer.reset()
+            self.controller = controller
+            self.surface = surface
+        }
+        guard controller != nil, surface != nil, let reading else { return nil }
+        return reducer.read(reading, atMilliseconds: time)
+    }
+}
+
+public enum GamepadFeedback: Sendable, Equatable {
     case success, error, validation
 
     public struct Pulse: Sendable {

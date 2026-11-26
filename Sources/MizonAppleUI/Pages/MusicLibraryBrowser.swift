@@ -13,6 +13,7 @@ struct MusicLibraryBrowser: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.controllerInputSuspended) private var controllerInputSuspended
+    @State private var controllerScroll = GamepadScroll()
     @FocusState private var focus: Target?
     @State private var items: [MusicLibraryPlaylistItemResponse] = []
     @State private var failed = false
@@ -72,6 +73,7 @@ struct MusicLibraryBrowser: View {
                     Text(text("LibraryEmpty")).foregroundStyle(.secondary)
                 }
             }
+            .gamepadScrolling(controllerScroll)
             .onChange(of: focus) { _, target in
                 if let target, target != .close { scroll.scrollTo(target, anchor: .center) }
             }
@@ -150,9 +152,8 @@ struct MusicLibraryBrowser: View {
                 }
             case .reset: focus = controls.first
             default:
-                if let step = input.focusStep ?? input.scrollStep.map({ $0 < 0 ? -4 : 4 }) {
-                    focus = controls.gamepadTarget(from: focus, step: step)
-                }
+                if let step = input.scrollStep { controllerScroll.move(by: step) }
+                else if let step = input.focusStep { focus = controls.gamepadTarget(from: focus, step: step) }
             }
         }
     }

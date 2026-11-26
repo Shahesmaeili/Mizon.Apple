@@ -407,7 +407,7 @@ private struct AuthenticationPage: View {
     }
 
     private enum ControllerScope: Equatable {
-        case form(registration: Bool, loading: Bool), keyboard(Field), help, settings
+        case form(registration: Bool, loading: Bool), keyboard(Field), help
     }
 
     private enum Field: String, Sendable {
@@ -501,8 +501,7 @@ private struct AuthenticationPage: View {
     @State private var controllerFocus: ControllerFocus?
     @State private var controllerKeyboard: GamepadKeyboard?
     @State private var controllerKeyboardField: Field?
-    @State private var controllerScroll = ScrollPosition(edge: .top)
-    @State private var controllerScrollOffset: CGFloat = 0
+    @State private var controllerScroll = GamepadScroll()
     #if os(macOS)
     @Environment(\.appearsActive) private var appearsActive
     #endif
@@ -569,10 +568,7 @@ private struct AuthenticationPage: View {
                                 .frame(minHeight: max(0, height - bottomInset - (split ? 0 : 46)))
                         }
                         .scrollIndicators(.hidden)
-                        .scrollPosition($controllerScroll)
-                        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: {
-                            _, offset in controllerScrollOffset = offset
-                        }
+                        .gamepadScrolling(controllerScroll)
                         .onChange(of: controllerFocus) {
                             guard let controllerFocus else { return }
                             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
@@ -1060,7 +1056,7 @@ private struct AuthenticationPage: View {
     private var gamepadScope: ControllerScope? {
         guard gamepadWindowActive else { return nil }
         #if os(iOS)
-        if showsSettings { return .settings }
+        if showsSettings { return nil }
         #endif
         if showsControllerHelp { return .help }
         if let controllerKeyboardField { return .keyboard(controllerKeyboardField) }
@@ -1079,12 +1075,6 @@ private struct AuthenticationPage: View {
     }
 
     private func applyGamepad(_ action: GamepadAction, feedback: GamepadFeedbackPlayer) {
-        #if os(iOS)
-        if showsSettings {
-            if action == .back { showsSettings = false }
-            return
-        }
-        #endif
         if showsControllerHelp {
             if action == .back || action == .help || action == .accept { showsControllerHelp = false }
             return
@@ -1152,7 +1142,7 @@ private struct AuthenticationPage: View {
             selectControllerFocus(targets[next])
         case .scroll:
             if let step = action.scrollStep {
-                controllerScroll.scrollTo(y: max(0, controllerScrollOffset + step))
+                controllerScroll.move(by: step)
             }
         case .help: break
         }

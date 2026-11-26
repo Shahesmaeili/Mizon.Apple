@@ -37,8 +37,7 @@ struct MusicHomeDestinationView: View {
     @Environment(\.appearsActive) private var appearsActive
     #endif
     @State private var controllerFocus: ControllerTarget?
-    @State private var controllerScroll = ScrollPosition(edge: .top)
-    @State private var offset: CGFloat = 0
+    @State private var controllerScroll = GamepadScroll()
     @State private var details: Details?
     @State private var tracks: [MusicTabMusicItemResponse] = []
     @State private var loading = true
@@ -127,10 +126,7 @@ struct MusicHomeDestinationView: View {
             .padding(24)
             .frame(maxWidth: .infinity)
         }
-        .scrollPosition($controllerScroll)
-        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: {
-            _, offset in self.offset = offset
-        }
+        .gamepadScrolling(controllerScroll)
     }
 
     private var loadIdentity: LoadIdentity {
@@ -605,7 +601,7 @@ struct MusicHomeDestinationView: View {
                 else { controllerFocus = controllerTargets.first }
             case .primary, .reset: controllerFocus = controllerTargets.first
             case .scroll:
-                if let step = action.scrollStep { controllerScroll.scrollTo(y: max(0, offset + step)) }
+                if let step = action.scrollStep { controllerScroll.move(by: step) }
             default:
                 if let step = action.focusStep { controllerFocus = controllerTargets.gamepadTarget(from: controllerFocus, step: step) }
             }

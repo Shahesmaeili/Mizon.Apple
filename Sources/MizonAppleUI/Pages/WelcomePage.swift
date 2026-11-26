@@ -14,8 +14,7 @@ struct WelcomePage: View {
     @State private var entranceVisible = false
     @State private var leaving = false
     @State private var showHelp = false
-    @State private var scroll = ScrollPosition()
-    @State private var scrollOffset: CGFloat = 0
+    @State private var controllerScroll = GamepadScroll()
     @FocusState private var focus: Control?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -75,12 +74,7 @@ struct WelcomePage: View {
                 .opacity(entranceVisible ? 1 : 0)
             }
             .scrollIndicators(.hidden)
-            .scrollPosition($scroll)
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                geometry.contentOffset.y + geometry.contentInsets.top
-            } action: { _, offset in
-                scrollOffset = offset
-            }
+            .gamepadScrolling(controllerScroll)
             #if os(iOS)
             .overlay(alignment: .topLeading) {
                 AuthLanguagePicker()
@@ -267,7 +261,7 @@ struct WelcomePage: View {
             isActive ? (showHelp ? 1 : model.stage == .connectionError && !model.isBusy && !leaving ? 2 : 0) : nil
         }) { action, _ in
             if !showHelp, let step = action.scrollStep {
-                scroll.scrollTo(y: max(0, scrollOffset + step))
+                controllerScroll.move(by: step)
                 return
             }
             let command: Command

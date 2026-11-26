@@ -732,6 +732,7 @@ struct MusicHomeAllActivityPage: View {
     @State private var loading = true
     @State private var failed = false
     @State private var linkResolved = false
+    @State private var controllerScroll = GamepadScroll()
     @FocusState private var focus: Target?
     private var localization = AuthLocalization()
 
@@ -768,6 +769,7 @@ struct MusicHomeAllActivityPage: View {
                     }
                     .padding(16)
                 }
+                .gamepadScrolling(controllerScroll)
                 .onChange(of: focus) { _, value in
                     if let value, value != .close { scroll.scrollTo(value, anchor: .center) }
                 }
@@ -858,9 +860,8 @@ struct MusicHomeAllActivityPage: View {
                 }
             case .reset: focus = controls.first
             default:
-                if let step = input.focusStep ?? input.scrollStep.map({ $0 < 0 ? -4 : 4 }) {
-                    focus = controls.gamepadTarget(from: focus, step: step)
-                }
+                if let step = input.scrollStep { controllerScroll.move(by: step) }
+                else if let step = input.focusStep { focus = controls.gamepadTarget(from: focus, step: step) }
             }
         }
     }

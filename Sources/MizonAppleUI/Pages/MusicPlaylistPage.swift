@@ -35,6 +35,7 @@ struct MusicPlaylistPage: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.controllerInputSuspended) private var controllerInputSuspended
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var controllerScroll = GamepadScroll()
     @FocusState private var focus: Target?
     @State private var details: MusicPlaylistDetailsViewModel
     @State private var request = PageRequest(page: 0)
@@ -220,6 +221,7 @@ struct MusicPlaylistPage: View {
                     .padding(.top, 5)
                     .padding(.bottom, 11)
                 }
+                .gamepadScrolling(controllerScroll)
                 .scrollIndicators(.hidden)
                 .accessibilityLabel(text("TrackList"))
                 .onChange(of: completedRequest) {
@@ -463,7 +465,9 @@ struct MusicPlaylistPage: View {
                 focus = .play
             } else if input == .reset {
                 focus = available.first
-            } else if let step = input.focusStep ?? input.scrollStep.map({ $0 < 0 ? -4 : 4 }) {
+            } else if let step = input.scrollStep {
+                controllerScroll.move(by: step)
+            } else if let step = input.focusStep {
                 focus = available.gamepadTarget(from: focus, step: step)
             }
         }

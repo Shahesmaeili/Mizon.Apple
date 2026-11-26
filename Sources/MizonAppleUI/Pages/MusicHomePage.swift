@@ -157,8 +157,8 @@ struct MusicHomePage: View {
     @State private var article: Int?
     @State private var recentScrollRequest = 0
     @State private var scrollHomeRequest = 0
-    @State private var controllerScroll = ScrollPosition(edge: .top)
-    @State private var controllerScrollOffset: CGFloat = 0
+    @State private var previewFocus: Action?
+    @State private var controllerScroll = GamepadScroll()
     @State private var searchFocusRequest = 0
     @State private var pointer = MusicHomePointer()
     #if os(macOS)
@@ -373,8 +373,8 @@ struct MusicHomePage: View {
                 try await service.image(for: username, session: session, artwork: artwork)
             }
         }
-        .task(id: controllerActive) {
-            if controllerActive { await observeGamepad() }
+        .task(id: controllerSurface != nil) {
+            if controllerSurface != nil { await observeGamepad() }
         }
         .sheet(item: $overlayDeepLink) { overlay in
             deepLinkOverlay(overlay.link)
@@ -800,10 +800,7 @@ struct MusicHomePage: View {
                 #endif
                 .frame(width: feedWidth)
                 .scrollIndicators(.hidden)
-                .scrollPosition($controllerScroll)
-                .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: {
-                    _, offset in controllerScrollOffset = offset
-                }
+                .gamepadScrolling(controllerScroll)
                 .onChange(of: controlFocus) { _, target in
                     if navigationFocus.showsNavigationFocus, let target,
                        target != .search, target != .home, target != .navigationOverflow, target != .nearby,
@@ -1415,11 +1412,13 @@ struct MusicHomePage: View {
                     FluentIcon(symbol: featurePaused ? .play : .pause, size: 16).frame(width: 32, height: 32)
                 }
                 .accessibilityLabel(text(featurePaused ? "ResumePresentation" : "PausePresentation"))
+                .modifier(PreviewControllerOutline(active: previewFocus == .rotateFeatures))
                 if previewPlayer != nil {
                     Button { activate(.mutePreview) } label: {
                         FluentIcon(symbol: previewMuted ? .speakerMute : .speaker2, size: 16).frame(width: 32, height: 32)
                     }
                     .accessibilityLabel(text(previewMuted ? "UnmuteVideo" : "MuteVideo"))
+                    .modifier(PreviewControllerOutline(active: previewFocus == .mutePreview))
                     Slider(value: $previewVolume) { Text(text("VideoVolume")) }
                         .onChange(of: previewVolume) { _, value in previewPlayer?.volume = Float(value) }
                 }
@@ -1428,16 +1427,32 @@ struct MusicHomePage: View {
                 MusicFeatureScrubber(player: previewPlayer, title: text("PresentationPosition"))
             }
             heroMenuButton("PlayInMizon") { activate(.playFeature) }
+                .modifier(PreviewControllerOutline(active: previewFocus == .playFeature))
             if previewPlayer != nil {
                 heroMenuButton("VideoFullWindow") { fullWindowVideo = true }
             }
             heroMenuButton("SaveMedia") { exportRequest = item }.disabled(exportRequest != nil)
             heroMenuButton("CopyMusicLink") { activate(.copyFeatureLink) }
+                .modifier(PreviewControllerOutline(active: previewFocus == .copyFeatureLink))
             heroMenuButton("RefreshFeatures") { activate(.refresh(.features)) }
+                .modifier(PreviewControllerOutline(active: previewFocus == .refresh(.features)))
         }
+        .onDisappear { previewFocus = nil }
         .buttonStyle(MusicHomeButtonStyle(fill: MusicHomeStyle.inset, stroke: MusicHomeStyle.stroke, corner: 8))
         .frame(width: 260)
         .padding(12)
+    }
+
+    private struct PreviewControllerOutline: ViewModifier {
+        let active: Bool
+
+        func body(content: Content) -> some View {
+            content.overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(active ? MizonPalette.accent : .clear, lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private func heroMenuButton(_ label: String, action: @escaping () -> Void) -> some View {
@@ -2142,9 +2157,14 @@ struct MusicHomePage: View {
         await GamepadControls.observe(scope: { controllerSurface }) { input, _ in
             guard let surface = controllerSurface else { return }
             if surface != .home {
-                if input == .back { dismissControllerSurface(surface) }
-                if input == .accept && surface == .fullVideo {
+                if input == .back {
+                    dismissControllerSurface(surface)
+                } else if surface == .preview {
+                    applyPreviewController(input)
+                } else if input == .accept && surface == .fullVideo {
                     if previewPlayer?.rate == 0 { previewPlayer?.play() } else { previewPlayer?.pause() }
+                } else if input == .accept && [.storyNotice, .linkCopied, .failure, .exportStatus].contains(surface) {
+                    dismissControllerSurface(surface)
                 }
                 return
             }
@@ -2175,11 +2195,30 @@ struct MusicHomePage: View {
             case .primary: controlFocus = targets.contains(.openFeature) ? .openFeature : targets.first
             case .scroll:
                 if let step = input.scrollStep {
-                    controllerScroll.scrollTo(y: max(0, controllerScrollOffset + step))
+                    controllerScroll.move(by: step)
                 }
             default:
                 if let step = input.focusStep { controlFocus = targets.gamepadTarget(from: controlFocus, step: step) }
             }
+        }
+    }
+
+    private func applyPreviewController(_ input: GamepadAction) {
+        var options: [Action] = [.rotateFeatures]
+        if previewPlayer != nil { options.append(.mutePreview) }
+        options += [.playFeature, .copyFeatureLink, .refresh(.features)]
+        if input == .accept {
+            guard let previewFocus, options.contains(previewFocus) else {
+                previewFocus = options.first
+                return
+            }
+            if previewFocus != .rotateFeatures && previewFocus != .mutePreview { showingPreviewControls = false }
+            activate(previewFocus)
+        } else if let step = input.focusStep {
+            previewFocus = options.gamepadTarget(from: previewFocus, step: step)
+        } else if let step = input.scrollStep, let previewPlayer {
+            previewVolume = min(1, max(0, previewVolume + (step < 0 ? 0.05 : -0.05)))
+            previewPlayer.volume = Float(previewVolume)
         }
     }
 

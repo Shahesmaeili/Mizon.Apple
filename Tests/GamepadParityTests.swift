@@ -46,8 +46,7 @@ private struct WindowsControllerContract: Decodable {
     }
 
     static func load() throws -> Self {
-        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/auth-gamepad-v1.json")
+        let fixture = try #require(Bundle.module.url(forResource: "auth-gamepad-v1", withExtension: "json"))
         return try JSONDecoder().decode(Self.self, from: Data(contentsOf: fixture))
     }
 }
@@ -123,6 +122,20 @@ struct GamepadParityTests {
         #expect(keyboard.isEnabled(keyboard.selectedKey))
         keyboard.resetFocus()
         #expect(keyboard.selectedKey == .character("0"))
+    }
+
+    @Test func sessionConsumesHeldActionsAcrossDialogsDisconnectAndResume() {
+        var session = GamepadInputSession<Int, String>()
+        #expect(session.read(.init(), controller: 1, surface: "form", atMilliseconds: 0) == nil)
+        #expect(session.read(.init(buttons: .a), controller: 1, surface: "form", atMilliseconds: 1) == .accept)
+        #expect(session.read(.init(buttons: .a), controller: 1, surface: "keyboard", atMilliseconds: 2) == nil)
+        #expect(session.read(.init(buttons: .a), controller: 1, surface: "keyboard", atMilliseconds: 720) == nil)
+        #expect(session.read(nil, controller: nil, surface: "keyboard", atMilliseconds: 750) == nil)
+        #expect(session.read(.init(buttons: .b), controller: 2, surface: "keyboard", atMilliseconds: 780) == nil)
+        #expect(session.read(.init(), controller: 2, surface: "keyboard", atMilliseconds: 790) == nil)
+        #expect(session.read(.init(buttons: .b), controller: 2, surface: "keyboard", atMilliseconds: 800) == .back)
+        #expect(session.read(.init(buttons: .b), controller: 2, surface: nil, atMilliseconds: 820) == nil)
+        #expect(session.read(.init(buttons: .b), controller: 2, surface: "form", atMilliseconds: 850) == nil)
     }
 
     @Test func reentryRequiresPhysicalNeutralForEachInputFamily() {
