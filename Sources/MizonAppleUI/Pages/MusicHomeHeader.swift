@@ -7,7 +7,7 @@ import AppKit
 
 struct MusicHomeWindowChrome: NSViewRepresentable {
     func makeNSView(context: Context) -> ChromeView { ChromeView() }
-    func updateNSView(_ view: ChromeView, context: Context) {}
+    func updateNSView(_ view: ChromeView, context: Context) { view.needsLayout = true }
 
     static func dismantleNSView(_ view: ChromeView, coordinator: ()) {
         view.restoreWindowChrome()
@@ -20,8 +20,15 @@ struct MusicHomeWindowChrome: NSViewRepresentable {
             let separator: NSTitlebarSeparatorStyle
         }
 
+        private struct WindowControl {
+            let original: NSButton
+            let inline: NSButton
+        }
+
+        private static let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         private weak var styledWindow: NSWindow?
         private var originalChrome: OriginalChrome?
+        private var windowControls: [WindowControl] = []
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -35,12 +42,71 @@ struct MusicHomeWindowChrome: NSViewRepresentable {
             window.styleMask.insert(.fullSizeContentView)
             window.titlebarAppearsTransparent = true
             window.titlebarSeparatorStyle = .none
+            NotificationCenter.default.addObserver(self, selector: #selector(fullScreenChanged),
+                                                   name: NSWindow.didEnterFullScreenNotification, object: window)
+            NotificationCenter.default.addObserver(self, selector: #selector(fullScreenChanged),
+                                                   name: NSWindow.didExitFullScreenNotification, object: window)
+            needsLayout = true
+        }
+
+        override func layout() {
+            super.layout()
+            guard let window = styledWindow else { return }
+            if window.styleMask.contains(.fullScreen) {
+                restoreWindowControls()
+                return
+            }
+            if windowControls.isEmpty { installWindowControls(in: window) }
+            for control in windowControls {
+                let originalCenter = NSPoint(x: control.original.bounds.midX, y: control.original.bounds.midY)
+                let centerInWindow = control.original.convert(originalCenter, to: nil)
+                let x = convert(centerInWindow, from: nil).x
+                control.inline.setFrameOrigin(NSPoint(x: x - control.inline.frame.width / 2,
+                                                      y: bounds.midY - control.inline.frame.height / 2))
+                control.inline.isEnabled = control.original.isEnabled
+            }
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            let hit = super.hitTest(point)
+            return hit === self ? nil : hit
+        }
+
+        private func installWindowControls(in window: NSWindow) {
+            let controls = Self.buttonTypes.compactMap { type -> WindowControl? in
+                guard let original = window.standardWindowButton(type), original.superview != nil,
+                      !original.isHidden, let inline = NSWindow.standardWindowButton(type, for: window.styleMask) else {
+                    return nil
+                }
+                inline.target = window
+                return WindowControl(original: original, inline: inline)
+            }
+            guard controls.count == Self.buttonTypes.count else { return }
+            windowControls = controls
+            for control in controls {
+                control.original.isHidden = true
+                addSubview(control.inline)
+            }
+        }
+
+        private func restoreWindowControls() {
+            for control in windowControls {
+                control.inline.removeFromSuperview()
+                control.original.isHidden = false
+            }
+            windowControls.removeAll()
+        }
+
+        @objc private func fullScreenChanged() {
+            needsLayout = true
         }
 
         func restoreWindowChrome() {
             guard let window = styledWindow, let original = originalChrome else { return }
             styledWindow = nil
             originalChrome = nil
+            NotificationCenter.default.removeObserver(self, name: nil, object: window)
+            restoreWindowControls()
             if !original.extendsUnderTitlebar { window.styleMask.remove(.fullSizeContentView) }
             window.titlebarAppearsTransparent = original.transparentTitlebar
             window.titlebarSeparatorStyle = original.separator

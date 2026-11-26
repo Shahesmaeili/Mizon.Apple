@@ -60,23 +60,35 @@ struct MusicHomeNavigationLayoutTests {
     @MainActor @Test func musicHomeExtendsBehindTheTitlebarAndRestoresTheWindowChrome() throws {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 340, height: 350),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.toolbarStyle = .unifiedCompact
         window.titlebarAppearsTransparent = false
         window.titlebarSeparatorStyle = .line
         let content = try #require(window.contentView)
-        let header = MusicHomeWindowChrome.ChromeView()
+        let originalButtons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+            .compactMap { window.standardWindowButton($0) }
+        let header = MusicHomeWindowChrome.ChromeView(frame: NSRect(x: 0, y: 298, width: 80, height: 52))
 
         content.addSubview(header)
         #expect(window.styleMask.contains(.fullSizeContentView))
         #expect(window.titlebarAppearsTransparent)
         #expect(window.titlebarSeparatorStyle == .none)
+        header.layoutSubtreeIfNeeded()
+        let controls = header.subviews.compactMap { $0 as? NSButton }
+        #expect(controls.count == 3)
+        #expect(originalButtons.allSatisfy { $0.isHidden })
+        for (control, original) in zip(controls, originalButtons) {
+            #expect(control.frame.midY == header.bounds.midY)
+            #expect(control.action == original.action)
+            #expect(control.target === window)
+        }
 
         header.removeFromSuperview()
         #expect(!window.styleMask.contains(.fullSizeContentView))
         #expect(!window.titlebarAppearsTransparent)
         #expect(window.titlebarSeparatorStyle == .line)
         #expect(window.toolbarStyle == .unifiedCompact)
+        #expect(originalButtons.allSatisfy { !$0.isHidden })
     }
     #endif
 }

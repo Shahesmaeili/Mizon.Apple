@@ -270,7 +270,6 @@ struct MusicHomePage: View {
                 #if os(macOS)
                 .background {
                     MusicHomeFocusInput(input: navigationFocus).frame(width: 0, height: 0)
-                    MusicHomeWindowChrome().frame(width: 0, height: 0)
                 }
                 #else
                 .toolbar(.hidden, for: .navigationBar)
@@ -489,7 +488,8 @@ struct MusicHomePage: View {
             .padding(.leading, windowControlsInset)
             .padding(.trailing, trailingInset)
             .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-            .background { MizonPalette.surface.gesture(WindowDragGesture()) }
+            .background(alignment: .leading) { MusicHomeWindowChrome().frame(width: windowControlsInset) }
+            .background { Color.clear.contentShape(.rect).gesture(WindowDragGesture()) }
     }
     #endif
 
