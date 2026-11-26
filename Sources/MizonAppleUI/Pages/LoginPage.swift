@@ -191,8 +191,7 @@ public struct MizonRootView: View {
                     .sharedBackgroundVisibility(.hidden)
                 }
             }
-            .toolbarBackground(MizonPalette.surface, for: .windowToolbar)
-            .toolbarBackgroundVisibility(showingAuthentication ? .visible : .hidden, for: .windowToolbar)
+            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             .toolbarColorScheme(.dark, for: .windowToolbar)
             .environment(\.layoutDirection, .leftToRight)
             #endif
