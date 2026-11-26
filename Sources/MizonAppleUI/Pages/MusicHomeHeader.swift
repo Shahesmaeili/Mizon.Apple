@@ -26,6 +26,7 @@ struct MusicHomeWindowChrome: NSViewRepresentable {
         }
 
         private static let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        private static let windowControlLeadingOffset: CGFloat = 6
         private weak var styledWindow: NSWindow?
         private var originalChrome: OriginalChrome?
         private var windowControls: [WindowControl] = []
@@ -60,7 +61,7 @@ struct MusicHomeWindowChrome: NSViewRepresentable {
             for control in windowControls {
                 let originalCenter = NSPoint(x: control.original.bounds.midX, y: control.original.bounds.midY)
                 let centerInWindow = control.original.convert(originalCenter, to: nil)
-                let x = convert(centerInWindow, from: nil).x
+                let x = convert(centerInWindow, from: nil).x + Self.windowControlLeadingOffset
                 control.inline.setFrameOrigin(NSPoint(x: x - control.inline.frame.width / 2,
                                                       y: bounds.midY - control.inline.frame.height / 2))
                 control.inline.isEnabled = control.original.isEnabled

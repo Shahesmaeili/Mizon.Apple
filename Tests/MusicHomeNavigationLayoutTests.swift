@@ -78,7 +78,10 @@ struct MusicHomeNavigationLayoutTests {
         #expect(controls.count == 3)
         #expect(originalButtons.allSatisfy { $0.isHidden })
         for (control, original) in zip(controls, originalButtons) {
+            let originalCenter = original.convert(NSPoint(x: original.bounds.midX, y: original.bounds.midY), to: nil)
+            #expect(control.frame.midX == header.convert(originalCenter, from: nil).x + 6)
             #expect(control.frame.midY == header.bounds.midY)
+            #expect(header.bounds.contains(control.frame))
             #expect(control.action == original.action)
             #expect(control.target === window)
         }
