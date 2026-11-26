@@ -308,6 +308,7 @@ struct MusicHomePage: View {
         }
         .preferredColorScheme(.dark)
         #if os(macOS)
+        .background { MacMusicPageTransition(path: navigationPath).frame(width: 0, height: 0) }
         .onAppear {
             MacMenuBarProfile.shared.present(session: model.session, service: model.service, artwork: model.artwork,
                                              displayName: displayName ?? "", avatar: menuBarAvatar,

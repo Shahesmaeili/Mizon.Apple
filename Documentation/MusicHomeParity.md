@@ -78,6 +78,7 @@ uses the shared canonical route. VoiceOver exposes the same actions, and Xbox X
 and Y can play or copy the focused playlist.
 
 Music Home and nested destinations on Mac and iPhone use the SwiftUI navigation
-stack's automatic transition. iPhone uses its system Back button and edge
-gesture. The existing Welcome profile handoff and login card animation remain
-part of their respective screens.
+stack. macOS uses a native Core Animation push for forward and backward
+navigation and honors Reduce Motion. iPhone uses SwiftUI's automatic transition,
+system Back button and edge gesture. The Welcome profile handoff and sign-in
+card flip remain part of their respective screens.

@@ -57,6 +57,19 @@ struct MusicHomeNavigationLayoutTests {
     }
 
     #if os(macOS)
+    @MainActor @Test func macPagePushFollowsTheNavigationDirection() {
+        let path: [MusicDestination] = [.section(.movies)]
+        let forward = MacMusicPageTransition.transition(from: [], to: path, direction: .leftToRight)
+        let backward = MacMusicPageTransition.transition(from: path, to: [], direction: .leftToRight)
+        let persianForward = MacMusicPageTransition.transition(from: [], to: path, direction: .rightToLeft)
+
+        #expect(forward?.type == .push)
+        #expect(forward?.subtype == .fromRight)
+        #expect(backward?.subtype == .fromLeft)
+        #expect(persianForward?.subtype == .fromLeft)
+        #expect(MacMusicPageTransition.transition(from: path, to: path, direction: .leftToRight) == nil)
+    }
+
     @MainActor @Test func musicHomeExtendsBehindTheTitlebarAndRestoresTheWindowChrome() throws {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 340, height: 350),
