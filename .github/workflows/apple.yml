@@ -16,5 +16,10 @@ jobs:
       - uses: swift-actions/setup-swift@v3
         with:
           swift-version: '6.4.1'
+      - name: Verify the Windows deep-link contract
+        run: |
+          fixture=https://raw.githubusercontent.com/Shahesmaeili/Mizon.Windows/main/docs/ai/contracts/deep-links-v1.json
+          curl --fail --silent --show-error --location --max-time 20 "$fixture" | cmp - Tests/Fixtures/deep-links-v1.json
+          bash Scripts/validate-deep-links.sh
       - name: Test login and compile shared Apple UI
         run: ./Scripts/validate-apple.sh

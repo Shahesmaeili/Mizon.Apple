@@ -61,6 +61,17 @@ struct MizonDeepLinkRouterTests {
         #expect(router.authorized == nil)
     }
 
+    @Test func rejectsAnOpenedReceiptForAContentLoad() async throws {
+        let router = MizonDeepLinkRouter()
+        let caller = Task { await router.result(for: MizonDeepLink.track(UUID(), action: .details)) }
+        let request = try await requirePending(router)
+        router.dispatch(request, sessionID: UUID())
+        let navigation = try #require(router.authorized)
+        router.complete(navigation, stage: .opened)
+        #expect(await caller.value.code == "invalid_result")
+        #expect(router.authorized == nil)
+    }
+
     private func requirePending(_ router: MizonDeepLinkRouter) async throws -> MizonDeepLinkRouter.Request {
         for _ in 0..<100 {
             if let waiting = router.pending { return waiting }

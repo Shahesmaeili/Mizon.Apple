@@ -26,7 +26,7 @@ let package = Package(
             .product(name: "Lottie", package: "lottie-spm", condition: .when(platforms: [.macOS, .iOS]))
         ], resources: [.process("Resources")]),
         .executableTarget(name: "MizonPreview", dependencies: ["MizonAppleUI", "MizonAppleCore"], path: "App/Mac"),
-        .testTarget(name: "MizonAppleTests", dependencies: ["MizonAppleCore", "MizonAppleUI", .product(name: "MizonAPI", package: "Mizon.API.Swift"), .product(name: "MizonAPIClient", package: "Mizon.API.Swift")], path: "Tests")
+        .testTarget(name: "MizonAppleTests", dependencies: ["MizonAppleCore", "MizonAppleUI", .product(name: "MizonAPI", package: "Mizon.API.Swift"), .product(name: "MizonAPIClient", package: "Mizon.API.Swift")], path: "Tests", resources: [.copy("Fixtures/deep-links-v1.json")])
     ],
     swiftLanguageModes: [.v6]
 )

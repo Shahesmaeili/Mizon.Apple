@@ -123,9 +123,8 @@ public enum MizonDeepLink: Hashable, Sendable {
             default: return nil
             }
         } else if let searchQuery {
-            guard Self.hasNoControlCharacters(searchQuery) else { return nil }
             let query = Self.trimWhitespace(searchQuery)
-            guard (1...120).contains(query.utf16.count) else { return nil }
+            guard (1...120).contains(query.utf16.count), Self.hasNoControlCharacters(query) else { return nil }
             self = .search(query)
         } else if key == "settings" {
             self = .settings(settingsSection)
@@ -217,7 +216,7 @@ public enum MizonDeepLink: Hashable, Sendable {
         }
     }
 
-    private static func publicID(_ value: Substring) -> UUID? {
+    static func publicID(_ value: Substring) -> UUID? {
         let bytes = Array(value.utf8)
         let canonical: String
         switch bytes.count {
@@ -285,7 +284,12 @@ public enum MizonDeepLink: Hashable, Sendable {
         text.unicodeScalars.allSatisfy { $0.properties.generalCategory != .control }
     }
 
+    // Match Char.IsWhiteSpace in the Windows parser, including its treatment of U+200B.
+    private static let windowsWhitespace = CharacterSet(charactersIn:
+        "\u{09}\u{0A}\u{0B}\u{0C}\u{0D} \u{85}\u{A0}\u{1680}\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}"
+        + "\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}")
+
     static func trimWhitespace(_ text: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines)
+        text.trimmingCharacters(in: windowsWhitespace)
     }
 }

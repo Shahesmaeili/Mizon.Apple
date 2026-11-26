@@ -23,14 +23,12 @@ struct OpenMizonLinkIntent: AppIntent {
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
         let response: MizonDeepLinkResult
         let version = responseVersion ?? MizonDeepLinkResult.protocolVersion
-        if let requestID {
-            if let id = UUID(uuidString: requestID), id.uuidString != "00000000-0000-0000-0000-000000000000" {
-                response = await MizonDeepLinkRouter.shared.result(for: link, requestID: id, version: version)
-            } else {
-                response = .failure(requestID: UUID(), code: "invalid_request", message: "The request ID must be a nonzero UUID.")
-            }
+        let metadata = MizonDeepLinkResult.RequestMetadata(rawID: requestID, version: version)
+        if let error = metadata.errorCode {
+            response = .failure(requestID: metadata.requestID, code: error,
+                                message: "The deep-link request metadata is invalid or its response version is unsupported.")
         } else {
-            response = await MizonDeepLinkRouter.shared.result(for: link, version: version)
+            response = await MizonDeepLinkRouter.shared.result(for: link, requestID: metadata.requestID, version: version)
         }
         return .result(value: String(decoding: try response.encoded(), as: UTF8.self))
     }

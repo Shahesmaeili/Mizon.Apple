@@ -1,6 +1,6 @@
 # Deep links on macOS and iPhone
 
-Reference [Mizon.Windows at 315d795](https://github.com/Shahesmaeili/Mizon.Windows/blob/315d795119102715dd4a5b2440b517ea290a343a/DeepLinks.md). Install a build that registers the `mizon` URL scheme. The Apple client uses the same canonical routes and also accepts the Windows `localhost` and SID aliases. IDs are public UUIDs. Welcome remains an internal account check.
+Reference [Mizon.Windows at a7010d7](https://github.com/Shahesmaeili/Mizon.Windows/blob/a7010d7a0e67e8f31e68712d5fb2314a599b53aa/DeepLinks.md). Install a build that registers the `mizon` URL scheme. The Apple client uses the same canonical routes and also accepts the Windows `localhost` and SID aliases. IDs are public UUIDs. Welcome remains an internal account check.
 
 | Link | Destination or operation |
 | --- | --- |
@@ -28,3 +28,11 @@ A regular URL opens Mizon. To receive a result, run the **Open Mizon Link** acti
 `opened` confirms presentation. `completed` confirms the corresponding load or operation. Request IDs correlate the result with the caller. The timeout is 50 seconds, or five minutes for an explicit download. A newer link supersedes the previous request. Ordinary protected links can wait for sign-in. A result request that requires sign-in returns `requires_sign_in` without queuing work for a later account. The response contains the typed destination and public identifiers when relevant. No credentials or local file paths are accepted or returned. Custom callback URLs are not part of the contract.
 
 Apple MCP navigation transport and its separate approval scope are not yet available.
+
+## Contract checks
+
+The [Windows v1 fixture](https://github.com/Shahesmaeili/Mizon.Windows/blob/a7010d7a0e67e8f31e68712d5fb2314a599b53aa/docs/ai/contracts/deep-links-v1.json)
+is mirrored byte for byte in `Tests/Fixtures`. CI compares the copy with the current Windows fixture and exercises the production Swift parser, result DTO and request lifecycle.
+Run `bash Scripts/validate-deep-links.sh` on macOS for the focused optimized tests.
+
+This reference covers the shared macOS and iOS scheme and App Intent. The watchOS target currently has no registered Mizon scheme or deep-link dispatcher. The VPN route on macOS and iOS shows the platform's availability page because those targets do not have the Windows VPN implementation. Some Apple settings sections likewise document platform availability.

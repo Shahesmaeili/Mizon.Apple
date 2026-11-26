@@ -97,6 +97,10 @@ public final class MizonDeepLinkRouter: ObservableObject {
 
     func complete(id: UUID, stage: MizonDeepLinkResult.Stage) {
         guard let active, active.request.id == id else { return }
+        guard stage == MizonDeepLinkResult.completionStage(for: active.request.route) else {
+            fail(id: id, code: "invalid_result", message: "The destination returned an invalid response.")
+            return
+        }
         finish(.success(requestID: active.responseID, route: active.request.route, stage: stage))
     }
 

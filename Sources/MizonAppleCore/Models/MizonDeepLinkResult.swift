@@ -6,6 +6,15 @@ public struct MizonDeepLinkResult: Codable, Equatable, Sendable {
         case opened, completed
     }
 
+    public static func completionStage(for route: MizonDeepLink) -> Stage {
+        switch route {
+        case .track, .musicComment, .playlist, .playlists, .client, .person, .story, .activities:
+            .completed
+        case .home, .login, .register, .music, .movies, .apps, .vpn, .settings, .search:
+            .opened
+        }
+    }
+
     public struct Payload: Codable, Equatable, Sendable {
         public let destination: String
         public let uri: String
@@ -53,6 +62,31 @@ public struct MizonDeepLinkResult: Codable, Equatable, Sendable {
     public static let versionKey = "mizon.responseVersion"
     public static let protocolVersion = 1
     public static let maximumJSONBytes = 16 * 1_024
+
+    /// Resolve caller-supplied metadata before activating the application.
+    public struct RequestMetadata: Sendable {
+        public let requestID: UUID
+        public let errorCode: String?
+
+        public init(rawID: String?, version: Int) {
+            let id = rawID.flatMap(Self.parseRequestID)
+            requestID = id ?? UUID()
+            if version != MizonDeepLinkResult.protocolVersion {
+                errorCode = "unsupported_version"
+            } else {
+                errorCode = rawID != nil && id == nil ? "invalid_request" : nil
+            }
+        }
+
+        private static func parseRequestID(_ raw: String) -> UUID? {
+            // Windows Guid.TryParse supports compact UUID text and wrappers.
+            var value = MizonDeepLink.trimWhitespace(raw)[...]
+            if (value.first == "{" && value.last == "}") || (value.first == "(" && value.last == ")") {
+                value = value.dropFirst().dropLast()
+            }
+            return MizonDeepLink.publicID(value)
+        }
+    }
 
     public let version: Int
     public let requestID: UUID
