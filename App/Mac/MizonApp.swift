@@ -35,7 +35,10 @@ struct MizonApp: App {
         .defaultSize(width: 1000, height: 700)
         .defaultPosition(.center)
         .windowResizability(.contentMinSize)
-        .commands { CommandGroup(replacing: .newItem) {} }
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+            MizonMacTerminationCommands()
+        }
         Settings { ServerSettingsView(model: model) }
         #else
         WindowGroup("Mizon") {
@@ -48,6 +51,21 @@ struct MizonApp: App {
     }
 }
 #if os(macOS)
+private struct MizonMacTerminationCommands: Commands {
+    @ObservedObject private var menuBarProfile = MacMenuBarProfile.shared
+
+    var body: some Commands {
+        CommandGroup(replacing: .appTermination) {
+            if menuBarProfile.keepsApplicationRunning {
+                Button(menuBarProfile.closeToMenuBarTitle) { NSApp.hide(nil) }
+                    .keyboardShortcut("q", modifiers: .command)
+            }
+            Button(menuBarProfile.quitTitle) { NSApp.terminate(nil) }
+                .keyboardShortcut("q", modifiers: menuBarProfile.keepsApplicationRunning ? [.command, .option] : .command)
+        }
+    }
+}
+
 private struct MizonMacWindowContent: View {
     let model: LoginViewModel
     let shortcuts: MizonDockShortcuts

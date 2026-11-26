@@ -1,4 +1,7 @@
 "ShowMenuBarProfile" = "Show profile and mood in the menu bar";
+"CloseToMenuBar" = "Close Mizon to the Menu Bar";
+"QuitMizon" = "Quit Mizon";
+"QuitCompletely" = "Quit Mizon Completely";
 "OpenProfile" = "Open my Mizon profile";
 "PlayMood" = "Play mood effect: %@";
 "Opening" = "Opening profile";

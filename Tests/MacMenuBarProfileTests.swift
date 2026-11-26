@@ -28,16 +28,23 @@ struct MacMenuBarProfileTests {
 
     @Test func preservesTaskbarProportionsWithinTheSystemBar() {
         let compact = StatusArtworkMetrics(barHeight: 24)
-        #expect(compact.control == 20)
-        #expect(compact.itemWidth == 28)
+        #expect(compact.control == 23)
+        #expect(compact.itemWidth == 33)
+        #expect(compact.avatar == 22)
+        #expect(compact.emojiFont > 20)
+        #expect(abs(compact.moodScale * MoodLottiePlayback.badgeSize.height - compact.control) < 0.0001)
         #expect(abs(compact.badge / compact.avatar - 9.0 / 32) < 0.0001)
 
+        let external = StatusArtworkMetrics(barHeight: 22)
+        #expect(external.avatar == 20)
+        #expect(external.emojiFont > 19)
+        #expect(external.control < 22)
+
         let tall = StatusArtworkMetrics(barHeight: 40)
-        #expect(tall.control == 36)
-        #expect(tall.avatar == 32)
-        #expect(tall.badge == 9)
-        #expect(tall.badgeOffset == 11)
-        #expect(tall.cutoutRadius == 7)
+        #expect(tall.control == 38)
+        #expect(tall.avatar == 37)
+        #expect(abs(tall.badge / tall.avatar - 9.0 / 32) < 0.0001)
+        #expect(tall.badgeOffset + tall.badge / 2 < tall.control / 2)
     }
 
     @Test func placesTheEffectBelowTheMenuBarOnTheCurrentDisplay() {

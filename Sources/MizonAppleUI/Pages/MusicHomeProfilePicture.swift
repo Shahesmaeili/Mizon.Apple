@@ -5,11 +5,12 @@ struct MusicHomeProfilePicture: View {
     let avatar: CGImage?
     let displayName: String?
     var isOnline: Bool? = nil
+    var size: CGFloat = 32
 
     var body: some View {
         Group {
             if let isOnline {
-                ProfilePresenceBadge(size: 32, isOnline: isOnline) { portrait }
+                ProfilePresenceBadge(size: size, isOnline: isOnline) { portrait }
             } else {
                 portrait
             }
@@ -23,22 +24,22 @@ struct MusicHomeProfilePicture: View {
                 Image(decorative: avatar, scale: 1)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: 32, height: 32)
+                    .frame(width: size, height: size)
             } else {
                 Circle().fill(MizonPalette.ink.opacity(0.14))
                 if let initials {
                     Text(initials)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: size * 12 / 32, weight: .semibold))
                         .foregroundStyle(MizonPalette.ink)
                         .lineLimit(1)
                 } else {
                     Image(systemName: "person.fill")
-                        .font(.system(size: 14))
+                        .font(.system(size: size * 14 / 32))
                         .foregroundStyle(MizonPalette.ink)
                 }
             }
         }
-        .frame(width: 32, height: 32)
+        .frame(width: size, height: size)
         .clipShape(Circle())
     }
 

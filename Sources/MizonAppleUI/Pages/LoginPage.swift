@@ -67,7 +67,13 @@ public struct MizonRootView: View {
             .foregroundStyle(MizonPalette.ink)
             .tint(MizonPalette.accent)
             .preferredColorScheme(.dark)
-            .background { WindowGlass().ignoresSafeArea() }
+            .background {
+                #if os(macOS)
+                WindowGlass(drawsTransparentTitlebar: false).ignoresSafeArea()
+                #else
+                WindowGlass().ignoresSafeArea()
+                #endif
+            }
             #if os(macOS)
             .overlay {
                 let hasAuthError = model.error != nil || model.validationKey != nil
@@ -123,7 +129,12 @@ public struct MizonRootView: View {
                 deepLinkSettings = nil
                 openPendingShortcut()
             }
-            .onChange(of: localization.isPersian) { updateShortcutMenu() }
+            .onChange(of: localization.isPersian, initial: true) { _, isPersian in
+                #if os(macOS)
+                MacMenuBarProfile.shared.setLanguage(isPersian: isPersian)
+                #endif
+                updateShortcutMenu()
+            }
             .onChange(of: model.session?.sessionPublicId) {
                 accountSheet = nil
                 authShortcut = nil
@@ -180,7 +191,9 @@ public struct MizonRootView: View {
                     .sharedBackgroundVisibility(.hidden)
                 }
             }
-            .toolbarBackground(.hidden, for: .windowToolbar)
+            .toolbarBackground(MizonPalette.surface, for: .windowToolbar)
+            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
+            .toolbarColorScheme(.dark, for: .windowToolbar)
             .environment(\.layoutDirection, .leftToRight)
             #endif
     }

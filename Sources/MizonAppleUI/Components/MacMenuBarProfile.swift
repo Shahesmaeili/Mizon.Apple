@@ -51,7 +51,9 @@ public final class MacMenuBarProfile: ObservableObject {
     }
 
     public var activateMainWindow: (() -> Void)?
-    public var keepsApplicationRunning: Bool { enabled && account != nil }
+    @Published public private(set) var keepsApplicationRunning = false
+    public var closeToMenuBarTitle: String { text("CloseToMenuBar") }
+    public var quitTitle: String { text(keepsApplicationRunning ? "QuitCompletely" : "QuitMizon") }
 
     private var currentMood: ClientMoodItemResponse? {
         guard let mood = account?.mood, mood.publicId != .emptyMediaID,
@@ -61,7 +63,7 @@ public final class MacMenuBarProfile: ObservableObject {
 
     private var enabled = UserDefaults.standard.object(forKey: preferenceKey) as? Bool ?? true
     private var account: Account?
-    private var language = "en"
+    @Published private var language = "en"
     private var openFailed = false
     private var openRequestID: UUID?
     private var openTask: Task<Void, Never>?
@@ -95,7 +97,7 @@ public final class MacMenuBarProfile: ObservableObject {
 
     func present(session: AuthSession, service: MusicHomeService, artwork: MusicArtworkStore,
                  displayName: String, avatar: Avatar, mood: ClientMoodItemResponse?, isPersian: Bool) {
-        language = isPersian ? "fa" : "en"
+        updateLanguage(isPersian: isPersian)
         if account?.session.sessionPublicId == session.sessionPublicId {
             account?.artwork = artwork
             account?.avatar.update(avatar)
@@ -137,8 +139,15 @@ public final class MacMenuBarProfile: ObservableObject {
     func setAccountBusy(_ busy: Bool) { accountBusy = busy }
 
     func setLanguage(isPersian: Bool) {
-        language = isPersian ? "fa" : "en"
-        if account != nil { render() }
+        if updateLanguage(isPersian: isPersian), account != nil { render() }
+    }
+
+    @discardableResult
+    private func updateLanguage(isPersian: Bool) -> Bool {
+        let next = isPersian ? "fa" : "en"
+        guard language != next else { return false }
+        language = next
+        return true
     }
 
     private func requestProfile() {
@@ -253,7 +262,9 @@ public final class MacMenuBarProfile: ObservableObject {
     }
 
     private func render() {
-        guard enabled, let account else {
+        let staysInMenuBar = enabled && account != nil
+        if keepsApplicationRunning != staysInMenuBar { keepsApplicationRunning = staysInMenuBar }
+        guard staysInMenuBar, let account else {
             items.render(profile: nil)
             return
         }

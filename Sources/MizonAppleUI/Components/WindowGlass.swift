@@ -5,7 +5,9 @@ import AppKit
 
 struct WindowGlass: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    #if os(iOS)
+    #if os(macOS)
+    var drawsTransparentTitlebar = true
+    #elseif os(iOS)
     var tintOpacity = 0.86
     #endif
 
@@ -14,7 +16,7 @@ struct WindowGlass: View {
         if reduceTransparency {
             MizonPalette.surface
         } else {
-            WindowBackdrop()
+            WindowBackdrop(drawsTransparentTitlebar: drawsTransparentTitlebar)
                 .overlay(MizonPalette.surface.opacity(0.73))
         }
         #elseif os(iOS)
@@ -32,16 +34,21 @@ struct WindowGlass: View {
 
 #if os(macOS)
 private struct WindowBackdrop: NSViewRepresentable {
+    let drawsTransparentTitlebar: Bool
+
     final class Backdrop: NSVisualEffectView {
+        var drawsTransparentTitlebar = true
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             window?.isOpaque = false
             window?.backgroundColor = .clear
-            window?.titlebarAppearsTransparent = true
+            if drawsTransparentTitlebar { window?.titlebarAppearsTransparent = true }
         }
     }
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = Backdrop()
+        view.drawsTransparentTitlebar = drawsTransparentTitlebar
         view.material = .sidebar
         view.appearance = NSAppearance(named: .darkAqua)
         view.blendingMode = .behindWindow

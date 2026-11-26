@@ -271,9 +271,8 @@ struct MusicHomePage: View {
                 }
                 .onGeometryChange(for: CGSize.self, of: \.size) { headerViewport = $0 }
                 .toolbar {
-                    ToolbarSpacer(.flexible, placement: .primaryAction)
-                    ToolbarItem(placement: .primaryAction) {
-                        header(viewport: headerViewport, width: min(1120, max(230, headerViewport.width - 168)))
+                    ToolbarItem(placement: .navigation) {
+                        header(viewport: headerViewport, width: max(230, headerViewport.width - 112))
                             .padding(.top, 5)
                             .padding(.bottom, 3)
                     }

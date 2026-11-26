@@ -38,22 +38,20 @@ final class MacProfileStatusItems: NSObject {
             removeItems()
             return
         }
-        let size = StatusArtworkMetrics(barHeight: NSStatusBar.system.thickness)
-
         // AppKit inserts new items to the left. Install the profile first so the optional mood
         // uses the same initial left-to-right order as the Windows taskbar.
         if profileItem == nil {
             (profileItem, profileHost) = makeItem("mizon.menuBar.profile", action: #selector(profilePressed))
         }
         if let profileItem, let profileHost, let button = profileItem.button {
-            profileItem.length = size.itemWidth
+            profileItem.length = itemWidth(for: button)
             button.isEnabled = !profile.isOpening
             button.setAccessibilityLabel(profile.profileTitle)
             button.setAccessibilityValue(profile.profileStatus)
             button.toolTip = [profile.displayName, profile.profileStatus].filter { !$0.isEmpty }.joined(separator: " · ")
             profileHost.rootView = StatusArtwork(
                 symbol: .profile(profile.avatar, profile.displayName, online: profile.isOnline, busy: profile.isOpening),
-                metrics: size, interaction: profileHost.interaction
+                interaction: profileHost.interaction
             )
         }
 
@@ -62,11 +60,10 @@ final class MacProfileStatusItems: NSObject {
                 (moodItem, moodHost) = makeItem("mizon.menuBar.mood", action: #selector(moodPressed))
             }
             if let moodItem, let moodHost, let button = moodItem.button {
-                moodItem.length = size.itemWidth
+                moodItem.length = itemWidth(for: button)
                 button.setAccessibilityLabel(mood.accessibilityTitle)
                 button.toolTip = mood.title
-                moodHost.rootView = StatusArtwork(symbol: .mood(mood.emoji, mood.loop),
-                                                  metrics: size, interaction: moodHost.interaction)
+                moodHost.rootView = StatusArtwork(symbol: .mood(mood.emoji, mood.loop), interaction: moodHost.interaction)
                 moodHost.refreshVisibility()
             }
         } else {
@@ -149,12 +146,14 @@ final class MacProfileStatusItems: NSObject {
         observers.append((center, observer))
     }
 
+    private func itemWidth(for button: NSStatusBarButton) -> CGFloat {
+        StatusArtworkMetrics(barHeight: max(button.bounds.height, NSStatusBar.system.thickness)).itemWidth
+    }
+
     private func makeItem(_ identifier: String, action: Selector) -> (NSStatusItem, StatusArtworkHost) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         let interaction = StatusArtworkInteraction()
-        let host = StatusArtworkHost(rootView: StatusArtwork(
-            symbol: .empty, metrics: .init(barHeight: NSStatusBar.system.thickness), interaction: interaction
-        ))
+        let host = StatusArtworkHost(rootView: StatusArtwork(symbol: .empty, interaction: interaction))
         host.interaction = interaction
         if let button = item.button {
             button.setAccessibilityIdentifier(identifier)
@@ -174,16 +173,17 @@ final class MacProfileStatusItems: NSObject {
 
 struct StatusArtworkMetrics {
     let control: CGFloat
-    var itemWidth: CGFloat { control + 8 }
-    var scale: CGFloat { control / 36 }
-    var avatar: CGFloat { 32 * scale }
+    var itemWidth: CGFloat { control + 10 }
+    var avatar: CGFloat { max(1, control - 1) }
+    var emojiFont: CGFloat { control * 0.94 }
+    var moodScale: CGFloat { control / MoodLottiePlayback.badgeSize.height }
     private var presenceBadge: ProfilePresenceBadgeMetrics { .init(size: avatar) }
     var badge: CGFloat { presenceBadge.badge }
     var badgeOffset: CGFloat { presenceBadge.center - avatar / 2 }
     var cutoutRadius: CGFloat { presenceBadge.cutoutRadius }
 
     init(barHeight: CGFloat) {
-        control = min(36, max(1, barHeight - 4))
+        control = min(38, max(1, barHeight - 1))
     }
 
     static func effectFrame(anchor: CGRect, usableScreen: CGRect) -> CGRect {
@@ -257,24 +257,29 @@ private struct StatusArtwork: View {
     }
 
     let symbol: Symbol
-    let metrics: StatusArtworkMetrics
     let interaction: StatusArtworkInteraction
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var readyLoop: URL?
 
     var body: some View {
+        GeometryReader { geometry in
+            let available = min(geometry.size.height, geometry.size.width - 4)
+            artwork(.init(barHeight: available))
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func artwork(_ metrics: StatusArtworkMetrics) -> some View {
         ZStack {
             switch symbol {
             case .empty:
                 Color.clear
             case let .profile(image, name, online, busy):
                 ZStack {
-                    if busy { progress }
+                    if busy { progress(metrics) }
                     ZStack {
-                        MusicHomeProfilePicture(avatar: image, displayName: name)
-                            .scaleEffect(metrics.scale)
-                            .frame(width: metrics.avatar, height: metrics.avatar)
-                            .mask { cutoutMask }
+                        MusicHomeProfilePicture(avatar: image, displayName: name, size: metrics.avatar)
+                            .mask { cutoutMask(metrics) }
                         Circle()
                             .fill(ProfilePresenceBadgeMetrics.color(isOnline: online))
                             .frame(width: metrics.badge, height: metrics.badge)
@@ -286,15 +291,14 @@ private struct StatusArtwork: View {
                 let playsLoop = interaction.visible && !reduceMotion
                 ZStack {
                     if !playsLoop || loop == nil || loop != readyLoop {
-                        Text(emoji).font(.system(size: 26 * metrics.scale))
+                        Text(emoji).font(.system(size: metrics.emojiFont))
                     }
                     if let loop {
                         MoodLottieView(file: loop, playback: .loop, playing: playsLoop,
                                        onReady: { readyLoop = loop })
                             .id(loop)
                             .opacity(playsLoop ? 1 : 0)
-                            .scaleEffect(x: 28 * metrics.scale / MoodLottiePlayback.badgeSize.width,
-                                         y: 28 * metrics.scale / MoodLottiePlayback.badgeSize.height)
+                            .scaleEffect(metrics.moodScale)
                     }
                 }
                 .scaleEffect(interaction.hovered && !reduceMotion ? 1.06 : 1)
@@ -312,10 +316,9 @@ private struct StatusArtwork: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: interaction.hovered)
-        .accessibilityHidden(true)
     }
 
-    private var progress: some View {
+    private func progress(_ metrics: StatusArtworkMetrics) -> some View {
         TimelineView(.animation(paused: !interaction.visible || reduceMotion)) { context in
             let angle = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) * 360
             Circle()
@@ -325,10 +328,10 @@ private struct StatusArtwork: View {
                 .rotationEffect(.degrees(angle))
         }
         .frame(width: metrics.control, height: metrics.control)
-        .mask { cutoutMask }
+        .mask { cutoutMask(metrics) }
     }
 
-    private var cutoutMask: some View {
+    private func cutoutMask(_ metrics: StatusArtworkMetrics) -> some View {
         Path { path in
             let size = metrics.control
             path.addRect(CGRect(x: 0, y: 0, width: size, height: size))
