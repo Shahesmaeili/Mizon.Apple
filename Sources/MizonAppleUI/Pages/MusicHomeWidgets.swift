@@ -1,5 +1,4 @@
 #if os(macOS) || os(iOS)
-import GameController
 #if os(macOS)
 import AppKit
 #else
@@ -842,47 +841,27 @@ struct MusicHomeAllActivityPage: View {
     private func widget(_ key: String) -> String { localization.string(key, table: "MusicWidgets") }
 
     private func observeController() async {
-        var previous: GCExtendedGamepad?
-        var armed = false
-        var held = 0
-        while !Task.isCancelled {
-            let current = GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad
-            if current !== previous {
-                previous = current
-                armed = false
-                held = 0
-            }
-            if let pad = current {
-                let up = max(pad.dpad.yAxis.value, pad.leftThumbstick.yAxis.value)
-                let down = min(pad.dpad.yAxis.value, pad.leftThumbstick.yAxis.value)
-                let input = pad.buttonB.isPressed ? 1 : pad.buttonA.isPressed ? 2 : up > 0.65 ? 3 : down < -0.65 ? 4 : 0
-                if input == 0 { armed = true; held = 0 }
-                if armed, held == 0, input != 0 {
-                    held = input
-                    let controls = targets
-                    switch input {
-                    case 1: dismiss(); return
-                    case 2:
-                        switch focus {
-                        case .close: dismiss(); return
-                        case .more where controls.contains(.more), .retry where controls.contains(.retry):
-                            paginationRequest += 1
-                        case .activity(let id):
-                            if let item = response?.activities.first(where: { $0.activityId == id }), canOpen(item) {
-                                open(item)
-                                return
-                            }
-                        default: focus = controls.first
-                        }
-                    default:
-                        let next = focus.flatMap { controls.firstIndex(of: $0) }.map {
-                            min(controls.count - 1, max(0, $0 + (input == 3 ? -1 : 1)))
-                        } ?? 0
-                        focus = controls[next]
+        await GamepadControls.observe(when: { scenePhase == .active }) { input in
+            let controls = targets
+            switch input {
+            case .back: dismiss()
+            case .accept:
+                switch focus {
+                case .close: dismiss()
+                case .more where controls.contains(.more), .retry where controls.contains(.retry):
+                    paginationRequest += 1
+                case .activity(let id):
+                    if let item = response?.activities.first(where: { $0.activityId == id }), canOpen(item) {
+                        open(item)
                     }
+                default: focus = controls.first
+                }
+            case .reset: focus = controls.first
+            default:
+                if let step = input.focusStep ?? input.scrollStep.map({ $0 < 0 ? -4 : 4 }) {
+                    focus = controls.gamepadTarget(from: focus, step: step)
                 }
             }
-            do { try await Task.sleep(for: .milliseconds(32)) } catch { break }
         }
     }
 }

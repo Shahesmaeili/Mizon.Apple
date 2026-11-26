@@ -1,5 +1,4 @@
 #if os(macOS) || os(iOS)
-import GameController
 import MizonAppleCore
 import SwiftUI
 import UserNotifications
@@ -333,27 +332,18 @@ struct DeepLinkSettingsView: View {
     }
 
     private func observeController() async {
-        var latch = NearbyControllerLatch()
-        while !Task.isCancelled {
-            if let controller = GCController.controllers().first(where: { $0.extendedGamepad != nil }),
-               let gamepad = controller.extendedGamepad {
-                let x = gamepad.dpad.xAxis.value
-                let y = gamepad.dpad.yAxis.value
-                let horizontal = x == 0 ? gamepad.leftThumbstick.xAxis.value : x
-                let input = NearbyControllerInput(horizontal: localization.isPersian ? -horizontal : horizontal,
-                                                  vertical: y == 0 ? gamepad.leftThumbstick.yAxis.value : y,
-                                                  confirm: gamepad.buttonA.isPressed, dismiss: gamepad.buttonB.isPressed)
-                switch latch.consume(input, controller: ObjectIdentifier(controller)) {
-                case .close: activate(.close)
-                case .activate: activate(focused ?? .section(selection))
-                case .focusClose: moveFocus(by: -1)
-                case .focusVisibility: moveFocus(by: 1)
-                case nil: break
-                }
-            } else {
-                latch = NearbyControllerLatch()
+        await GamepadControls.observe(scope: { pollsController ? selection : nil }) { input, _ in
+            switch input {
+            case .back: activate(.close)
+            case .accept: activate(focused ?? .section(selection))
+            case .primary: focused = .section(selection)
+            case .reset: focused = .close
+            default:
+                guard let step = input.focusStep else { return }
+                if case .move(.left) = input, localization.isPersian { moveFocus(by: 1) }
+                else if case .move(.right) = input, localization.isPersian { moveFocus(by: -1) }
+                else { moveFocus(by: step) }
             }
-            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
         }
     }
 

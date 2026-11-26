@@ -466,6 +466,8 @@ struct MusicHomeSearch: View {
     @State private var loading = false
     @State private var failed = false
     @State private var linkedQuery = false
+    @State private var controllerKeyboard: GamepadKeyboard?
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private var localization = AuthLocalization()
@@ -473,7 +475,14 @@ struct MusicHomeSearch: View {
     private var normalized: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var minimumQueryLength: Int { linkedQuery ? 1 : 2 }
 
+    var presentsInline = false
+
     var body: some View {
+        if presentsInline { searchPanel }
+        else { toolbarSearch }
+    }
+
+    private var toolbarSearch: some View {
         Button { showingSearch = true } label: {
             HStack(spacing: 6) {
                 if !compact {
@@ -499,31 +508,46 @@ struct MusicHomeSearch: View {
         .accessibilityIdentifier("music.home.search.button")
         .keyboardShortcut("k", modifiers: .command)
         .popover(isPresented: $showingSearch, arrowEdge: .top) {
-            VStack(spacing: 8) {
+            searchPanel.presentationCompactAdaptation(.popover)
+        }
+        .onChange(of: focusRequest) { _, _ in showingSearch = true }
+    }
+
+    private var searchPanel: some View {
+        VStack(spacing: 8) {
+            if let controllerKeyboard {
+                AuthGamepadKeyboard(keyboard: controllerKeyboard, value: query,
+                                    prompt: searchText("ShellSearchPlaceholder"), activate: useControllerKey)
+                    .frame(height: 320)
+            } else {
                 searchField
                 if normalized.count >= minimumQueryLength { searchSuggestions }
             }
-            .padding(10)
-            .frame(width: min(420, max(240, viewportWidth - 42)))
-            .foregroundStyle(MizonPalette.ink)
-            .tint(MizonPalette.accent)
-            .background { MizonPalette.surface.opacity(reduceTransparency ? 1 : 0.70).ignoresSafeArea() }
-            .presentationCompactAdaptation(.popover)
-            .task {
-                focused = true
-                await Task.yield()
-                if !Task.isCancelled { focused = true }
-            }
-            .task(id: deepLink?.id) {
-                guard let deepLink, case .search(let term) = deepLink.route,
-                      MizonDeepLinkRouter.shared.isActive(deepLink), !Task.isCancelled else { return }
-                linkedQuery = true
-                query = term
-                MizonDeepLinkRouter.shared.complete(deepLink, stage: .opened)
-            }
-            .onDisappear { linkedQuery = false }
         }
-        .onChange(of: focusRequest) { _, _ in showingSearch = true }
+        .padding(10)
+        .frame(width: min(420, max(240, viewportWidth - 42)))
+        .foregroundStyle(MizonPalette.ink)
+        .tint(MizonPalette.accent)
+        .background { MizonPalette.surface.opacity(reduceTransparency ? 1 : 0.70).ignoresSafeArea() }
+        .task {
+            focused = true
+            await Task.yield()
+            if !Task.isCancelled { focused = true }
+        }
+        .task(id: deepLink?.id) {
+            guard let deepLink, case .search(let term) = deepLink.route,
+                  MizonDeepLinkRouter.shared.isActive(deepLink), !Task.isCancelled else { return }
+            linkedQuery = true
+            query = term
+            MizonDeepLinkRouter.shared.complete(deepLink, stage: .opened)
+        }
+        .task(id: scenePhase) {
+            if scenePhase == .active { await observeGamepad() }
+        }
+        .onDisappear {
+            linkedQuery = false
+            controllerKeyboard = nil
+        }
         .task(id: showingSearch ? normalized : "") {
             await find(showingSearch ? normalized : "")
         }
@@ -642,6 +666,43 @@ struct MusicHomeSearch: View {
         let index = position.map { max(0, min(results.count - 1, $0 + step)) } ?? (step > 0 ? 0 : results.count - 1)
         selected = results[index].id
         return .handled
+    }
+
+    private func observeGamepad() async {
+        await GamepadControls.observe(scope: {
+            showingSearch && scenePhase == .active ? (controllerKeyboard != nil) : nil
+        }) { action, _ in
+            if var keyboard = controllerKeyboard {
+                let key = keyboard.key(for: action)
+                controllerKeyboard = keyboard
+                if let key { useControllerKey(key) }
+            } else {
+                switch action {
+                case .back: showingSearch = false
+                case .accept:
+                    if let result = results.first(where: { $0.id == selected }) { choose(result) }
+                    else { openControllerKeyboard() }
+                case .submit, .primary: openControllerKeyboard()
+                case .reset: selected = nil
+                case .clear: query = ""
+                default:
+                    if let step = action.focusStep ?? action.scrollStep.map({ $0 < 0 ? -4 : 4 }) { _ = move(step) }
+                }
+            }
+        }
+    }
+
+    private func openControllerKeyboard() {
+        focused = false
+        controllerKeyboard = GamepadKeyboard(allowsPersian: true, masksValue: false,
+                                              persian: localization.isPersian, length: query.count)
+    }
+
+    private func useControllerKey(_ key: GamepadKeyboard.Key) {
+        guard var keyboard = controllerKeyboard else { return }
+        if key == .done || key == .close { controllerKeyboard = nil; return }
+        if let result = keyboard.edit(key, value: query, accepts: { $0.utf16.count <= 256 }) { query = result }
+        controllerKeyboard = keyboard
     }
 
     private func find(_ term: String) async {

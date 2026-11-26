@@ -1,5 +1,4 @@
 #if os(macOS) || os(iOS)
-import GameController
 import MizonAPIClient
 import MizonAppleCore
 import SwiftUI
@@ -34,6 +33,7 @@ struct MusicPlaylistPage: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.controllerInputSuspended) private var controllerInputSuspended
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focus: Target?
     @State private var details: MusicPlaylistDetailsViewModel
@@ -445,34 +445,27 @@ struct MusicPlaylistPage: View {
     }
 
     private func observeController() async {
-        var previous: GCExtendedGamepad?
-        var armed = false
-        var held = false
-        while !Task.isCancelled {
-            let pad = GCController.controllers().first { $0.extendedGamepad != nil }?.extendedGamepad
-            if pad !== previous {
-                previous = pad
-                armed = false
-                held = false
+        await GamepadControls.observe(when: { scenePhase == .active && !controllerInputSuspended }) { input in
+            if input == .back {
+                if message != nil { perform(.dismissMessage) }
+                else { dismiss() }
+                return
             }
-            if let pad {
-                let x = pad.dpad.xAxis.value
-                let y = pad.dpad.yAxis.value
-                let step = y < -0.65 || x > 0.65 ? 1 : y > 0.65 || x < -0.65 ? -1 : 0
-                let active = step != 0 || pad.buttonA.isPressed || pad.buttonB.isPressed
-                if !active { armed = true; held = false }
-                if armed, active, !held {
-                    held = true
-                    if pad.buttonB.isPressed { dismiss(); return }
-                    let available = targets
-                    if pad.buttonA.isPressed, let focus, available.contains(focus) { perform(focus) }
-                    else if let current = focus.flatMap({ available.firstIndex(of: $0) }) {
-                        focus = available[min(available.count - 1, max(0, current + step))]
-                    } else { focus = available.first }
-                }
+            let available = targets
+            if input == .accept {
+                if let focus, available.contains(focus) { perform(focus) }
+                else { focus = available.first }
+            } else if input == .clear, available.contains(.play) {
+                perform(.play)
+            } else if input == .reveal, available.contains(.copy) {
+                perform(.copy)
+            } else if input == .primary, available.contains(.play) {
+                focus = .play
+            } else if input == .reset {
+                focus = available.first
+            } else if let step = input.focusStep ?? input.scrollStep.map({ $0 < 0 ? -4 : 4 }) {
+                focus = available.gamepadTarget(from: focus, step: step)
             }
-            do { try await Task.sleep(for: .milliseconds(pad == nil ? 350 : 45)) }
-            catch { return }
         }
     }
 

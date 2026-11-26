@@ -125,5 +125,8 @@
 "GamepadKeyboardSwitchLanguageHelp" = "Changes the keyboard language only.";
 "GamepadWelcomeHints" = "A Select • B Sign in • Menu Retry • View Help";
 "GamepadWelcomeHelp" = "D-pad / left stick: move focus • A: select\nB or LB: sign in • Menu: retry\nLeft stick click: retry button • RB or right stick click: sign-in button\nLT / RT: previous / next control • right stick: scroll\nView: help • Xbox / Share: handled by Windows\nFrom the highest control, press Up to select the native title bar. Left/Right to move, A to act, Down/B to return.\nSign in and retry become available after preparation finishes with an error.";
-"GamepadHelpApple" = "D-pad / left stick: move focus\nA: select • B: back\nX: clear input • Y: show or hide the focused password\nLB / RB: switch forms • LT / RT: previous / next field\nMenu: submit form • View: help";
+"GamepadHelpApple" = "D-pad / left stick: move focus\nA: select or open the keyboard • B: back\nX: clear input • Y: show or hide the focused password\nLB / RB: sign in / register • LT / RT: previous / next field\nL3 / R3: primary action / first field • Right stick: scroll\nMenu: submit a ready form • View: help";
 "AuthDone" = "Done";
+
+"GamepadFeedbackDisable" = "Disable controller vibration";
+"GamepadFeedbackEnable" = "Enable controller vibration";

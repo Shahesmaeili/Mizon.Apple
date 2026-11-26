@@ -1,5 +1,4 @@
 #if os(macOS) || os(iOS)
-import GameController
 import MizonAPIClient
 import MizonAppleCore
 import SwiftUI
@@ -13,6 +12,7 @@ struct MusicLibraryBrowser: View {
     let openPlaylist: (UUID) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.controllerInputSuspended) private var controllerInputSuspended
     @FocusState private var focus: Target?
     @State private var items: [MusicLibraryPlaylistItemResponse] = []
     @State private var failed = false
@@ -137,41 +137,23 @@ struct MusicLibraryBrowser: View {
     }
 
     private func observeController() async {
-        var previous: GCExtendedGamepad?
-        var armed = false
-        var held = false
-        while !Task.isCancelled {
-            let current = GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad
-            if current !== previous {
-                previous = current
-                armed = false
-                held = false
-            }
-            if let pad = current {
-                let up = max(pad.dpad.yAxis.value, pad.leftThumbstick.yAxis.value)
-                let down = min(pad.dpad.yAxis.value, pad.leftThumbstick.yAxis.value)
-                let active = pad.buttonB.isPressed || pad.buttonA.isPressed || up > 0.65 || down < -0.65
-                if !active { armed = true; held = false }
-                if armed, !held, active {
-                    held = true
-                    if pad.buttonB.isPressed { dismiss(); return }
-                    let controls = targets
-                    if pad.buttonA.isPressed {
-                        switch focus {
-                        case .close: dismiss(); return
-                        case .playlist(let id) where controls.contains(.playlist(id)): openPlaylist(id); return
-                        case .more where controls.contains(.more), .retry where controls.contains(.retry): page += 1
-                        default: focus = controls.first
-                        }
-                    } else {
-                        let next = focus.flatMap { controls.firstIndex(of: $0) }
-                            .map { min(controls.count - 1, max(0, $0 + (up > 0.65 ? -1 : 1))) } ?? 0
-                        focus = controls[next]
-                    }
+        await GamepadControls.observe(when: { scenePhase == .active && !controllerInputSuspended }) { input in
+            let controls = targets
+            switch input {
+            case .back: dismiss()
+            case .accept:
+                switch focus {
+                case .close: dismiss()
+                case .playlist(let id) where controls.contains(.playlist(id)): openPlaylist(id)
+                case .more where controls.contains(.more), .retry where controls.contains(.retry): page += 1
+                default: focus = controls.first
+                }
+            case .reset: focus = controls.first
+            default:
+                if let step = input.focusStep ?? input.scrollStep.map({ $0 < 0 ? -4 : 4 }) {
+                    focus = controls.gamepadTarget(from: focus, step: step)
                 }
             }
-            do { try await Task.sleep(for: .milliseconds(current == nil ? 350 : 45)) }
-            catch { return }
         }
     }
 

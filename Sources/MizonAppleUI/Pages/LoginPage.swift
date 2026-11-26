@@ -4,7 +4,6 @@ import MizonAppleCore
 import UIKit
 #endif
 #if !os(watchOS)
-import GameController
 #if os(macOS)
 import AppKit
 #endif
@@ -403,12 +402,34 @@ public struct MizonRootView: View {
 
 #if !os(watchOS)
 private struct AuthenticationPage: View {
-    private enum GamepadAction: Hashable {
-        case back, help, submit, accept, next, previous, clear, reveal, switchMode, reset, primary
+    private enum ControllerFocus: Hashable {
+        case field(Field), primary, mode
+    }
+
+    private enum ControllerScope: Equatable {
+        case form(registration: Bool, loading: Bool), keyboard(Field), help, settings
     }
 
     private enum Field: String, Sendable {
         case identifier, loginPassword, firstName, lastName, username, email, password, confirmation
+
+        var isPassword: Bool {
+            self == .loginPassword || self == .password || self == .confirmation
+        }
+
+        var allowsPersian: Bool { self != .identifier && self != .username && self != .email }
+
+        var labelKey: String {
+            switch self {
+            case .identifier: "AuthLoginIdentifierLabel"
+            case .loginPassword, .password: "AuthPasswordLabel"
+            case .firstName: "AuthFirstNameLabel"
+            case .lastName: "AuthLastNameLabel"
+            case .username: "AuthUsernameLabel"
+            case .email: "AuthEmailLabel"
+            case .confirmation: "AuthConfirmPasswordLabel"
+            }
+        }
 
         var helpKey: String {
             switch self {
@@ -476,12 +497,17 @@ private struct AuthenticationPage: View {
     @State private var request: Task<Void, Never>?
     @State private var gamepadRevealedField: Field?
     @State private var showsControllerHelp = false
+    @State private var controllerFeedbackEnabled = true
+    @State private var controllerFocus: ControllerFocus?
+    @State private var controllerKeyboard: GamepadKeyboard?
+    @State private var controllerKeyboardField: Field?
+    @State private var controllerScroll = ScrollPosition(edge: .top)
+    @State private var controllerScrollOffset: CGFloat = 0
+    #if os(macOS)
+    @Environment(\.appearsActive) private var appearsActive
+    #endif
     @FocusState private var primaryFocusMode: Bool?
     @FocusState private var modeActionFocus: Bool?
-    private var primaryFocused: Bool {
-        get { primaryFocusMode == registration }
-        nonmutating set { primaryFocusMode = newValue ? registration : nil }
-    }
     @State private var scene = AuthScene.music
     @State private var previousScene: AuthScene?
     @State private var showcaseStart = Date()
@@ -543,6 +569,20 @@ private struct AuthenticationPage: View {
                                 .frame(minHeight: max(0, height - bottomInset - (split ? 0 : 46)))
                         }
                         .scrollIndicators(.hidden)
+                        .scrollPosition($controllerScroll)
+                        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: {
+                            _, offset in controllerScrollOffset = offset
+                        }
+                        .onChange(of: controllerFocus) {
+                            guard let controllerFocus else { return }
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                                switch controllerFocus {
+                                case .field(let field): proxy.scrollTo(field, anchor: .center)
+                                case .primary: proxy.scrollTo("auth-primary-\(registration)", anchor: .center)
+                                case .mode: proxy.scrollTo("auth-mode-\(registration)", anchor: .center)
+                                }
+                            }
+                        }
                         .defaultScrollAnchor(.top)
                         .onChange(of: registration) {
                             withAnimation(nil) {
@@ -580,13 +620,27 @@ private struct AuthenticationPage: View {
             }
         }
         #endif
+        .accessibilityHidden(controllerKeyboard != nil)
+        .overlay {
+            if let keyboard = controllerKeyboard, let field = controllerKeyboardField {
+                ZStack {
+                    Color.black.opacity(0.48).ignoresSafeArea().onTapGesture { closeControllerKeyboard() }
+                    AuthGamepadKeyboard(keyboard: keyboard,
+                                        value: field.isPassword ? nil : controllerValue(field),
+                                        prompt: text(field.labelKey), activate: useControllerKey)
+                }
+            }
+        }
         .alert(text("GamepadControls"), isPresented: $showsControllerHelp) {
-            Button(text("AuthDone")) {}
+            Button(text(controllerFeedbackEnabled ? "GamepadFeedbackDisable" : "GamepadFeedbackEnable")) {
+                controllerFeedbackEnabled.toggle()
+            }
+            Button(text("AuthDone"), role: .cancel) {}
         } message: {
             Text(text("GamepadHelpApple"))
         }
-        .task(id: scenePhase) {
-            if scenePhase == .active { await observeGamepad() }
+        .task(id: gamepadWindowActive) {
+            if gamepadWindowActive { await observeGamepad() }
         }
         .onChange(of: shellRequest, initial: true) {
             guard let shellRequest else { return }
@@ -601,6 +655,7 @@ private struct AuthenticationPage: View {
         }
         .onChange(of: focus) {
             if focus != gamepadRevealedField { gamepadRevealedField = nil }
+            if focus != nil { controllerFocus = nil }
         }
         .onChange(of: scenePhase) {
             if scenePhase != .active {
@@ -702,8 +757,9 @@ private struct AuthenticationPage: View {
                 }
                 .environment(\.layoutDirection, .leftToRight)
             }
-            .buttonStyle(AuthActionStyle(primary: true, reduceMotion: reduceMotion, focused: primaryFocusMode == registration))
+            .buttonStyle(AuthActionStyle(primary: true, reduceMotion: reduceMotion, focused: primaryFocusMode == registration || (self.registration == registration && controllerFocus == .primary)))
             .focused($primaryFocusMode, equals: registration)
+            .id("auth-primary-\(registration)")
             .accessibilityHint(text(registration ? "AuthRegisterSubmitHelp" : "AuthLoginSubmitHelp"))
             .disabled(registration ? !model.canRegister : !model.canSubmit)
 
@@ -716,8 +772,9 @@ private struct AuthenticationPage: View {
                             .font(authFont(13, weight: .semibold))
                     }
                 }
-                .buttonStyle(AuthActionStyle(primary: false, reduceMotion: reduceMotion, focused: modeActionFocus == registration))
+                .buttonStyle(AuthActionStyle(primary: false, reduceMotion: reduceMotion, focused: modeActionFocus == registration || (self.registration == registration && controllerFocus == .mode)))
                 .focused($modeActionFocus, equals: registration)
+                .id("auth-mode-\(registration)")
                 .accessibilityHint(text("AuthModeSwitchHelp"))
                 .disabled(model.isLoading)
             }
@@ -743,7 +800,7 @@ private struct AuthenticationPage: View {
     }
 
     private func formHasFocus(registration: Bool) -> Bool {
-        self.registration == registration && (focus != nil || primaryFocusMode == registration || modeActionFocus == registration)
+        self.registration == registration && (focus != nil || controllerFocus != nil || primaryFocusMode == registration || modeActionFocus == registration)
     }
 
     private func submitKey(registration: Bool) -> String {
@@ -786,6 +843,7 @@ private struct AuthenticationPage: View {
             guard field.accepts(proposed) else { return }
             value.wrappedValue = proposed
         })
+        let hasFocus = focus == field || controllerFocus == .field(field)
         let hasClear = !secure && focus == field && !value.wrappedValue.isEmpty
         let hasPeek = secure && field != .loginPassword && focus == field && !value.wrappedValue.isEmpty
         let hasAction = hasClear || hasPeek || field == .loginPassword
@@ -898,7 +956,7 @@ private struct AuthenticationPage: View {
             #endif
             .background {
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(AuthAppearance.inputFill(focused: focus == field, hovered: hoveredField == field, disabled: model.isLoading))
+                    .fill(AuthAppearance.inputFill(focused: hasFocus, hovered: hoveredField == field, disabled: model.isLoading))
                     .contentShape(.rect)
                     .onTapGesture {
                         guard !model.isLoading, focus != field else { return }
@@ -908,16 +966,17 @@ private struct AuthenticationPage: View {
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(AuthAppearance.inputBorder(focused: focus == field, hovered: hoveredField == field, disabled: model.isLoading))
+                    .strokeBorder(AuthAppearance.inputBorder(focused: hasFocus, hovered: hoveredField == field, disabled: model.isLoading))
                     .allowsHitTesting(false)
             }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focus == field)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hasFocus)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hoveredField == field)
             .onHover { if $0 { hoveredField = field } else if hoveredField == field { hoveredField = nil } }
             if let hint { Text(text(hint)).font(authFont(10)).foregroundStyle(MizonPalette.secondaryText) }
         }
         .frame(maxWidth: .infinity)
         .disabled(model.isLoading)
+        .id(field)
     }
 
     private func usesNativeInput(_ field: Field) -> Bool {
@@ -942,18 +1001,31 @@ private struct AuthenticationPage: View {
     }
     #endif
 
-    private func submit() {
+    private func submit() { submit(feedback: nil) }
+
+    private func submit(feedback: GamepadFeedbackPlayer?) {
         guard registration ? model.canRegister : model.canSubmit else { return }
+        let generation = feedback?.generation
         focus = nil
         revealPassword = false
         gamepadRevealedField = nil
         request = Task {
             if registration { await model.register() } else { await model.login() }
+            guard !Task.isCancelled else { return }
+            if gamepadWindowActive && controllerFeedbackEnabled {
+                if model.validationKey != nil { feedback?.play(.validation, generation: generation) }
+                else if model.error != nil { feedback?.play(.error, generation: generation) }
+                else if model.session != nil { feedback?.play(.success, generation: generation) }
+            }
             if model.error != nil || model.validationKey != nil {
                 AccessibilityNotification.Announcement(errorKey.map(text) ?? "").post()
-                #if os(macOS)
-                focus = registration ? .firstName : .loginPassword
-                #endif
+                if feedback != nil {
+                    controllerFocus = .field(registration ? .firstName : .loginPassword)
+                } else {
+                    #if os(macOS)
+                    focus = registration ? .firstName : .loginPassword
+                    #endif
+                }
             }
         }
     }
@@ -966,6 +1038,8 @@ private struct AuthenticationPage: View {
         focus = nil
         primaryFocusMode = nil
         modeActionFocus = nil
+        controllerFocus = nil
+        closeControllerKeyboard()
         flip.toggle(at: ContinuousClock().now, animated: !reduceMotion)
         AccessibilityNotification.Announcement(text(registration ? "AuthModeRegister" : "AuthModeLogin")).post()
     }
@@ -975,96 +1049,168 @@ private struct AuthenticationPage: View {
             : [.identifier, .loginPassword]
     }
 
+    private var gamepadWindowActive: Bool {
+        #if os(macOS)
+        scenePhase == .active && (appearsActive || showsControllerHelp)
+        #else
+        scenePhase == .active
+        #endif
+    }
+
+    private var gamepadScope: ControllerScope? {
+        guard gamepadWindowActive else { return nil }
+        #if os(iOS)
+        if showsSettings { return .settings }
+        #endif
+        if showsControllerHelp { return .help }
+        if let controllerKeyboardField { return .keyboard(controllerKeyboardField) }
+        return .form(registration: registration, loading: model.isLoading)
+    }
+
     private func observeGamepad() async {
-        var previous: Set<GamepadAction> = []
-        var armed = false
-        while !Task.isCancelled {
-            let pad = GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad
-            if let pad {
-                let inputs: [(GamepadAction, Bool)] = [
-                    (.back, pad.buttonB.isPressed),
-                    (.help, pad.buttonOptions?.isPressed == true),
-                    (.submit, pad.buttonMenu.isPressed),
-                    (.accept, pad.buttonA.isPressed),
-                    (.next, pad.dpad.down.isPressed || pad.dpad.right.isPressed
-                        || pad.rightTrigger.isPressed || pad.leftThumbstick.yAxis.value < -0.65),
-                    (.previous, pad.dpad.up.isPressed || pad.dpad.left.isPressed || pad.leftTrigger.isPressed
-                        || pad.leftThumbstick.yAxis.value > 0.65),
-                    (.clear, pad.buttonX.isPressed),
-                    (.reveal, pad.buttonY.isPressed),
-                    (.switchMode, pad.leftShoulder.isPressed || pad.rightShoulder.isPressed),
-                    (.primary, pad.leftThumbstickButton?.isPressed == true),
-                    (.reset, pad.rightThumbstickButton?.isPressed == true)
-                ]
-                let pressed = Set(inputs.filter { $0.1 }.map { $0.0 })
-                if pressed.isEmpty { armed = true }
-                if armed, !model.isLoading,
-                   let action = inputs.first(where: { $0.1 && !previous.contains($0.0) })?.0 {
-                    applyGamepad(action)
-                }
-                previous = pressed
-            } else {
-                armed = false
-                previous.removeAll()
-            }
-            do { try await Task.sleep(for: pad == nil ? .milliseconds(500) : .milliseconds(45)) }
-            catch { return }
+        await GamepadControls.observe(scope: { gamepadScope }, onReset: {
+            revealPassword = false
+            gamepadRevealedField = nil
+            closeControllerKeyboard()
+            showsControllerHelp = false
+        }) { action, feedback in
+            applyGamepad(action, feedback: feedback)
         }
     }
 
-    private func applyGamepad(_ action: GamepadAction) {
-        if showsControllerHelp {
-            if action == .back || action == .help { showsControllerHelp = false }
+    private func applyGamepad(_ action: GamepadAction, feedback: GamepadFeedbackPlayer) {
+        #if os(iOS)
+        if showsSettings {
+            if action == .back { showsSettings = false }
             return
         }
+        #endif
+        if showsControllerHelp {
+            if action == .back || action == .help || action == .accept { showsControllerHelp = false }
+            return
+        }
+        if var keyboard = controllerKeyboard {
+            let key = keyboard.key(for: action)
+            controllerKeyboard = keyboard
+            if let key { useControllerKey(key) }
+            return
+        }
+        if action == .help { showsControllerHelp = true; return }
+        guard !model.isLoading else { return }
+        let selected = controllerFocus ?? focus.map(ControllerFocus.field)
         switch action {
         case .back:
-            if let closeShortcut {
-                if focus == nil { closeShortcut() }
-                else { focus = nil; revealPassword = false }
-            }
-            else if registration { switchMode() }
-            else { focus = nil; revealPassword = false }
-        case .help:
-            showsControllerHelp = true
-        case .submit:
-            submit()
-        case .accept where primaryFocused:
-            submit()
-        case .accept, .next, .previous:
-            if primaryFocused {
-                if action == .previous { focus = fieldOrder.last }
-            } else if let field = focus, let index = fieldOrder.firstIndex(of: field) {
-                let target = index + (action == .previous ? -1 : 1)
-                if fieldOrder.indices.contains(target) { focus = fieldOrder[target] }
-                else if target == fieldOrder.count { primaryFocused = true }
+            if focus != nil || revealPassword || gamepadRevealedField != nil {
+                focus = nil
+                hideControllerPassword()
+            } else if let closeShortcut {
+                closeShortcut()
+            } else if registration {
+                switchMode()
+                selectControllerFocus(.field(.identifier))
             } else {
-                focus = fieldOrder.first
+                controllerFocus = nil
+            }
+        case .submit:
+            submit(feedback: feedback)
+        case .accept:
+            switch selected {
+            case .primary: submit(feedback: feedback)
+            case .mode: switchMode(); selectControllerFocus(fieldOrder.first.map(ControllerFocus.field))
+            case .field(let field):
+                selectControllerFocus(.field(field))
+                controllerKeyboard = GamepadKeyboard(allowsPersian: field.allowsPersian, masksValue: field.isPassword,
+                                                      persian: isPersian, length: controllerValue(field).count)
+                controllerKeyboardField = field
+            case nil: selectControllerFocus(fieldOrder.first.map(ControllerFocus.field))
             }
         case .clear:
-            switch focus {
-            case .identifier: model.identifier = ""
-            case .loginPassword: model.password = ""
-            case .firstName: model.registration.firstName = ""
-            case .lastName: model.registration.lastName = ""
-            case .username: model.registration.username = ""
-            case .email: model.registration.emailAddress = ""
-            case .password: model.registration.password = ""
-            case .confirmation: model.confirmation = ""
-            case nil: break
-            }
+            if case .field(let field) = selected { setControllerValue("", field: field) }
         case .reveal:
-            if focus == .loginPassword { revealPassword.toggle() }
-            else if focus == .password || focus == .confirmation {
-                gamepadRevealedField = gamepadRevealedField == focus ? nil : focus
+            if case .field(let field) = selected, field.isPassword {
+                if field == .loginPassword { revealPassword.toggle() }
+                else { gamepadRevealedField = gamepadRevealedField == field ? nil : field }
             }
-        case .switchMode:
-            switchMode()
-            focus = fieldOrder.first
-        case .reset:
-            focus = fieldOrder.first
+        case .previousSection, .nextSection:
+            let desiredRegistration = action == .nextSection
+            if desiredRegistration != registration { switchMode() }
+            selectControllerFocus(fieldOrder.first.map(ControllerFocus.field))
         case .primary:
-            primaryFocused = true
+            if registration ? model.canRegister : model.canSubmit { selectControllerFocus(.primary) }
+        case .reset:
+            selectControllerFocus(fieldOrder.first.map(ControllerFocus.field))
+        case .move, .previousField, .nextField:
+            var targets = fieldOrder.map(ControllerFocus.field)
+            if case .move = action {
+                if registration ? model.canRegister : model.canSubmit { targets.append(.primary) }
+                targets.append(.mode)
+            }
+            let last = targets.count - 1
+            let step = action.focusStep ?? 0
+            let index = selected.flatMap { targets.firstIndex(of: $0) }
+            let next = index.map { min(last, max(0, $0 + step)) } ?? (selected == nil || step > 0 ? 0 : last)
+            selectControllerFocus(targets[next])
+        case .scroll:
+            if let step = action.scrollStep {
+                controllerScroll.scrollTo(y: max(0, controllerScrollOffset + step))
+            }
+        case .help: break
+        }
+    }
+
+    private func selectControllerFocus(_ target: ControllerFocus?) {
+        if target != controllerFocus { hideControllerPassword() }
+        focus = nil
+        primaryFocusMode = nil
+        modeActionFocus = nil
+        controllerFocus = target
+    }
+
+    private func hideControllerPassword() {
+        revealPassword = false
+        gamepadRevealedField = nil
+    }
+
+    private func closeControllerKeyboard() {
+        controllerKeyboard = nil
+        controllerKeyboardField = nil
+    }
+
+    private func useControllerKey(_ key: GamepadKeyboard.Key) {
+        guard let field = controllerKeyboardField, var keyboard = controllerKeyboard, !model.isLoading else { return }
+        if key == .close || key == .done {
+            closeControllerKeyboard()
+            return
+        }
+        if let value = keyboard.edit(key, value: controllerValue(field), accepts: field.accepts) {
+            setControllerValue(value, field: field)
+        }
+        controllerKeyboard = keyboard
+    }
+
+    private func controllerValue(_ field: Field) -> String {
+        switch field {
+        case .identifier: model.identifier
+        case .loginPassword: model.password
+        case .firstName: model.registration.firstName
+        case .lastName: model.registration.lastName
+        case .username: model.registration.username
+        case .email: model.registration.emailAddress
+        case .password: model.registration.password
+        case .confirmation: model.confirmation
+        }
+    }
+
+    private func setControllerValue(_ value: String, field: Field) {
+        switch field {
+        case .identifier: model.identifier = value
+        case .loginPassword: model.password = value
+        case .firstName: model.registration.firstName = value
+        case .lastName: model.registration.lastName = value
+        case .username: model.registration.username = value
+        case .email: model.registration.emailAddress = value
+        case .password: model.registration.password = value
+        case .confirmation: model.confirmation = value
         }
     }
 

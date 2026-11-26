@@ -1,6 +1,5 @@
 #if os(macOS) || os(iOS)
 import AVKit
-import GameController
 import MizonAPIClient
 import MizonAppleCore
 import SwiftUI
@@ -10,6 +9,10 @@ struct MusicHomeDestinationView: View {
         let requestID: UUID?
         let retry: Int
         let cancelled: Bool
+    }
+
+    private enum ControllerTarget: Hashable {
+        case retry, play, like, follow, video, track(UUID), playTrack(UUID)
     }
 
     private enum Details {
@@ -24,8 +27,18 @@ struct MusicHomeDestinationView: View {
     let route: MusicDestination
     let model: MusicHomeViewModel
     let deepLink: MizonDeepLinkRouter.AuthorizedLink?
+    let controllerIsCurrent: Bool
+    let open: (MusicDestination) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.controllerInputSuspended) private var controllerInputSuspended
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if os(macOS)
+    @Environment(\.appearsActive) private var appearsActive
+    #endif
+    @State private var controllerFocus: ControllerTarget?
+    @State private var controllerScroll = ScrollPosition(edge: .top)
+    @State private var offset: CGFloat = 0
     @State private var details: Details?
     @State private var tracks: [MusicTabMusicItemResponse] = []
     @State private var loading = true
@@ -39,29 +52,24 @@ struct MusicHomeDestinationView: View {
     @State private var downloadCompleted = false
     private var localization = AuthLocalization()
 
-    init(route: MusicDestination, model: MusicHomeViewModel, deepLink: MizonDeepLinkRouter.AuthorizedLink? = nil) {
+    init(route: MusicDestination, model: MusicHomeViewModel, deepLink: MizonDeepLinkRouter.AuthorizedLink? = nil,
+         controllerIsCurrent: Bool, open: @escaping (MusicDestination) -> Void) {
         self.route = route
         self.model = model
         self.deepLink = deepLink
+        self.controllerIsCurrent = controllerIsCurrent
+        self.open = open
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if case .section(let section) = route {
-                    sectionLanding(section)
-                } else {
-                    if let details { content(details) }
-                    if loading { ProgressView().accessibilityLabel(text("LoadingMusic")) }
-                    if failed {
-                        Text(text("FeatureServiceFailed")).foregroundStyle(.secondary)
-                        Button(text("Retry")) { loadID += 1 }.buttonStyle(.glass)
+        ScrollViewReader { proxy in
+            contentScroll
+                .onChange(of: controllerFocus) {
+                    guard let controllerFocus else { return }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                        proxy.scrollTo(controllerFocus, anchor: .center)
                     }
                 }
-            }
-            .frame(maxWidth: contentWidth, alignment: .leading)
-            .padding(24)
-            .frame(maxWidth: .infinity)
         }
         .navigationTitle(title)
         #if os(iOS)
@@ -88,8 +96,8 @@ struct MusicHomeDestinationView: View {
                 loading = false
             }
         }
-        .task(id: scenePhase) {
-            if scenePhase == .active { await observeBack() }
+        .task(id: ownsController) {
+            if ownsController { await observeController() }
         }
         .onDisappear {
             video?.pause()
@@ -98,6 +106,30 @@ struct MusicHomeDestinationView: View {
                 MizonDeepLinkRouter.shared.fail(deepLink, code: "page_changed",
                                                message: "The active page changed before navigation completed.")
             }
+        }
+    }
+
+    private var contentScroll: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if case .section(let section) = route {
+                    sectionLanding(section)
+                } else {
+                    if let details { content(details) }
+                    if loading { ProgressView().accessibilityLabel(text("LoadingMusic")) }
+                    if failed {
+                        Text(text("FeatureServiceFailed")).foregroundStyle(.secondary)
+                        Button(text("Retry")) { loadID += 1 }.buttonStyle(.glass).modifier(outline(.retry))
+                    }
+                }
+            }
+            .frame(maxWidth: contentWidth, alignment: .leading)
+            .padding(24)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollPosition($controllerScroll)
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: {
+            _, offset in self.offset = offset
         }
     }
 
@@ -159,6 +191,7 @@ struct MusicHomeDestinationView: View {
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .clipShape(.rect(cornerRadius: 12))
                     .accessibilityIdentifier("music.destination.video")
+                    .modifier(outline(.video))
             }
             Text(localized(track.title, track.persianTitle))
                 .font(localization.font(27, weight: .semibold))
@@ -187,6 +220,7 @@ struct MusicHomeDestinationView: View {
         case .story(let story):
             if let video {
                 VideoPlayer(player: video).frame(height: 370).clipShape(.rect(cornerRadius: 12))
+                    .modifier(outline(.video))
             } else {
                 MusicArtwork(mediaID: story.contentMediaPublicId, model: model, symbol: "photo")
                     .frame(height: 370).clipShape(.rect(cornerRadius: 12))
@@ -199,12 +233,13 @@ struct MusicHomeDestinationView: View {
             } label: {
                 Label(story.likesCount.formatted(), systemImage: story.likedByMe ? "heart.fill" : "heart")
             }
-            .buttonStyle(.glass).disabled(updating)
+            .buttonStyle(.glass).disabled(updating).modifier(outline(.like))
             ForEach(story.widgets, id: \.publicId) { widget in
                 if let music = widget.music {
-                    NavigationLink(value: MusicDestination.track(music.musicPublicId)) {
+                    Button { open(.track(music.musicPublicId)) } label: {
                         Label(music.title, systemImage: "music.note")
                     }
+                    .modifier(outline(.track(music.musicPublicId)))
                 }
             }
         }
@@ -219,10 +254,12 @@ struct MusicHomeDestinationView: View {
             .foregroundStyle(.secondary)
         HStack {
             Button { model.play(id, title: title) } label: { Label(text("PlayInMizon"), systemImage: "play.fill") }
+                .modifier(outline(.play))
             Button { Task { await like(track, id: id) } } label: {
                 Label(text(track.likedByMe ? "UnlikeTrack" : "LikeTrack"), systemImage: track.likedByMe ? "heart.fill" : "heart")
             }
             .disabled(updating)
+            .modifier(outline(.like))
         }
         .buttonStyle(.glass)
         if downloadCompleted {
@@ -272,6 +309,7 @@ struct MusicHomeDestinationView: View {
                     Button(text(artist.isFollowing ? "Following" : "Follow")) { Task { await follow(artist) } }
                         .buttonStyle(.glass)
                         .disabled(updating)
+                        .modifier(outline(.follow))
                 }
             }
             Label(artist.followersCount.formatted(), systemImage: "person.2").foregroundStyle(.secondary)
@@ -336,11 +374,13 @@ struct MusicHomeDestinationView: View {
                             Text(localized(track.title, track.persianTitle)).lineLimit(1)
                         }
                     }
+                    .modifier(outline(.track(track.publicId)))
                     Spacer()
                     Button { model.play(track.publicId, title: localized(track.title, track.persianTitle)) } label: {
                         Image(systemName: "play.fill")
                     }
                     .buttonStyle(.glass).accessibilityLabel(text("PlayInMizon"))
+                    .modifier(outline(.playTrack(track.publicId)))
                 }
                 .padding(8)
                 .musicPanel()
@@ -531,24 +571,88 @@ struct MusicHomeDestinationView: View {
         } catch { model.actionFailed = true }
     }
 
-    private func observeBack() async {
-        var owner: GCController?
-        var armed = false
-        while !Task.isCancelled {
-            let controller = GCController.controllers().first { $0.extendedGamepad != nil }
-            if owner !== controller {
-                owner = controller
-                armed = false
+    private var ownsController: Bool {
+        #if os(macOS)
+        scenePhase == .active && appearsActive && !controllerInputSuspended && controllerIsCurrent
+        #else
+        scenePhase == .active && !controllerInputSuspended && controllerIsCurrent
+        #endif
+    }
+
+    private var controllerTargets: [ControllerTarget] {
+        if failed && !loading { return [.retry] }
+        switch details {
+        case .track, .musicComment: return updating ? [.play] : [.play, .like]
+        case .musicVideo: return video == nil ? [] : [.video]
+        case .artist(let artist):
+            let actions: [ControllerTarget] = artist.canFollow && !updating ? [.follow] : []
+            return actions + tracks.flatMap { [.track($0.publicId), .playTrack($0.publicId)] }
+        case .story(let story):
+            let playback: [ControllerTarget] = video == nil ? [] : [.video]
+            let reactions: [ControllerTarget] = updating ? [] : [.like]
+            let links: [ControllerTarget] = story.widgets.compactMap { $0.music.map { .track($0.musicPublicId) } }
+            return playback + reactions + links
+        case .client, nil: return []
+        }
+    }
+
+    private func observeController() async {
+        await GamepadControls.observe(when: { ownsController }) { action in
+            switch action {
+            case .back: dismiss()
+            case .accept, .submit:
+                if let controllerFocus, controllerTargets.contains(controllerFocus) { activate(controllerFocus) }
+                else { controllerFocus = controllerTargets.first }
+            case .primary, .reset: controllerFocus = controllerTargets.first
+            case .scroll:
+                if let step = action.scrollStep { controllerScroll.scrollTo(y: max(0, offset + step)) }
+            default:
+                if let step = action.focusStep { controllerFocus = controllerTargets.gamepadTarget(from: controllerFocus, step: step) }
             }
-            if let gamepad = controller?.extendedGamepad {
-                if !gamepad.buttonB.isPressed {
-                    armed = true
-                } else if armed {
-                    dismiss()
-                    return
-                }
+        }
+    }
+
+    private func activate(_ target: ControllerTarget) {
+        switch target {
+        case .retry: loadID += 1
+        case .video:
+            if video?.rate == 0 { video?.play() } else { video?.pause() }
+        case .follow:
+            if case .artist(let artist) = details { Task { await follow(artist) } }
+        case .play:
+            switch details {
+            case .track(let id, _), .musicComment(let id, _, _): model.play(id, title: title)
+            default: break
             }
-            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        case .like:
+            switch details {
+            case .track(let id, let track), .musicComment(let id, let track, _): Task { await like(track, id: id) }
+            case .story(let story): Task { await like(story) }
+            default: break
+            }
+        case .track(let id): open(.track(id))
+        case .playTrack(let id):
+            if let track = tracks.first(where: { $0.publicId == id }) {
+                model.play(id, title: localized(track.title, track.persianTitle))
+            }
+        }
+    }
+
+    private func outline(_ target: ControllerTarget) -> some ViewModifier {
+        ControllerOutline(target: target, focused: controllerFocus == target)
+    }
+
+    private struct ControllerOutline: ViewModifier {
+        let target: ControllerTarget
+        let focused: Bool
+
+        func body(content: Content) -> some View {
+            content.overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(focused ? MizonPalette.accent : .clear, lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+            .id(target)
         }
     }
 

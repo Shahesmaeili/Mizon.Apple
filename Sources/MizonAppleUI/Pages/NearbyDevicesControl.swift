@@ -1,5 +1,4 @@
 #if os(macOS) || os(iOS)
-import GameController
 import MizonAppleCore
 import SwiftUI
 #if os(macOS)
@@ -228,34 +227,17 @@ private struct NearbyDevicesPanel: View {
     private func text(_ key: String) -> String { localization.string(key, table: "NearbyDevices") }
 
     private func observeController() async {
-        var latch = NearbyControllerLatch()
-        while !Task.isCancelled {
-            if isAppActive, let controller = GCController.controllers().first(where: { $0.extendedGamepad != nil }),
-               let gamepad = controller.extendedGamepad {
-                let x = gamepad.dpad.xAxis.value
-                let y = gamepad.dpad.yAxis.value
-                let input = NearbyControllerInput(horizontal: x == 0 ? gamepad.leftThumbstick.xAxis.value : x,
-                                                  vertical: y == 0 ? gamepad.leftThumbstick.yAxis.value : y,
-                                                  confirm: gamepad.buttonA.isPressed, dismiss: gamepad.buttonB.isPressed)
-                switch latch.consume(input, controller: ObjectIdentifier(controller)) {
-                case .close:
-                    close()
-                    return
-                case .activate:
-                    if focused == .close {
-                        close()
-                        return
-                    }
-                    focused = .visibility
-                    enabled.toggle()
-                case .focusClose: focused = .close
-                case .focusVisibility: focused = .visibility
-                case nil: break
-                }
-            } else {
-                latch = NearbyControllerLatch()
+        await GamepadControls.observe(when: { isAppActive && scenePhase == .active }) { input in
+            switch input {
+            case .back: close()
+            case .accept:
+                if focused == .close { close() }
+                else { focused = .visibility; enabled.toggle() }
+            case .primary: focused = .visibility
+            case .reset: focused = .close
+            default:
+                if let step = input.focusStep { focused = step < 0 ? .close : .visibility }
             }
-            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
         }
     }
 
@@ -268,49 +250,6 @@ private struct NearbyDevicesPanel: View {
     }
 }
 
-struct NearbyControllerInput {
-    let horizontal: Float
-    let vertical: Float
-    let confirm: Bool
-    let dismiss: Bool
-
-    fileprivate func direction(wasActive: Bool) -> Int {
-        let value = abs(vertical) >= abs(horizontal) ? -vertical : horizontal
-        let threshold: Float = wasActive ? 0.43 : 0.64
-        return abs(value) >= threshold ? (value > 0 ? 1 : -1) : 0
-    }
-}
-
-struct NearbyControllerLatch {
-    enum Action: Equatable { case close, activate, focusClose, focusVisibility }
-
-    private var controller: ObjectIdentifier?
-    private var released = false
-    private var direction = 0
-    private var confirm = false
-    private var dismiss = false
-
-    mutating func consume(_ input: NearbyControllerInput, controller: ObjectIdentifier) -> Action? {
-        if self.controller != controller {
-            self = NearbyControllerLatch()
-            self.controller = controller
-        }
-        let next = input.direction(wasActive: direction != 0)
-        defer {
-            direction = next
-            confirm = input.confirm
-            dismiss = input.dismiss
-        }
-        guard released else {
-            released = next == 0 && !input.confirm && !input.dismiss
-            return nil
-        }
-        if !dismiss && input.dismiss { return .close }
-        if !confirm && input.confirm { return .activate }
-        if direction != next, next != 0 { return next < 0 ? .focusClose : .focusVisibility }
-        return nil
-    }
-}
 
 private struct NearbyDeviceRow: View {
     let peer: NearbyDiscoveredPeer

@@ -1,6 +1,5 @@
 #if os(macOS) || os(iOS)
 import AVKit
-import GameController
 import ImageIO
 import MizonAPI
 import MizonAPIClient
@@ -95,6 +94,12 @@ struct MusicHomePage: View {
     @State var model: MusicHomeViewModel
     @State private var incomingDeepLink: MizonDeepLinkRouter.AuthorizedLink?
     @State private var presentedDeepLink: MizonDeepLinkRouter.AuthorizedLink?
+    private struct DeepLinkOverlay: Identifiable {
+        let link: MizonDeepLinkRouter.AuthorizedLink
+        var id: UUID { link.id }
+    }
+
+    @State private var overlayDeepLink: DeepLinkOverlay?
     @State private var navigationPath: [MusicDestination] = []
     @Namespace private var playlistCoverNamespace
     @State private var playlistCoverSource: UUID?
@@ -152,6 +157,8 @@ struct MusicHomePage: View {
     @State private var article: Int?
     @State private var recentScrollRequest = 0
     @State private var scrollHomeRequest = 0
+    @State private var controllerScroll = ScrollPosition(edge: .top)
+    @State private var controllerScrollOffset: CGFloat = 0
     @State private var searchFocusRequest = 0
     @State private var pointer = MusicHomePointer()
     #if os(macOS)
@@ -307,6 +314,7 @@ struct MusicHomePage: View {
                     musicDestination(route)
                 }
         }
+        .environment(\.controllerInputSuspended, overlayDeepLink != nil)
         .preferredColorScheme(.dark)
         #if os(macOS)
         .background { MacMusicPageTransition(path: navigationPath).frame(width: 0, height: 0) }
@@ -367,6 +375,10 @@ struct MusicHomePage: View {
         }
         .task(id: controllerActive) {
             if controllerActive { await observeGamepad() }
+        }
+        .sheet(item: $overlayDeepLink) { overlay in
+            deepLinkOverlay(overlay.link)
+                .environment(\.controllerInputSuspended, false)
         }
         .sheet(isPresented: $showingLibrary) {
             let link = presentedDeepLink?.route == .playlists ? presentedDeepLink : nil
@@ -481,11 +493,50 @@ struct MusicHomePage: View {
             destination = nil
             showingAllMusicActivity = true
         case .search:
-            destination = nil
-            showingSearch = true
+            if navigationPath.isEmpty { showingSearch = true }
+            else { overlayDeepLink = DeepLinkOverlay(link: request) }
+        case .story:
+            overlayDeepLink = DeepLinkOverlay(link: request)
         default:
             destination = MusicDestination(deepLink: request.route)
         }
+    }
+
+    @ViewBuilder private func deepLinkOverlay(_ link: MizonDeepLinkRouter.AuthorizedLink) -> some View {
+        switch link.route {
+        case .search:
+            GeometryReader { geometry in
+                MusicHomeSearch(model: model, viewportWidth: geometry.size.width, compact: false,
+                                focusRequest: .constant(0), showingSearch: Binding(
+                                    get: { overlayDeepLink?.id == link.id },
+                                    set: { if !$0, overlayDeepLink?.id == link.id { closeDeepLinkOverlay(link) } }
+                                ), deepLink: link, onSelect: { result in
+                                    closeDeepLinkOverlay(link)
+                                    navigationPath.append(result.kind == .music ? .track(result.publicID) : .client(result.publicID))
+                                }, presentsInline: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 12)
+            }
+            #if os(macOS)
+            .frame(minWidth: 440, minHeight: 390)
+            #endif
+        case .story(let id):
+            NavigationStack {
+                MusicHomeDestinationView(route: .story(id), model: model, deepLink: link,
+                                         controllerIsCurrent: overlayDeepLink?.id == link.id) { next in
+                    closeDeepLinkOverlay(link)
+                    navigationPath.append(next)
+                }
+            }
+            #if os(macOS)
+            .frame(minWidth: 520, minHeight: 490)
+            #endif
+        default: EmptyView()
+        }
+    }
+
+    private func closeDeepLinkOverlay(_ link: MizonDeepLinkRouter.AuthorizedLink) {
+        if overlayDeepLink?.id == link.id { overlayDeepLink = nil }
     }
 
     @ViewBuilder private func musicDestination(_ route: MusicDestination) -> some View {
@@ -505,7 +556,10 @@ struct MusicHomePage: View {
                 navigationPath.append(.playlist(id))
             }
         default:
-            let page = MusicHomeDestinationView(route: route, model: model, deepLink: link)
+            let page = MusicHomeDestinationView(route: route, model: model, deepLink: link,
+                                                controllerIsCurrent: destination == route) {
+                navigationPath.append($0)
+            }
             #if os(iOS)
             if case .track(let track) = route, playlistCoverSource == track, !reduceMotion {
                 page.navigationTransition(.zoom(sourceID: track, in: playlistCoverNamespace))
@@ -536,6 +590,7 @@ struct MusicHomePage: View {
     }
 
     private func dismissShellOverlays() {
+        overlayDeepLink = nil
         showingSearch = false
         showingNavigationOverflow = false
         showingLibrary = false
@@ -598,11 +653,7 @@ struct MusicHomePage: View {
                         .environment(navigationFocus)
                         #endif
                 }
-                #if os(macOS)
                 focusableControl(.ownProfile, cornerRadius: 8) { profileMenu }
-                #else
-                profileMenu
-                #endif
             }
             .padding(.vertical, (MusicHomeChrome.controlHeight - 32) / 2)
             .background(MusicHomeChrome.controlFill, in: accountShape)
@@ -749,6 +800,10 @@ struct MusicHomePage: View {
                 #endif
                 .frame(width: feedWidth)
                 .scrollIndicators(.hidden)
+                .scrollPosition($controllerScroll)
+                .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: {
+                    _, offset in controllerScrollOffset = offset
+                }
                 .onChange(of: controlFocus) { _, target in
                     if navigationFocus.showsNavigationFocus, let target,
                        target != .search, target != .home, target != .navigationOverflow, target != .nearby,
@@ -1911,7 +1966,7 @@ struct MusicHomePage: View {
                 #if os(macOS)
                 MusicHomeFocusOutline(isFocused: controlFocus == action, cornerRadius: cornerRadius, input: navigationFocus)
                 #else
-                if action != .search, controlFocus == action {
+                if controlFocus == action {
                     let themed = action == .home || action == .navigationOverflow || action == .transport
                         || action == .mood || action == .nearby
                     RoundedRectangle(cornerRadius: cornerRadius)
@@ -2029,9 +2084,7 @@ struct MusicHomePage: View {
         var targets: [Action] = [.home]
         if navigationHasOverflow { targets.append(.navigationOverflow) }
         targets += [.search, .nearby, .mood]
-        #if os(macOS)
         targets.append(.ownProfile)
-        #endif
         if let item = currentFeature {
             targets.append(.featureControls)
             if model.features.count > 1 {
@@ -2067,73 +2120,83 @@ struct MusicHomePage: View {
         return targets
     }
 
-    private enum ControllerInput { case neutral, accept, back, next, previous, secondary, copyPlaylist }
+    private enum ControllerSurface: Equatable {
+        case home, overflow, article, storyNotice, linkCopied, failure, preview, fullVideo, exportStatus
+    }
+
+    private var controllerSurface: ControllerSurface? {
+        guard controllerActive, overlayDeepLink == nil, destination == nil, !showingLibrary, !showingAllMusicActivity, !exportPresented,
+              !showingNearby, !showingMoodPicker, !showingSearch else { return nil }
+        if exportStatus != nil { return .exportStatus }
+        if copiedFeatureLink { return .linkCopied }
+        if model.actionFailed { return .failure }
+        if showingStoryPreview { return .storyNotice }
+        if fullWindowVideo { return .fullVideo }
+        if showingPreviewControls { return .preview }
+        if article != nil { return .article }
+        if showingNavigationOverflow { return .overflow }
+        return .home
+    }
 
     private func observeGamepad() async {
-        var previous = ControllerInput.neutral
-        var armed = false
-        while !Task.isCancelled {
-            if let pad = GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad,
-               destination == nil, !showingLibrary, !showingAllMusicActivity, article == nil, !showingStoryPreview,
-               !copiedFeatureLink, !model.actionFailed, !showingPreviewControls, !fullWindowVideo, !exportPresented,
-               !showingNearby, !showingMoodPicker, !showingSearch {
-                let horizontal = pad.dpad.xAxis.value
-                let vertical = pad.dpad.yAxis.value
-                let control: ControllerInput
-                if pad.buttonA.isPressed { control = .accept }
-                else if pad.buttonB.isPressed { control = .back }
-                else if pad.buttonX.isPressed && isMacControllerActionEnabled { control = .secondary }
-                else if pad.buttonY.isPressed && isMacControllerActionEnabled, case .playlist = controlFocus { control = .copyPlaylist }
-                else if vertical < -0.65 || horizontal > 0.65 { control = .next }
-                else if vertical > 0.65 || horizontal < -0.65 { control = .previous }
-                else { control = .neutral }
-                if control == .neutral { armed = true }
-                if armed, control != .neutral, control != previous {
-                    #if os(macOS)
-                    navigationFocus.updateForNavigation(true)
-                    #endif
-                    if showingNavigationOverflow {
-                        if control == .back {
-                            showingNavigationOverflow = false
-                            controlFocus = navigationHasOverflow ? .navigationOverflow : .home
-                        }
-                    } else if control == .accept {
-                        let targets = controllerTargets
-                        if let controlFocus, targets.contains(controlFocus) { activate(controlFocus) }
-                        else { controlFocus = targets.first }
-                    } else if control == .back {
-                        controlFocus = nil
-                    } else if control == .secondary || control == .copyPlaylist {
-                        #if os(macOS)
-                        switch (control, controlFocus) {
-                        case (.secondary, .mood): MacMenuBarProfile.shared.playEffect()
-                        case (.secondary, .playlist(let id)): activate(.playPlaylist(id))
-                        case (.copyPlaylist, .playlist(let id)): activate(.copyPlaylistLink(id))
-                        default: break
-                        }
-                        #endif
-                    } else {
-                        let targets = controllerTargets
-                        let index = controlFocus.flatMap { targets.firstIndex(of: $0) }
-                        let next = index.map { ($0 + (control == .next ? 1 : targets.count - 1)) % targets.count } ?? 0
-                        controlFocus = targets[next]
-                    }
+        await GamepadControls.observe(scope: { controllerSurface }) { input, _ in
+            guard let surface = controllerSurface else { return }
+            if surface != .home {
+                if input == .back { dismissControllerSurface(surface) }
+                if input == .accept && surface == .fullVideo {
+                    if previewPlayer?.rate == 0 { previewPlayer?.play() } else { previewPlayer?.pause() }
                 }
-                previous = control
-            } else {
-                previous = .neutral
-                armed = false
+                return
             }
-            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+            #if os(macOS)
+            navigationFocus.updateForNavigation(true)
+            #endif
+            let targets = controllerTargets
+            switch input {
+            case .accept:
+                if let controlFocus, targets.contains(controlFocus) { activate(controlFocus) }
+                else { controlFocus = targets.first }
+            case .back: controlFocus = nil
+            case .clear:
+                switch controlFocus {
+                #if os(macOS)
+                case .mood: MacMenuBarProfile.shared.playEffect()
+                #endif
+                case .playlist(let id):
+                    guard model.library?.playlists.contains(where: { $0.publicId == id && $0.musicsCount > 0 }) == true else { return }
+                    startPlaylistPlayback(id, from: nil)
+                default: break
+                }
+            case .reveal:
+                #if os(macOS)
+                if case .playlist(let id) = controlFocus { activate(.copyPlaylistLink(id)) }
+                #endif
+            case .reset: controlFocus = .home
+            case .primary: controlFocus = targets.contains(.openFeature) ? .openFeature : targets.first
+            case .scroll:
+                if let step = input.scrollStep {
+                    controllerScroll.scrollTo(y: max(0, controllerScrollOffset + step))
+                }
+            default:
+                if let step = input.focusStep { controlFocus = targets.gamepadTarget(from: controlFocus, step: step) }
+            }
         }
     }
 
-    private var isMacControllerActionEnabled: Bool {
-        #if os(macOS)
-        true
-        #else
-        false
-        #endif
+    private func dismissControllerSurface(_ surface: ControllerSurface) {
+        switch surface {
+        case .overflow:
+            showingNavigationOverflow = false
+            controlFocus = navigationHasOverflow ? .navigationOverflow : .home
+        case .article: article = nil
+        case .storyNotice: showingStoryPreview = false
+        case .linkCopied: copiedFeatureLink = false
+        case .failure: model.actionFailed = false
+        case .preview: showingPreviewControls = false
+        case .fullVideo: fullWindowVideo = false
+        case .exportStatus: exportStatus = nil
+        case .home: break
+        }
     }
 
     private func selectFeature(_ index: Int) {

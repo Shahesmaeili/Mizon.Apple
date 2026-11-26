@@ -1,5 +1,4 @@
 #if !os(watchOS)
-import GameController
 import SwiftUI
 import MizonAppleCore
 #if os(macOS)
@@ -264,39 +263,25 @@ struct WelcomePage: View {
     }
 
     private func observeController() async {
-        var previous: Set<Command> = []
-        var armed = false
-        while !Task.isCancelled {
-            let pad = GCController.controllers().first(where: { $0.extendedGamepad != nil })?.extendedGamepad
-            if let pad {
-                let buttons: [(Command, Bool)] = [
-                    (.signIn, pad.buttonB.isPressed || pad.leftShoulder.isPressed),
-                    (.help, pad.buttonOptions?.isPressed == true),
-                    (.retry, pad.buttonMenu.isPressed),
-                    (.activate, pad.buttonA.isPressed),
-                    (.focusRetry, pad.leftThumbstickButton?.isPressed == true),
-                    (.focusSignIn, pad.rightShoulder.isPressed || pad.rightThumbstickButton?.isPressed == true),
-                    (.previous, pad.dpad.left.isPressed || pad.dpad.up.isPressed || pad.leftTrigger.isPressed
-                        || pad.leftThumbstick.xAxis.value < -0.65 || pad.leftThumbstick.yAxis.value > 0.65),
-                    (.next, pad.dpad.right.isPressed || pad.dpad.down.isPressed || pad.rightTrigger.isPressed
-                        || pad.leftThumbstick.xAxis.value > 0.65 || pad.leftThumbstick.yAxis.value < -0.65)
-                ]
-                let pressed = Set(buttons.filter { $0.1 }.map(\.0))
-                if pressed.isEmpty { armed = true }
-                if armed, let command = buttons.first(where: { $0.1 && !previous.contains($0.0) })?.0 {
-                    await apply(command)
-                }
-                if armed, !showHelp, abs(pad.rightThumbstick.yAxis.value) > 0.65 {
-                    let step: CGFloat = pad.rightThumbstick.yAxis.value > 0 ? -12 : 12
-                    scroll.scrollTo(y: max(0, scrollOffset + step))
-                }
-                previous = pressed
-            } else {
-                armed = false
-                previous.removeAll()
+        await GamepadControls.observe(scope: {
+            isActive ? (showHelp ? 1 : model.stage == .connectionError && !model.isBusy && !leaving ? 2 : 0) : nil
+        }) { action, _ in
+            if !showHelp, let step = action.scrollStep {
+                scroll.scrollTo(y: max(0, scrollOffset + step))
+                return
             }
-            do { try await Task.sleep(for: pad == nil ? .milliseconds(500) : .milliseconds(45)) }
-            catch { return }
+            let command: Command
+            switch action {
+            case .back, .previousSection: command = .signIn
+            case .help: command = .help
+            case .submit: command = .retry
+            case .accept: command = .activate
+            case .primary: command = .focusRetry
+            case .reset, .nextSection: command = .focusSignIn
+            case .move, .previousField, .nextField: command = (action.focusStep ?? 0) < 0 ? .previous : .next
+            default: return
+            }
+            Task { await apply(command) }
         }
     }
 

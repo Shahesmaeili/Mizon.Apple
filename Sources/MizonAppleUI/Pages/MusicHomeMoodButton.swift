@@ -1,5 +1,4 @@
 #if os(macOS) || os(iOS)
-import GameController
 import MizonAPIClient
 import MizonAppleCore
 import SwiftUI
@@ -530,41 +529,23 @@ struct MusicHomeMoodButton: View {
     }
 
     private func observeController() async {
-        var previous = MoodPadSnapshot.neutral
-        var releaseRequired = true
-        var activePad: ObjectIdentifier?
-        while !Task.isCancelled && pickerMode != nil {
-            if let pad = GCController.controllers().first(where: { $0.extendedGamepad != nil }),
-               let gamepad = pad.extendedGamepad {
-                let identity = ObjectIdentifier(pad)
-                if activePad != identity {
-                    activePad = identity
-                    releaseRequired = true
-                }
-                let state = MoodPadSnapshot(gamepad)
-                if releaseRequired {
-                    if state == .neutral { releaseRequired = false }
-                } else {
-                    if state.dismiss && !previous.dismiss {
-                        pickerMode = nil
-                        return
-                    }
-                    if pendingSave == nil {
-                        if state.horizontal != 0 && previous.horizontal == 0 { moveFocus(by: -state.horizontal) }
-                        if state.vertical != 0 && previous.vertical == 0 { moveFocus(by: state.vertical * columnCount) }
-                        if state.confirm && !previous.confirm,
-                           let tile = matches.first(where: { $0.publicId == selectedTile }) ?? matches.first {
-                            choose(tile)
-                        }
-                    }
-                }
-                previous = state
-            } else {
-                activePad = nil
-                previous = .neutral
-                releaseRequired = true
+        await GamepadControls.observe(scope: {
+            scenePhase == .active && pickerMode != nil ? (pendingSave == nil) : nil
+        }) { input, _ in
+            if input == .back { pickerMode = nil; return }
+            guard pendingSave == nil else { return }
+            switch input {
+            case .move(.left): moveFocus(by: -1)
+            case .move(.right): moveFocus(by: 1)
+            case .move(.up), .scroll(.up): moveFocus(by: -columnCount)
+            case .move(.down), .scroll(.down): moveFocus(by: columnCount)
+            case .previousSection, .previousField: moveFocus(by: -1)
+            case .nextSection, .nextField: moveFocus(by: 1)
+            case .accept:
+                if let tile = matches.first(where: { $0.publicId == selectedTile }) ?? matches.first { choose(tile) }
+            case .reset, .primary: focusCurrentMood()
+            default: break
             }
-            do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
         }
     }
 
@@ -697,33 +678,6 @@ private struct MoodButtonStyle: ButtonStyle {
             .contentShape(.rect(cornerRadius: 10))
             .onHover { over = $0 }
             .authHandPointer(enabled: true)
-    }
-}
-
-private struct MoodPadSnapshot: Equatable {
-    let horizontal: Int
-    let vertical: Int
-    let confirm: Bool
-    let dismiss: Bool
-
-    static let neutral = MoodPadSnapshot(horizontal: 0, vertical: 0, confirm: false, dismiss: false)
-
-    init(horizontal: Int, vertical: Int, confirm: Bool, dismiss: Bool) {
-        self.horizontal = horizontal
-        self.vertical = vertical
-        self.confirm = confirm
-        self.dismiss = dismiss
-    }
-
-    @MainActor init(_ gamepad: GCExtendedGamepad) {
-        let x = max(abs(gamepad.dpad.xAxis.value), abs(gamepad.leftThumbstick.xAxis.value)) > 0.6
-        let y = max(abs(gamepad.dpad.yAxis.value), abs(gamepad.leftThumbstick.yAxis.value)) > 0.6
-        let horizontalValue = abs(gamepad.dpad.xAxis.value) > 0.6 ? gamepad.dpad.xAxis.value : gamepad.leftThumbstick.xAxis.value
-        let verticalValue = abs(gamepad.dpad.yAxis.value) > 0.6 ? gamepad.dpad.yAxis.value : gamepad.leftThumbstick.yAxis.value
-        horizontal = x ? (horizontalValue > 0 ? 1 : -1) : 0
-        vertical = y ? (verticalValue > 0 ? -1 : 1) : 0
-        confirm = gamepad.buttonA.isPressed
-        dismiss = gamepad.buttonB.isPressed
     }
 }
 
