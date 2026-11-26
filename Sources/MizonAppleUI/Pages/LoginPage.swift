@@ -1109,6 +1109,7 @@ private struct AuthenticationPage: View {
             case .mode: switchMode(); selectControllerFocus(fieldOrder.first.map(ControllerFocus.field))
             case .field(let field):
                 selectControllerFocus(.field(field))
+                hideControllerPassword()
                 controllerKeyboard = GamepadKeyboard(allowsPersian: field.allowsPersian, masksValue: field.isPassword,
                                                       persian: isPersian, length: controllerValue(field).count)
                 controllerKeyboardField = field

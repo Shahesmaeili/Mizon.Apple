@@ -27,7 +27,7 @@ enum GamepadControls {
         let clock = ContinuousClock()
         let start = clock.now
         var session = GamepadInputSession<ObjectIdentifier, Scope>()
-        weak var owner: GCController?
+        var owner: GCController?
         let feedback = GamepadFeedbackPlayer()
         defer {
             feedback.detach(finishingSuccess: true)
