@@ -74,14 +74,12 @@ public struct MizonRootView: View {
                 #endif
             }
             #if os(macOS)
-            .overlay {
+            .background {
                 let hasAuthError = model.error != nil || model.validationKey != nil
-                RoundedRectangle(cornerRadius: 18)
-                    .strokeBorder(hasAuthError ? MizonPalette.negative : MizonPalette.accent, lineWidth: 1)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
+                MacWindowAccent(color: hasAuthError ? MizonPalette.negative : MizonPalette.accent,
+                                animatesColor: !reduceMotion)
+                    .frame(width: 0, height: 0)
                     .accessibilityHidden(true)
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: hasAuthError)
             }
             #endif
             #if os(iOS)
