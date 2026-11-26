@@ -259,7 +259,6 @@ private struct StatusArtwork: View {
     let symbol: Symbol
     let interaction: StatusArtworkInteraction
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var readyLoop: URL?
 
     var body: some View {
         GeometryReader { geometry in
@@ -289,16 +288,14 @@ private struct StatusArtwork: View {
                 }
             case let .mood(emoji, loop):
                 let playsLoop = interaction.visible && !reduceMotion
-                ZStack {
-                    if !playsLoop || loop == nil || loop != readyLoop {
-                        Text(emoji).font(.system(size: metrics.emojiFont))
-                    }
+                Group {
                     if let loop {
                         MoodLottieView(file: loop, playback: .loop, playing: playsLoop,
-                                       onReady: { readyLoop = loop })
+                                       fallback: Text(emoji).font(.system(size: metrics.emojiFont / metrics.moodScale)))
                             .id(loop)
-                            .opacity(playsLoop ? 1 : 0)
                             .scaleEffect(metrics.moodScale)
+                    } else {
+                        Text(emoji).font(.system(size: metrics.emojiFont))
                     }
                 }
                 .scaleEffect(interaction.hovered && !reduceMotion ? 1.06 : 1)

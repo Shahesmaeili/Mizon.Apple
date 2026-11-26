@@ -40,6 +40,7 @@ struct MoodLottieView: View {
     let file: URL
     let playback: MoodLottiePlayback
     let playing: Bool
+    var fallback: Text? = nil
     var onReady: (() -> Void)? = nil
     var onCompletion: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -52,9 +53,12 @@ struct MoodLottieView: View {
 
     var body: some View {
         Group {
-            if let loaded, loaded.file == file {
+            if let fallback, !playing || reduceMotion || loaded?.file != file {
+                fallback.transition(.identity)
+            } else if let loaded, loaded.file == file {
                 MoodLottieSurface(animation: loaded.animation, playback: playback, playing: playing && !reduceMotion,
                                   completion: onCompletion)
+                    .transition(.identity)
             } else {
                 Color.clear
             }
